@@ -27,6 +27,27 @@ linkWorkspacePackages: true
 overrides:
   '@deepseek-ai/cosmokit': 'link:vendor/cosmokit'
   '@deepseek-ai/schemastery': 'link:vendor/schemastery'
+  '@hono/node-server@<1.19.15': ^1.19.15
+  brace-expansion@>=3.0.0 <5.0.7: ^5.0.7
+  brace-expansion@>=4.0.0 <5.0.8: ^5.0.8
+  brace-expansion@>=4.0.0 <5.0.9: ^5.0.9
+  fast-uri@>=3.0.0 <3.1.5: ^3.1.5
+  fast-uri@>=3.0.0 <=3.1.3: ^3.1.4
+  hono@<4.12.34: ^4.12.34
+  hono@>=3.8.0 <4.12.34: ^4.12.34
+  hono@>=4.12.0 <4.12.34: ^4.12.34
+  hono@>=4.7.0 <4.12.34: ^4.12.34
+  ip-address@<=10.3.0: ^10.3.1
+  ip-address@>=10.1.1 <=10.2.0: ^10.2.1
+  ip-address@>=10.1.1 <=10.2.1: ^10.2.2
+  js-yaml@>=4.0.0 <4.3.0: ^4.3.0
+  js-yaml@>=4.0.0 <4.3.1: ^4.3.1
+  nanoid@<3.3.16: ^3.3.16
+  nanoid@<3.3.18: ^3.3.18
+  postcss@<=8.5.17: ^8.5.18
+  postcss@<=8.5.22: ^8.5.23
+  protobufjs@>=7.5.0 <=7.6.4: ^7.6.5
+  undici@>=7.0.0 <7.29.0: ^7.29.0
 
 peerDependencyRules:
   allowedVersions:
@@ -67,6 +88,24 @@ minimumReleaseAgeExclude:
   - node-addon-require-builtin-win32-ia32-msvc@0.1.4
   - node-addon-require-builtin-win32-x64-msvc@0.1.4
   - node-addon-require-builtin@0.1.4
+  - brace-expansion@5.0.7
+  - js-yaml@4.3.0
+  - protobufjs@7.6.5
+  - fast-uri@3.1.4
+  - brace-expansion@5.0.8
+  - postcss@8.5.23
+  - undici@7.29.0
+  - fast-uri@3.1.5
+  - ip-address@10.3.1
+  - ip-address@10.2.2
+  - ip-address@10.2.1
+  - hono@4.12.34
+  - brace-expansion@5.0.9
+  - js-yaml@4.3.1
+  - nanoid@3.3.16
+  - '@hono/node-server@1.19.15'
+  - nanoid@3.3.18
+  - postcss@8.5.18
 
 patchedDependencies:
   node-pty@1.2.0-beta.15: patches/node-pty@1.2.0-beta.15.patch
