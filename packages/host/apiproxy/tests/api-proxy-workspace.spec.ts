@@ -39,14 +39,14 @@ async function nextHostFrame(
   return next.value
 }
 
-function stubAgent(session: Session): Agent {
+function stubAgent(session: Session, agentCtx = new Context()): Agent {
   return {
     id: session.id,
     options: {},
     session,
     inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
     status: 'idle',
-    ctx: new Context(),
+    ctx: agentCtx,
     send: () => {},
     followup: () => {},
     steer: () => ({ outcome: Promise.resolve({ status: 'rejected' as const }) }),
@@ -75,22 +75,35 @@ async function harness(
   const storageDomain = new DomainFacility(ctx, { backend: 'memory', routes: {} })
   ctx.storage.mount('domain', storageDomain)
   ctx.provide('storageDomain', storageDomain)
-  ctx.provide('sessionPersistence', { list: () => Promise.resolve([]) } as never)
+  ctx.provide('sessionPersistence', {
+    list: () => Promise.resolve([]),
+    inspect: () => Promise.reject(new Error('test harness has no persisted sessions')),
+    delete: () => Promise.resolve(),
+  } as never)
+  ctx.provide('attachments', {
+    collectGarbage: () => Promise.resolve(0),
+  } as never)
   await ctx.plugin(WorkspaceRegistry)
 
   const factory: AgentFactory = {
     async createAgent(_ownerCtx, options) {
-      const session = ctx.sessions.create(
+      const session = ctx.sessions.prepare(
         options.sessionId,
         options.meta === undefined ? {} : { meta: options.meta },
       )
-      const agent = stubAgent(session)
+      const detachSession = ctx.sessions.enter(session)
+      ctx.sessions.announce(session)
+      const agentCtx = new Context()
+      const agent = stubAgent(session, agentCtx)
       const unregister = ctx.agents.register(agent)
+      agentCtx.effect(() => () => {
+        unregister()
+        detachSession()
+      }, 'testAgent.lifecycle')
       return {
         agent,
         dispose: () => {
-          unregister()
-          return Promise.resolve()
+          return agentCtx.fiber.dispose()
         },
       }
     },
@@ -496,24 +509,31 @@ describe('Host Workspace increments', () => {
     expect(await next).toMatchObject({ done: true })
   })
 
-  it('deletes the registration, keeps its session and folder, and streams one removal', async () => {
+  it('purges the workspace folder and its live sessions, then streams one removal', async () => {
     const { api, ctx, root } = await harness()
     const workspace = expectOk(await api.workspace.create(request({ path: stageDir(root, 'delete-me') }))).workspace
-    const sessionId = SessionId('session-kept-after-workspace-delete')
+    const sessionId = SessionId('session-purged-with-workspace')
     expectOk(await api.sessions.create(request({ workspaceId: workspace.workspaceId, sessionId })))
+    expectOk(await api.workspace.archiveSession(request({ sessionId })))
 
     const abort = new AbortController()
     const stream: AsyncIterator<RpcRequest<HostFrame>> =
       api.events.host(request({}), abort.signal)[Symbol.asyncIterator]()
-    const removed = nextHostFrame(stream)
+    const firstRemoval = nextHostFrame(stream)
     expectOk(await api.workspace.delete(request({ workspaceId: workspace.workspaceId })))
-    expect(await removed).toMatchObject({
-      payload: { type: 'host/workspace-removed', workspaceId: workspace.workspaceId },
-    })
+    const removals = [(await firstRemoval).payload]
+    while (!removals.some(frame => frame.type === 'host/workspace-removed')) {
+      removals.push((await nextHostFrame(stream)).payload)
+    }
+    expect(removals).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'host/session-removed', sessionId }),
+      expect.objectContaining({ type: 'host/workspace-removed', workspaceId: workspace.workspaceId }),
+    ]))
     expect(expectOk(await api.workspace.list(request({}))).items).toEqual([])
-    expect(expectOk(await api.sessions.list(request({}))).items.map(item => item.sessionId)).toContain(sessionId)
-    expect(ctx.agents.get(sessionId)).toBeDefined()
-    expect(existsSync(workspace.path)).toBe(true)
+    expect(expectOk(await api.workspace.list(request({}))).archivedSessionIds).toEqual([])
+    expect(expectOk(await api.sessions.list(request({}))).items.map(item => item.sessionId)).not.toContain(sessionId)
+    expect(ctx.agents.get(sessionId)).toBeUndefined()
+    expect(existsSync(workspace.path)).toBe(false)
 
     const missing = await api.workspace.delete(request({ workspaceId: workspace.workspaceId }))
     expect(missing.result).toMatchObject({
@@ -521,11 +541,12 @@ describe('Host Workspace increments', () => {
       error: { code: 'workspace-not-found', details: { workspaceId: workspace.workspaceId } },
     })
 
+    mkdirSync(workspace.path)
     const reregistered = expectOk(await api.workspace.create(request({ path: workspace.path }))).workspace
     expect(reregistered.workspaceId).not.toBe(workspace.workspaceId)
     expect(reregistered.path).toBe(workspace.path)
     expect(reregistered.sessionIds).toEqual([])
-    expect(expectOk(await api.sessions.list(request({}))).items.map(item => item.sessionId)).toContain(sessionId)
+    expect(expectOk(await api.sessions.list(request({}))).items.map(item => item.sessionId)).not.toContain(sessionId)
     abort.abort()
   })
 

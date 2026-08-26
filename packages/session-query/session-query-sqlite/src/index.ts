@@ -245,6 +245,7 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
     ctx.effect(() => {
       return () => this._optionalPersistenceFiber.dispose()
     }, 'sessionQuerySqlite.optionalPersistence')
+    ctx.on('session-persistence/deleting', id => this._purgeDeletedSession(id))
     ctx.effect(() => async () => this.close(), 'sessionQuerySqlite.close')
   }
 
@@ -478,6 +479,28 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
     this._localGeneration = nextLocalGeneration
     this._lastPersistenceIdentity = observation.persistenceBinding.identity
     return observation.persistenceBinding
+  }
+
+  /** Remove both durable and live search rows before their source log commits deletion. */
+  private async _purgeDeletedSession(id: SessionId): Promise<void> {
+    if (this._db === undefined) return
+    await this._serialized(undefined, () => {
+      const db = this._requireDb()
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        this._deleteSession('persisted', id)
+        this._deleteSession('live', id)
+        const nextGeneration = this._mainGeneration() + 1
+        db.prepare('UPDATE search_state SET global_generation = ? WHERE singleton = 1').run(nextGeneration)
+        db.exec('COMMIT')
+        this._globalGeneration = nextGeneration
+        this._localGeneration = Math.max(this._localGeneration, nextGeneration)
+        return Promise.resolve()
+      } catch (error) {
+        db.exec('ROLLBACK')
+        throw error
+      }
+    })
   }
 
   private async _observeStable(

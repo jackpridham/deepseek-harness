@@ -124,6 +124,11 @@ class TestPersistence extends SessionPersistence {
   locate(_meta: SessionHeader): SessionLocation | undefined { return undefined }
   create(_meta: SessionHeader): Promise<void> { return Promise.resolve() }
   append(_id: SessionId, _events: readonly SessionEvent[]): Promise<void> { return Promise.resolve() }
+  delete(id: SessionId): Promise<void> {
+    const deleted = this.durable.delete(id)
+    this.logical.delete(id)
+    return deleted ? Promise.resolve() : Promise.reject(new Error(`test persistence: session '${id}' not found`))
+  }
 
   load(id: SessionId): Promise<SessionInspection> {
     return this.readFrom(id, 0)

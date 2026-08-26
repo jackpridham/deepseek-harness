@@ -4,15 +4,15 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { mkdir, stat } from 'node:fs/promises'
+import { lstat, mkdir, realpath, rm, stat, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname } from 'node:path'
+import { dirname, isAbsolute, parse, relative, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { Agent, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatus } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-presets/types'
 import { AttachmentError, admitEncodedImages } from '@deepseek-ai/dsh-attachment'
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type { AttachmentIdType, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { contentHasImage, createUserMessage, freezeMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageSource } from '@deepseek-ai/dsh-llm'
@@ -1029,6 +1029,25 @@ function workspaceView(workspace: Workspace): WorkspaceView {
   }
 }
 
+/** Whether `candidate` is `root` or a filesystem descendant of it. */
+function pathWithin(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate)
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+}
+
+/** Collect every attachment id carried anywhere in one durable event list. */
+function attachmentIdsIn(events: readonly SessionEvent[]): Set<AttachmentIdType> {
+  const ids = new Set<AttachmentIdType>()
+  for (const event of events) {
+    while (true) {
+      const ref = imageInEvent(event, candidate => !ids.has(candidate.attachmentId))
+      if (ref === undefined) break
+      ids.add(ref.attachmentId)
+    }
+  }
+  return ids
+}
+
 /** Wire projection of the durable record carried by `domain/changed`. */
 function changedWorkspaceView(workspaceId: string, value: unknown): WorkspaceView {
   const record: WorkspaceRecord = workspaceRecord.parse(value)
@@ -1076,6 +1095,118 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
   const pendingApprovals = new Map<RpcId, PendingApproval>()
   const muxQueues = new Set<FrameQueue<RpcRequest<MuxFrame>>>()
   const imageAdmissionChains = new WeakMap<Agent, Promise<void>>()
+
+  /** Permanently remove one workspace tree and every Harness record that owns it. */
+  async function purgeWorkspace(workspace: Workspace): Promise<void> {
+    const declaredRoot = workspace.path
+    if (!isAbsolute(declaredRoot) || parse(declaredRoot).root === declaredRoot) {
+      throw new Error(`refusing to purge unsafe workspace path "${declaredRoot}"`)
+    }
+    const root = await realpath(declaredRoot).catch(() => resolve(declaredRoot))
+    if (parse(root).root === root) throw new Error(`refusing to purge unsafe workspace path "${root}"`)
+
+    const nestedWorkspaces = []
+    for (const candidate of ctx.workspaceRegistry.list()) {
+      const candidatePath = await realpath(candidate.path).catch(() => resolve(candidate.path))
+      if (pathWithin(root, candidatePath)) nestedWorkspaces.push(candidate)
+    }
+    const storedHeaders = await ctx.sessionPersistence.list()
+    const liveSessions = ctx.sessions.list()
+    const headers = new Map<SessionId, SessionHeader>()
+    for (const header of storedHeaders) headers.set(header.id, header)
+    for (const session of liveSessions) headers.set(session.id, session.header)
+
+    const targetIds = new Set<SessionId>()
+    for (const header of headers.values()) {
+      const declaredCwd = header.cwd
+      if (declaredCwd === undefined) continue
+      const cwd = await realpath(declaredCwd).catch(() => resolve(declaredCwd))
+      if (pathWithin(root, cwd)) targetIds.add(header.id)
+    }
+    for (const candidate of nestedWorkspaces) {
+      for (const id of candidate.sessionIds) targetIds.add(id)
+    }
+    // Seed lineage is also ownership: a subagent can run outside the parent's
+    // cwd but its transcript and sidecars still belong to that conversation.
+    let grew = true
+    while (grew) {
+      grew = false
+      for (const header of headers.values()) {
+        if (header.parentSession === undefined || !targetIds.has(header.parentSession)
+          || targetIds.has(header.id)) continue
+        targetIds.add(header.id)
+        grew = true
+      }
+    }
+
+    const depth = (id: SessionId): number => {
+      let result = 0
+      let current = headers.get(id)
+      const seen = new Set<SessionId>()
+      while (current?.parentSession !== undefined && !seen.has(current.parentSession)) {
+        seen.add(current.parentSession)
+        result += 1
+        current = headers.get(current.parentSession)
+      }
+      return result
+    }
+    const orderedIds = [...targetIds].sort((left, right) => depth(right) - depth(left))
+    const targetAgents = orderedIds.flatMap((id) => {
+      const session = ctx.sessions.get(id)
+      if (session === undefined) return []
+      const agent = ctx.agents.get(id)
+      if (agent === undefined) {
+        throw new Error(`cannot purge workspace while session "${id}" is live without an owning agent`)
+      }
+      return [agent]
+    })
+    for (const agent of targetAgents) agent.cancel({ kind: 'disposed' })
+    await Promise.all(targetAgents.map(agent => agent.whenIdle()))
+    const candidateAttachments = new Set<AttachmentIdType>()
+    for (const id of orderedIds) {
+      const live = ctx.sessions.get(id)
+      const events = live?.events ?? (headers.has(id)
+        ? (await ctx.sessionPersistence.inspect(id)).events
+        : [])
+      for (const attachmentId of attachmentIdsIn(events)) candidateAttachments.add(attachmentId)
+    }
+    for (const agent of targetAgents) await agent.ctx.fiber.dispose()
+    for (const id of orderedIds) {
+      if (ctx.sessions.get(id) !== undefined || ctx.agents.get(id) !== undefined) {
+        throw new Error(`session "${id}" did not dispose before workspace purge`)
+      }
+      if (headers.has(id)) await ctx.sessionPersistence.delete(id)
+      await ctx.workspaceRegistry.purgeSessions([id])
+    }
+
+    const retainedAttachments = new Set<AttachmentIdType>()
+    for (const session of ctx.sessions.list()) {
+      for (const id of attachmentIdsIn(session.events)) retainedAttachments.add(id)
+    }
+    for (const header of await ctx.sessionPersistence.list()) {
+      const inspected = await ctx.sessionPersistence.inspect(header.id)
+      for (const id of attachmentIdsIn(inspected.events)) retainedAttachments.add(id)
+    }
+    await ctx.attachments.collectGarbage([...candidateAttachments], [...retainedAttachments])
+
+    try {
+      const entry = await lstat(root)
+      if (entry.isSymbolicLink() || !entry.isDirectory()) await unlink(root)
+      else await rm(root, { recursive: true })
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
+    }
+    if (declaredRoot !== root) {
+      await unlink(declaredRoot).catch((error: unknown) => {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
+      })
+    }
+
+    await ctx.workspaceRegistry.purgeSessions([...targetIds])
+    for (const candidate of nestedWorkspaces.sort((left, right) => right.path.length - left.path.length)) {
+      await ctx.workspaceRegistry.delete(candidate.id)
+    }
+  }
 
   /** Serialize image admission with model selection for one agent. */
   function serializeImageAdmission<T>(agent: Agent, operation: () => Promise<T>): Promise<T> {
@@ -2774,8 +2905,12 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
 
       async delete(request) {
         const { workspaceId } = request.payload
-        const operation = workspaceCreationChain.then(() =>
-          ctx.workspaceRegistry.delete(brandWorkspaceId(workspaceId)))
+        const operation = workspaceCreationChain.then(async () => {
+          const workspace = ctx.workspaceRegistry.get(brandWorkspaceId(workspaceId))
+          if (workspace === undefined) return false
+          await purgeWorkspace(workspace)
+          return true
+        })
         workspaceCreationChain = operation.then(() => undefined, () => undefined)
         if (!await operation) return workspaceNotFound(request, workspaceId)
         return ok(request, { deleted: true as const })

@@ -90,6 +90,20 @@ export abstract class AttachmentStore extends Service {
    * @throws the signal reason when aborted, or a storage error when verification fails.
    */
   abstract readImage(ref: ImageAttachmentRef, signal?: AbortSignal): Promise<StoredImageAttachment>
+
+  /**
+   * Delete candidate content objects that are not referenced by a retained Session.
+   * Backends must not inspect or delete objects outside `candidates`, and must
+   * never delete an id present in `retained`.
+   * @param candidates - attachment ids owned by the records being purged.
+   * @param retained - complete attachment-id mark set from surviving logs.
+   * @returns number of objects removed.
+   */
+  collectGarbage(candidates: readonly string[], retained: readonly string[]): Promise<number> {
+    void candidates
+    void retained
+    return Promise.reject(new Error('attachment backend does not support reference-aware garbage collection'))
+  }
 }
 
 export default AttachmentStore

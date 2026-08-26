@@ -2,7 +2,7 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { chmod, link, mkdir, open, readFile, unlink } from 'node:fs/promises'
+import { chmod, link, lstat, mkdir, open, readFile, rmdir, unlink } from 'node:fs/promises'
 import { dirname, join, parse, resolve } from 'node:path'
 import {
   AttachmentError,
@@ -14,6 +14,7 @@ import type {
   SaveImageAttachment,
   StoredImageAttachment,
 } from '@deepseek-ai/dsh-attachment'
+import type { AttachmentId as AttachmentIdType } from '@deepseek-ai/dsh-attachment'
 import { detectImage, probeImage } from './image.ts'
 
 const ID_PATTERN = /^sha256:([a-f0-9]{64})$/
@@ -228,4 +229,41 @@ export async function readImageFile(
     throw new AttachmentError('Stored attachment metadata does not match its reference.', 'ATTACHMENT_CORRUPT')
   }
   return { ref, data }
+}
+
+/**
+ * Delete candidate immutable objects that are not referenced by retained Sessions.
+ * @param root - absolute versioned attachment storage root.
+ * @param candidates - attachment ids owned by records being purged.
+ * @param retained - complete attachment-id mark set from surviving Sessions.
+ * @returns number of immutable content objects removed.
+ */
+export async function collectGarbageFiles(
+  root: string,
+  candidates: ReadonlySet<AttachmentIdType>,
+  retained: ReadonlySet<AttachmentIdType>,
+): Promise<number> {
+  let removed = 0
+  for (const id of candidates) {
+    if (retained.has(id)) continue
+    const match = ID_PATTERN.exec(id)
+    if (match === null) continue
+    const digest = match[1]
+    if (digest === undefined) continue
+    const bucketPath = join(root, 'objects', digest.slice(0, 2))
+    const target = join(bucketPath, digest)
+    try {
+      const targetStat = await lstat(target)
+      if (!targetStat.isFile() && !targetStat.isSymbolicLink()) continue
+      await unlink(target)
+      removed += 1
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
+    }
+    await rmdir(bucketPath).catch((error: unknown) => {
+      if (!(error instanceof Error && 'code' in error
+        && (error.code === 'ENOTEMPTY' || error.code === 'ENOENT'))) throw error
+    })
+  }
+  return removed
 }

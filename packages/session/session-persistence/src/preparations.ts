@@ -191,6 +191,21 @@ export class SessionPreparations<Source extends PreparedSource, CommitState> {
   }
 
   /**
+   * Discard non-exclusive cached work before permanent deletion. A committing
+   * or reserved preparation may still be published by its owner, so deletion
+   * must reject until that owner releases it.
+   * @param id - Session identity being deleted.
+   */
+  discardForDelete(id: SessionId): void {
+    const entry = this.entries.get(id)
+    if (entry === undefined) return
+    if (entry.phase === 'committing' || entry.phase === 'reserved') {
+      throw new Error(`cannot delete session "${id}" while its persisted preparation is reserved`)
+    }
+    this.remove(entry)
+  }
+
+  /**
    * Discard an exact stale ready source without disturbing an exclusive owner.
    * @param id - changed session identity.
    * @param expected - exact source observed before its revision check.

@@ -83,6 +83,45 @@ export function appendLog(session: Session, events: readonly SessionEvent[]): vo
  */
 export function runPersistenceContract(name: string, make: () => Promise<ContractBackend>): void {
   describe(`SessionPersistence contract: ${name}`, () => {
+    it('permanently deletes a materialized session and permits explicit id reuse', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        const original = meta('deleted-and-reused', '/work')
+        await persistence.create(original)
+        await persistence.append(original.id, oneTurnLog())
+
+        await persistence.delete(original.id)
+
+        await expect(persistence.load(original.id)).rejects.toThrow('not found')
+        expect((await persistence.list()).map(header => header.id)).not.toContain(original.id)
+        await expect(persistence.delete(original.id)).rejects.toThrow('not found')
+
+        const replacement = meta('deleted-and-reused', '/replacement')
+        await persistence.create(replacement)
+        await persistence.append(replacement.id, oneTurnLog())
+        expect((await persistence.load(replacement.id)).meta.cwd).toBe('/replacement')
+      } finally {
+        await dispose()
+      }
+    })
+
+    it('cancels an unmaterialized creation intent without creating storage', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        const pending = meta('deleted-lazy-intent')
+        await persistence.create(pending)
+
+        await persistence.delete(pending.id)
+
+        await expect(persistence.delete(pending.id)).rejects.toThrow('not found')
+        await persistence.create(pending)
+        await persistence.append(pending.id, oneTurnLog())
+        expect((await persistence.load(pending.id)).events).toEqual(oneTurnLog())
+      } finally {
+        await dispose()
+      }
+    })
+
     it('round-trips a session: create + append → load returns identical meta and byte-identical events', async () => {
       const { persistence, dispose } = await make()
       try {

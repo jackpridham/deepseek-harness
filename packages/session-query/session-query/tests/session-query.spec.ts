@@ -76,6 +76,12 @@ class TestPersistence extends SessionPersistence {
     return Promise.resolve()
   }
 
+  delete(id: SessionIdType): Promise<void> {
+    return TestPersistence.entries.delete(id)
+      ? Promise.resolve()
+      : Promise.reject(new Error('missing test session'))
+  }
+
   load(id: SessionIdType): Promise<{ meta: SessionHeader; events: SessionEvent[] }> {
     return this.inspect(id)
   }

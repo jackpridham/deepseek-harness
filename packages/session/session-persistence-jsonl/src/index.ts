@@ -9,8 +9,8 @@
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { readdirSync } from 'node:fs'
-import { open, mkdir, readFile, readdir, realpath, link, rm, stat, truncate } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { open, mkdir, readFile, readdir, realpath, link, lstat, rm, stat, truncate, unlink } from 'node:fs/promises'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { scheduler } from 'node:timers/promises'
 import { randomBytes } from 'node:crypto'
@@ -181,6 +181,10 @@ export class JsonlSessionPersistence extends SessionPersistence implements Persi
     return this.coordinator.append(id, events)
   }
 
+  delete(id: SessionId): Promise<void> {
+    return this.coordinator.delete(id)
+  }
+
   override prepare(id: SessionId, signal?: AbortSignal): Promise<SessionPreparation> {
     return this.coordinator.prepare(id, signal)
   }
@@ -234,6 +238,22 @@ export class JsonlSessionPersistence extends SessionPersistence implements Persi
       if (isENOENT(error)) return undefined
       throw error
     }
+  }
+
+  /** Delete the complete Session-owned directory after normal identity validation. */
+  async deleteStored(id: SessionId): Promise<boolean> {
+    const stored = await this.loadStored(id)
+    if (stored === undefined) return false
+    const directory = dirname(this.locate(stored.meta).path)
+    const fromRoot = relative(this.root, directory)
+    if (fromRoot === '' || fromRoot === '..' || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) {
+      throw new Error(`refusing to delete session "${id}" outside the persistence root`)
+    }
+    const entry = await lstat(directory)
+    if (entry.isSymbolicLink()) await unlink(directory)
+    else if (entry.isDirectory()) await rm(directory, { recursive: true })
+    else throw new Error(`session "${id}" storage path is not a directory`)
+    return true
   }
 
   /**

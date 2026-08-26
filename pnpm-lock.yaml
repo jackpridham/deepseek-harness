@@ -7214,6 +7214,9 @@ importers:
       '@deepseek-ai/dsh-session':
         specifier: workspace:^
         version: link:../../core/session
+      '@deepseek-ai/dsh-session-persistence':
+        specifier: workspace:^
+        version: link:../../session/session-persistence
       '@deepseek-ai/dsh-spill':
         specifier: workspace:^
         version: link:../spill
