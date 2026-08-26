@@ -184,6 +184,16 @@ abstract readImage(ref: ImageAttachmentRef, signal?: AbortSignal): Promise<Store
  * @returns request bytes and the cache/upload identity covering every transform input.
  */
 readImageRequest( ref: ImageAttachmentRef, policy: ImageRequestPolicy, signal?: AbortSignal, ): Promise<RequestImageAttachment>
+
+/**
+ * Delete candidate content objects that are not referenced by a retained Session.
+ * Backends must not inspect or delete objects outside `candidates`, and must
+ * never delete an id present in `retained`.
+ * @param candidates - attachment ids owned by the records being purged.
+ * @param retained - complete attachment-id mark set from surviving logs.
+ * @returns number of objects removed.
+ */
+collectGarbage(candidates: readonly string[], retained: readonly string[]): Promise<number>
 ```
 
 Source: [`packages/attachment/attachment/src/index.ts`](../../packages/attachment/attachment/src/index.ts)

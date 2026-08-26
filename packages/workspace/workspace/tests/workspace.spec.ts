@@ -873,6 +873,28 @@ describe('workspace mutation and status', () => {
 })
 
 describe('registry-global session archive', () => {
+  it('purges deleted sessions from every account and the archive set', async () => {
+    const firstDir = await makeDir('purge-first')
+    const secondDir = await makeDir('purge-second')
+    const result = await harness({ sessions: [
+      header('purged-first', firstDir, 300),
+      header('kept', firstDir, 200),
+      header('purged-second', secondDir, 100),
+    ] })
+    await result.registry.archiveSession(SessionId('purged-first'))
+    await result.registry.archiveSession(SessionId('purged-second'))
+
+    await result.registry.purgeSessions([
+      SessionId('purged-first'), SessionId('purged-second'),
+    ])
+
+    expect(result.registry.list().find(workspace => workspace.path === firstDir)?.sessionIds)
+      .toEqual([SessionId('kept')])
+    expect(result.registry.list().find(workspace => workspace.path === secondDir)?.sessionIds).toEqual([])
+    expect(result.registry.archivedSessionIds).toEqual([])
+    expect(storedState(result.pool).archivedSessionIds).toEqual([])
+  })
+
   it('archives durably in order, idempotently skips repeats, and leaves accounting untouched', async () => {
     const dir = await makeDir('archive-home')
     const result = await harness({ sessions: [header('kept', dir, 100), header('gone', dir, 200)] })

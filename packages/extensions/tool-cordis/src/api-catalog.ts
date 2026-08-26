@@ -461,6 +461,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'ref', description: 'durable provider-independent normalized attachment reference.' }, { name: 'policy', description: 'exact route pixel and encoded-byte budget.' }, { name: 'signal', description: 'optional cancellation.' }],
         returns: 'request bytes and the cache/upload identity covering every transform input.',
       },
+      {
+        signature: 'collectGarbage(candidates: readonly string[], retained: readonly string[]): Promise<number>',
+        description: 'Delete candidate content objects that are not referenced by a retained Session. Backends must not inspect or delete objects outside `candidates`, and must never delete an id present in `retained`.',
+        parameters: [{ name: 'candidates', description: 'attachment ids owned by the records being purged.' }, { name: 'retained', description: 'complete attachment-id mark set from surviving logs.' }],
+        returns: 'number of objects removed.',
+      },
     ],
   },
   {
@@ -1208,6 +1214,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'abstract append(id: SessionId, events: readonly SessionEvent[]): Promise<void>',
         description: 'Durably persist a batch of events. Honors the append-only and contiguous- seq contracts: the first event\'s `seq` MUST equal the stored next-seq (after `load` has durably closed any interrupted turn). Rejects non-JSON- serializable `event.data` with an error naming the offending event type.',
         parameters: [{ name: 'id', description: 'the session the batch belongs to.' }, { name: 'events', description: 'the contiguous batch to persist, in seq order.' }],
+      },
+      {
+        signature: 'abstract delete(id: SessionId): Promise<void>',
+        description: 'Permanently delete one Session and every artifact owned by its persistence backend. The operation serializes with writes for the same id, rejects a live or exclusively prepared Session before mutation, cancels a lazy unmaterialized creation intent, and emits `session-persistence/deleted` only after deletion commits. Unknown ids reject; successful deletion frees the id for an explicit later create.',
+        parameters: [{ name: 'id', description: 'Session identity to delete.' }],
+        returns: 'settlement after backend deletion and commit notification.',
       },
       {
         signature: 'async prepare(id: SessionId, signal?: AbortSignal): Promise<SessionPreparation>',
@@ -2342,6 +2354,11 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: '`true` when a record was deleted, `false` when it was unknown.',
       },
       {
+        signature: 'purgeSessions(sessionIds: readonly SessionId[]): Promise<void>',
+        description: 'Remove permanently deleted Session ids from every workspace account and from the global archive set. The operation is idempotent and serialized with every other registry mutation.',
+        parameters: [{ name: 'sessionIds', description: 'Session identities whose authoritative logs no longer exist.' }],
+      },
+      {
         signature: 'insertBefore(id: WorkspaceId, beforeId?: WorkspaceId): Promise<readonly WorkspaceId[]>',
         description: 'Move one workspace within the durable display order, DOM-insertBefore-like. With an anchor it lands before that workspace; without one it appends.',
         parameters: [{ name: 'id', description: 'Workspace to move.' }, { name: 'beforeId', description: 'Workspace anchor; omitted appends.' }],
@@ -2620,6 +2637,22 @@ export const EVENT_API: readonly EventApiEntry[] = [
     summary: 'Waterfall around every streaming model call (retry, replay, routing).',
     description: 'Waterfall around every streaming model call (retry, replay, routing). Bound to the LlmRuntime; call `next()` to reach the resolved adapter\'s stream, or yield your own chunks to short-circuit.',
     parameters: [{ name: 'options', description: 'the full request. A LOOP-built request carries the process-local {@link markAgentLoopRequest} identity and arrives deep-frozen (mutation throws): its content is a pure function of the session log (the reconstructability Agent Note), so listeners read it, never rewrite it. Hand-built calls do not carry that marker; their messages already obey the immutable creation contract.' }],
+  },
+  {
+    name: 'session-persistence/deleted',
+    mode: 'emit',
+    signature: '\'session-persistence/deleted\'(id: SessionId): void',
+    summary: 'Emitted after one Session identity and its backend-owned artifacts are permanently deleted.',
+    description: 'Emitted after one Session identity and its backend-owned artifacts are permanently deleted. Derived stores use this commit notification to remove Session-keyed sidecars.',
+    parameters: [{ name: 'id', description: 'the deleted Session identity.' }],
+  },
+  {
+    name: 'session-persistence/deleting',
+    mode: 'parallel',
+    signature: '\'session-persistence/deleting\'(id: SessionId): Promise<void> | void',
+    summary: 'Awaited cleanup barrier before a Session\'s authoritative artifact is removed.',
+    description: 'Awaited cleanup barrier before a Session\'s authoritative artifact is removed. Durable sidecars use this point so a failed cleanup leaves the source log available for a safe retry.',
+    parameters: [{ name: 'id', description: 'the Session identity about to be deleted.' }],
   },
   {
     name: 'session-telemetry/record',

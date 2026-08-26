@@ -144,6 +144,28 @@ runCoordinatorContract('jsonl-zstd', async (): Promise<CoordinatorFixture> => {
   }
 })
 
+describe('JsonlSessionPersistence deletion', () => {
+  it('removes the complete compressed Session directory and preserves siblings', async () => {
+    const root = await freshRoot()
+    const ctx = await mount(root)
+    const target = meta('purge-zstd-sidecars', '/work')
+    const sibling = meta('purge-zstd-sibling', '/work')
+    for (const header of [target, sibling]) {
+      await ctx.sessionPersistence.create(header)
+      await ctx.sessionPersistence.append(header.id, oneTurnLog())
+    }
+    const owned = sessionDir(root, target.cwd, target.id)
+    await mkdir(join(owned, 'backups'), { recursive: true })
+    await writeFile(join(owned, 'transcript.txt'), 'derived transcript')
+    await writeFile(join(owned, 'backups', 'session.bak'), 'backup')
+
+    await ctx.sessionPersistence.delete(target.id)
+
+    await expect(stat(owned)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(logPath(root, sibling.cwd, sibling.id, 'zstd'))).resolves.toBeDefined()
+  })
+})
+
 describe('Zstandard frame structure', () => {
   it('scans concatenated checksummed frames and honors a frame limit', async () => {
     const first = await compressZstdFrame('header\n')

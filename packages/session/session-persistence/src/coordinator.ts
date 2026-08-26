@@ -184,6 +184,13 @@ export interface PersistenceBackend<TornMarker = unknown> {
   appendBatch(meta: SessionHeader, events: readonly SessionEvent[], isMaterialized: boolean): Promise<void>
 
   /**
+   * Permanently delete the backend-owned data for one materialized Session.
+   * @param id - Session identity to delete.
+   * @returns whether a materialized Session existed and was deleted.
+   */
+  deleteStored(id: SessionId): Promise<boolean>
+
+  /**
    * Make a crash repair durable: truncate the torn tail (iff
    * `tornMarker !== undefined`) and append `closers` (iff any). NOT required to
    * be atomic — a file backend may truncate-then-append in two fsync'd steps.
@@ -677,6 +684,37 @@ export class PersistenceCoordinator<TornMarker = unknown> {
       throw new TypeError('session event batch is not losslessly JSON-serializable because it contains non-JSON-serializable data')
     }
     return this.serialize(id, () => this.appendCore(id, batch))
+  }
+
+  /**
+   * Permanently delete one Session after its live and prepared lifecycles have
+   * reached quiescence. The per-id chain orders deletion after already-started
+   * writes and prevents a later queued append from observing stale state.
+   * @param id - Session identity to delete.
+   */
+  async delete(id: SessionId): Promise<void> {
+    await this.waitForRetirement(id)
+    if (this.ctx.sessions.get(id) !== undefined) {
+      throw new Error(`cannot delete session "${id}" while it is live`)
+    }
+    await this.serialize(id, async () => {
+      if (this.ctx.sessions.get(id) !== undefined) {
+        throw new Error(`cannot delete session "${id}" while it is live`)
+      }
+      this.preparations.discardForDelete(id)
+      const state = this.states.get(id)
+      if (state?.owner !== undefined) {
+        throw new Error(`cannot delete session "${id}" while it has a live persistence owner`)
+      }
+      await this.ctx.parallel('session-persistence/deleting', id)
+      if (state?.materialized !== false) {
+        const deleted = await this.backend.deleteStored(id)
+        if (!deleted) throw new Error(`session "${id}" not found`)
+      }
+      this.states.delete(id)
+      this.preparations.invalidate(id)
+      this.ctx.emit('session-persistence/deleted', id)
+    })
   }
 
   private async appendCore(id: SessionId, events: readonly SessionEvent[]): Promise<void> {

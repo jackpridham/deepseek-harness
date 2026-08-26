@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import sharp from 'sharp'
 import type { ImageAttachmentLimits } from '@deepseek-ai/dsh-attachment'
 import type { NormalizationPolicy } from '../src/normalization.ts'
-import { commitPreparedImageFile, prepareImageFile, readImageFile, saveImageFile } from '../src/store.ts'
+import { collectGarbageFiles, commitPreparedImageFile, prepareImageFile, readImageFile, saveImageFile } from '../src/store.ts'
 
 const fsControl = vi.hoisted(() => ({
   readSignals: [] as AbortSignal[],
@@ -159,6 +159,28 @@ describe('local attachment store', () => {
     const read = await readImageFile(storageRoot, saved)
     expect(read.data.byteLength).toBe(saved.bytes)
     expect(String(saved.attachmentId)).toBe(`sha256:${createHash('sha256').update(read.data).digest('hex')}`)
+  })
+
+  it('collects only unreferenced candidate objects while retaining shared and unrelated content', async () => {
+    const storageRoot = await root()
+    const retained = await saveImageFile(storageRoot, { data: PNG, mediaType: 'image/png' }, LIMITS, POLICY)
+    const orphanBytes = new Uint8Array(await sharp({
+      create: { width: 2, height: 1, channels: 4, background: { r: 1, g: 2, b: 3, alpha: 1 } },
+    }).png().toBuffer())
+    const orphan = await saveImageFile(storageRoot, { data: orphanBytes, mediaType: 'image/png' }, LIMITS, POLICY)
+    const unrelatedBytes = new Uint8Array(await sharp({
+      create: { width: 3, height: 1, channels: 4, background: { r: 4, g: 5, b: 6, alpha: 1 } },
+    }).png().toBuffer())
+    const unrelated = await saveImageFile(storageRoot, { data: unrelatedBytes, mediaType: 'image/png' }, LIMITS, POLICY)
+
+    await expect(collectGarbageFiles(
+      storageRoot,
+      new Set([retained.attachmentId, orphan.attachmentId]),
+      new Set([retained.attachmentId]),
+    )).resolves.toBe(1)
+    await expect(readImageFile(storageRoot, retained)).resolves.toEqual({ ref: retained, data: PNG })
+    await expect(readImageFile(storageRoot, orphan)).rejects.toMatchObject({ code: 'ATTACHMENT_NOT_FOUND' })
+    await expect(readImageFile(storageRoot, unrelated)).resolves.toEqual({ ref: unrelated, data: unrelatedBytes })
   })
 
   it('keeps admitted history readable after deployment limits become stricter', async () => {

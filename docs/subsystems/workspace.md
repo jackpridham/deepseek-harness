@@ -195,6 +195,14 @@ list(): Workspace[]
 delete(id: WorkspaceId): Promise<boolean>
 
 /**
+ * Remove permanently deleted Session ids from every workspace account and
+ * from the global archive set. The operation is idempotent and serialized
+ * with every other registry mutation.
+ * @param sessionIds - Session identities whose authoritative logs no longer exist.
+ */
+purgeSessions(sessionIds: readonly SessionId[]): Promise<void>
+
+/**
  * Move one workspace within the durable display order, DOM-insertBefore-like.
  * With an anchor it lands before that workspace; without one it appends.
  * @param id - Workspace to move.

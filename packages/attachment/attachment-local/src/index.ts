@@ -3,7 +3,7 @@
 import { join, resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { AttachmentStore } from '@deepseek-ai/dsh-attachment'
+import { AttachmentId, AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import type {
   ImageAttachmentLimits,
   ImageAttachmentRef,
@@ -15,12 +15,12 @@ import type {
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import type { NormalizationPolicy } from './normalization.ts'
 import { CompressionLimiter } from './compression-limiter.ts'
-import { commitPreparedImageFile, prepareImageFile, readImageFile, validateImageFile } from './store.ts'
+import { collectGarbageFiles, commitPreparedImageFile, prepareImageFile, readImageFile, validateImageFile } from './store.ts'
 import { readRequestImageFile, requestImageVariantId } from './request-image.ts'
 
 export { canPassThroughNormalization, normalizeImage } from './normalization.ts'
 export type { NormalizedImage, NormalizationPolicy } from './normalization.ts'
-export { commitPreparedImageFile, prepareImageFile, readImageFile, saveImageFile, validateImageFile } from './store.ts'
+export { collectGarbageFiles, commitPreparedImageFile, prepareImageFile, readImageFile, saveImageFile, validateImageFile } from './store.ts'
 export type { PreparedImageFile } from './store.ts'
 export { readRequestImageFile, requestImageDimensions, requestImageVariantId } from './request-image.ts'
 
@@ -154,6 +154,7 @@ export class LocalAttachmentStore extends AttachmentStore {
   readonly imageCompressionConcurrency: number
   private readonly compression: CompressionLimiter
   private readonly requestInflight = new Map<string, SharedRequest<RequestImageAttachment>>()
+  private operationTail: Promise<void> = Promise.resolve()
 
   constructor(ctx: Context, config: Config) {
     super(ctx)
@@ -187,20 +188,24 @@ export class LocalAttachmentStore extends AttachmentStore {
   }
 
   override async saveImages(inputs: readonly SaveImageAttachment[]): Promise<readonly ImageAttachmentRef[]> {
-    this.validateImageBatch(inputs)
-    const prepared = await Promise.all(inputs.map(input => this.compression.run(
-      () => prepareImageFile(input, this.imageLimits, this.normalizationPolicy),
-    )))
-    const refs: ImageAttachmentRef[] = []
-    for (const image of prepared) refs.push(await commitPreparedImageFile(this.root, image))
-    return refs
+    return this.enqueue(async () => {
+      this.validateImageBatch(inputs)
+      const prepared = await Promise.all(inputs.map(input => this.compression.run(
+        () => prepareImageFile(input, this.imageLimits, this.normalizationPolicy),
+      )))
+      const refs: ImageAttachmentRef[] = []
+      for (const image of prepared) refs.push(await commitPreparedImageFile(this.root, image))
+      return refs
+    })
   }
 
   async saveImage(input: SaveImageAttachment): Promise<ImageAttachmentRef> {
-    const prepared = await this.compression.run(
-      () => prepareImageFile(input, this.imageLimits, this.normalizationPolicy),
-    )
-    return commitPreparedImageFile(this.root, prepared)
+    return this.enqueue(async () => {
+      const prepared = await this.compression.run(
+        () => prepareImageFile(input, this.imageLimits, this.normalizationPolicy),
+      )
+      return commitPreparedImageFile(this.root, prepared)
+    })
   }
 
   async readImage(ref: ImageAttachmentRef, signal?: AbortSignal): Promise<StoredImageAttachment> {
@@ -245,6 +250,19 @@ export class LocalAttachmentStore extends AttachmentStore {
     return operation.wait(signal)
   }
 
+  override collectGarbage(candidates: readonly string[], retained: readonly string[]): Promise<number> {
+    return this.enqueue(() => collectGarbageFiles(
+      this.root,
+      new Set(candidates.map(AttachmentId)),
+      new Set(retained.map(AttachmentId)),
+    ))
+  }
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.operationTail.then(operation)
+    this.operationTail = result.then(() => undefined, () => undefined)
+    return result
+  }
 }
 
 export default LocalAttachmentStore

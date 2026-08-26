@@ -61,6 +61,25 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     sessionPersistence: SessionPersistence
   }
+
+  interface Events {
+    /**
+     * Awaited cleanup barrier before a Session's authoritative artifact is
+     * removed. Durable sidecars use this point so a failed cleanup leaves the
+     * source log available for a safe retry.
+     * @param id - the Session identity about to be deleted.
+     * @mode parallel
+     */
+    'session-persistence/deleting'(id: SessionId): Promise<void> | void
+    /**
+     * Emitted after one Session identity and its backend-owned artifacts are
+     * permanently deleted. Derived stores use this commit notification to
+     * remove Session-keyed sidecars.
+     * @param id - the deleted Session identity.
+     * @mode emit
+     */
+    'session-persistence/deleted'(id: SessionId): void
+  }
 }
 
 /**
@@ -141,6 +160,18 @@ export abstract class SessionPersistence extends Service {
    * @param events - the contiguous batch to persist, in seq order.
    */
   abstract append(id: SessionId, events: readonly SessionEvent[]): Promise<void>
+
+  /**
+   * Permanently delete one Session and every artifact owned by its persistence
+   * backend. The operation serializes with writes for the same id, rejects a
+   * live or exclusively prepared Session before mutation, cancels a lazy
+   * unmaterialized creation intent, and emits `session-persistence/deleted`
+   * only after deletion commits. Unknown ids reject; successful deletion frees
+   * the id for an explicit later {@link create}.
+   * @param id - Session identity to delete.
+   * @returns settlement after backend deletion and commit notification.
+   */
+  abstract delete(id: SessionId): Promise<void>
 
   /**
    * Prepare the exact unpublished Session used by resume. Implementations may

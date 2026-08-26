@@ -14,7 +14,7 @@ import { basename, dirname, isAbsolute, join, normalize } from 'node:path'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SaveTextSpill } from '@deepseek-ai/dsh-spill'
-import LocalSpillStore, { encodeSegment, privateRoot, saveTextFile, sessionDir } from '@deepseek-ai/dsh-spill-local'
+import LocalSpillStore, { deleteSessionSpills, encodeSegment, privateRoot, saveTextFile, sessionDir } from '@deepseek-ai/dsh-spill-local'
 
 let root: string
 
@@ -101,6 +101,17 @@ describe('saveTextFile', () => {
     const a = await saveTextFile({ root, sessionId: 'sess-1', suggestedName: 'r.txt', content: 'a' })
     const b = await saveTextFile({ root, sessionId: 'sess-1', suggestedName: 'r.txt', content: 'b' })
     expect(a.path).not.toBe(b.path)
+  })
+
+  it('deletes every spill owned by one session without touching a sibling', async () => {
+    const target = await saveTextFile({ root, sessionId: 'sess-1', suggestedName: 'r.txt', content: 'a' })
+    const sibling = await saveTextFile({ root, sessionId: 'sess-2', suggestedName: 'r.txt', content: 'b' })
+
+    await deleteSessionSpills(root, 'sess-1')
+
+    expect(() => statSync(target.path)).toThrow()
+    expect(readFileSync(sibling.path, 'utf8')).toBe('b')
+    await expect(deleteSessionSpills(root, 'sess-1')).resolves.toBeUndefined()
   })
 })
 

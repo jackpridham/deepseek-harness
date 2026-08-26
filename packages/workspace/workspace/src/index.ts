@@ -201,6 +201,32 @@ export class WorkspaceRegistry extends Service {
   }
 
   /**
+   * Remove permanently deleted Session ids from every workspace account and
+   * from the global archive set. The operation is idempotent and serialized
+   * with every other registry mutation.
+   * @param sessionIds - Session identities whose authoritative logs no longer exist.
+   */
+  purgeSessions(sessionIds: readonly SessionId[]): Promise<void> {
+    return this.enqueueOperation(async () => {
+      const ids = new Set(sessionIds)
+      if (ids.size === 0) return
+      for (const workspace of this.entities.values()) {
+        for (const id of ids) await workspace.detachSession(id)
+      }
+      const state = this.requireState()
+      const archivedSessionIds = state.archivedSessionIds.filter(id => !ids.has(id))
+      if (archivedSessionIds.length !== state.archivedSessionIds.length) {
+        await this.setState({ ...state, archivedSessionIds })
+      }
+      for (const id of ids) {
+        this.headers.delete(id)
+        this.sessionPaths.delete(id)
+        this.invalidSessionPaths.delete(id)
+      }
+    })
+  }
+
+  /**
    * Move one workspace within the durable display order, DOM-insertBefore-like.
    * With an anchor it lands before that workspace; without one it appends.
    * @param id - Workspace to move.
