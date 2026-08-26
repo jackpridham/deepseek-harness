@@ -11,7 +11,7 @@ The documentation rules live in [docs/AGENTS.md](../../../docs/AGENTS.md). This 
 
 - [docs/AGENTS.md](../../../docs/AGENTS.md) — hierarchy, tutorial/reference forms, taxonomy, budgets, and slop checklist.
 - [.agents/notes/README.md](../../notes/README.md) — when a decision earns an Agent Note, how to file it, and what goes inside one (the header block, per-lifecycle skeleton, and Alternatives-considered mandate, gated by `verify-agent-note-format`); [docs/postmortem/README.md](../../../docs/postmortem/README.md) — when an incident earns a postmortem.
-- [docs/i18n/README.md](../../../docs/i18n/README.md) — the bilingual pairing rules; editing either side of a pair obligates the counterpart in the same change.
+- [docs/i18n/README.md](../../../docs/i18n/README.md) — optional translation tooling and the rule that ordinary documentation work remains English-only.
 - Root [AGENTS.md](../../../AGENTS.md) — the standing orders whose budget discipline this skill protects.
 - [Archived Agent Notes](../../notes/archived/AGENTS.md) — frozen historical snapshots excluded from editorial maintenance and evolving documentation gates.
 
@@ -27,7 +27,7 @@ Apply the standard's authoring order to every human-facing document in scope. Do
 
 Then check constraints that make placement expensive or wrong:
 
-- Paired docs (`pnpm run verify-translation-pairing --list`) cost a zh counterpart update and a `--write` re-record on every edit — prefer an unpaired home for content that will churn.
+- Existing translations do not constrain placement. Maintain the English source; do not create or update a companion unless the user explicitly requests translation work.
 - Generated catalogs are never hand-edited; if the fact belongs there, change the generator's source.
 - Before renaming or moving any doc, grep for inbound references: `verify-md-links` catches Markdown link targets AND `#fragment` anchors onto Markdown files (heading slugs and explicit `<a id>`), and `verify-doc-refs` catches `docs/*.md` citations in TypeScript comments; anchors cited from TypeScript strings still need a manual grep when their output never reaches gate-scanned Markdown.
 - A move is atomic: remove from the old home, add to the new home, and fix every inbound link in the same change.
@@ -53,4 +53,4 @@ Apply the ordered relocate-condense-raise policy in [docs/AGENTS.md](../../../do
 
 ## Validation and PR hygiene
 
-Run at least `pnpm run doc-sync`, `pnpm run lint`, and `git diff --check`; JSDoc changes may regenerate catalogs. If a paired doc changed, follow the [lightweight routine path](../../../docs/AGENTS.md#writing-rules) and run `pnpm run verify-translation-pairing --write <pair>`. The PR body should give word deltas, explain any deliberately long exception, and list checks.
+Run at least `pnpm run doc-sync`, `pnpm run lint`, and `git diff --check`; JSDoc changes may regenerate English catalogs. Do not update translation companions during ordinary validation. The PR body should give word deltas, explain any deliberately long exception, and list checks.

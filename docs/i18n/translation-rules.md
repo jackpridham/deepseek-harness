@@ -2,11 +2,11 @@
 
 English | [中文](translation-rules.zh.md)
 
-How to translate between the two sides of a documentation pair in this repo. Both languages carry equal authority ([README.md](README.md)): a change is authored in either language, and that side is the source for that update — these rules govern producing or updating the counterpart. They bind humans and agents equally. Routine agent work translates the changed content directly in one terminology-guided pass; the extended [.agents/skills/dsh-translate-docs](../../.agents/skills/dsh-translate-docs/SKILL.md) workflow runs only when the user explicitly invokes it. Rule levels follow RFC 2119 usage: **MUST** / **MUST NOT** are gate- or review-blocking; **SHOULD** needs a stated reason to deviate; **MAY** is discretionary.
+These rules apply only when the user explicitly requests translation between the two sides of a documentation pair. English remains the maintained repository source outside that named scope ([policy](README.md)); an ordinary English edit does not activate this workflow. Within an explicitly requested translation, **MUST** / **MUST NOT** are review-blocking, **SHOULD** needs a stated reason to deviate, and **MAY** is discretionary.
 
 ## Faithfulness
 
-- The counterpart *MUST* say what the authored side says — no added behavior, prerequisites, warnings, version claims, or examples, and no dropped ones. If the pair disagrees on substance, neither language wins by default: fix the side that is wrong, then bring the other along in the same change.
+- The requested counterpart *MUST* say what the maintained English source says — no added behavior, prerequisites, warnings, version claims, or examples, and no dropped ones. Resolve disagreements against the English source unless the user explicitly requests an English correction too.
 - The counterpart *SHOULD* read as natural technical writing in its own language, not word-by-word gloss. Translate meaning, restructure sentences where the target grammar wants it, and keep the author's register — terse stays terse.
 - Do not translate the untranslatable: if a sentence resists natural rendering because it leans on an idiom of the source language, translate the idea, not the idiom.
 

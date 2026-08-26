@@ -4,8 +4,8 @@
  * declaration; `public-api` entries preserve a class's body-stripped public
  * declaration. Blocks and entries have a one-to-one relationship; comparison
  * ignores whitespace and non-JSDoc comments but preserves declaration
- * structure and every original JSDoc comment. Byte-identical `.zh.md` blocks
- * reuse the manifest-backed check of their unsuffixed sibling.
+ * structure and every original JSDoc comment. Optional `.zh.md` blocks are
+ * outside maintained-source verification.
  */
 
 import { globSync, readFileSync, existsSync } from 'node:fs'
@@ -219,7 +219,6 @@ const extractedBlocks: EquivBlock[] = [...docSet].sort().flatMap(extractEquivBlo
 const { primary: blocks, derivatives } = partitionPairedMarkdownDerivatives(
   extractedBlocks,
   block => block.doc,
-  block => `${block.projection ?? 'declaration'}\0${block.code}`,
 )
 
 const errors: string[] = []
@@ -296,11 +295,11 @@ for (const e of entries) {
 }
 
 if (errors.length === 0) {
-  console.log(`verify-type-equiv: ${verified} type-equiv block(s) match source structure and JSDoc (1:1 with manifest); ${derivatives.length} paired derivative(s).`)
+  console.log(`verify-type-equiv: ${verified} type-equiv block(s) match source structure and JSDoc (1:1 with manifest); ${derivatives.length} optional translation block(s) skipped.`)
   process.exit(0)
 }
 
 console.error('verify-type-equiv: type-equiv verification failed:')
 for (const e of errors) console.error(`  ${e}`)
-console.error(`\n(checked ${blocks.length} primary block(s) across ${new Set(blocks.map(b => b.doc)).size} doc(s), ${derivatives.length} paired derivative(s); manifest at scripts/type-equiv.manifest.json)`)
+console.error(`\n(checked ${blocks.length} primary block(s) across ${new Set(blocks.map(b => b.doc)).size} doc(s), ${derivatives.length} optional translation block(s) skipped; manifest at scripts/type-equiv.manifest.json)`)
 process.exit(1)

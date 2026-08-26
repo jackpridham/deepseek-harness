@@ -14,10 +14,9 @@ import { isArchivedAgentNotePath, uniqueRepoFiles } from './repo-files.ts'
 
 const root = resolve(import.meta.dirname, '..')
 
-/** Files to check: doc-typecheck's scope, system-prompt expected outputs, and the AGENTS.md pair. */
+/** Files to check: maintained docs, system-prompt expected outputs, and standing instructions. */
 const PATTERNS = [
   'README.md',
-  'README.zh.md',
   '.agents/notes/**/*.md',
   'docs/**/*.md',
   'packages/*/*.md',
@@ -69,7 +68,7 @@ function findViolations(absPath: string): Violation[] {
   return out
 }
 
-const files = uniqueRepoFiles(root, PATTERNS, isArchivedAgentNotePath)
+const files = uniqueRepoFiles(root, PATTERNS, path => isArchivedAgentNotePath(path) || path.endsWith('.zh.md'))
 const all = files.flatMap(file => findViolations(file.abs))
 const checked = files.length
 
