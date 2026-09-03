@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import SessionStore from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import { createApiRemoteAgentResolver } from '@deepseek-ai/dsh-api-remotes'
@@ -68,10 +68,14 @@ describe('API Remote Agent resolver races', () => {
       return { agent: stubAgent(ctx, published), dispose: () => Promise.resolve() }
     })
 
-    const result = await createApiRemoteAgentResolver(ctx, {})(sessionId)
+    const retained: AgentHandle[] = []
+    const result = await createApiRemoteAgentResolver(ctx, {
+      retainHandle: (handle) => { retained.push(handle) },
+    })(sessionId)
 
     expect(result).toMatchObject({ agent: { id: sessionId } })
     expect(resume).toHaveBeenCalledWith({ resumeSessionId: sessionId })
+    expect(retained.map(handle => handle.agent.id)).toEqual([sessionId])
     await ctx.fiber.dispose()
   })
 
