@@ -63,10 +63,14 @@ import { toStreamChunks } from './stream.ts'
 
 /** One resolution's frozen view: the profiles and the collection built from them. */
 interface PiAiSnapshot {
-  /** The resolved profiles this collection was built from, used as its identity. */
+  /** The configured profiles this collection was built from, used as its identity. */
+  sourceProfiles: ReadonlyMap<string, ResolvedPiAiProviderProfile>
+  /** Effective profiles, including endpoint-refreshed catalogs. */
   profiles: ReadonlyMap<string, ResolvedPiAiProviderProfile>
   /** Providers for exactly those profiles; never mutated once published. */
   models: Models
+  /** Routes already refreshed from their endpoint in this snapshot. */
+  refreshed: ReadonlySet<string>
 }
 
 /** Constructor options for {@link PiAiAdapter}: the two resolution hooks the plugin owns. */
@@ -91,6 +95,12 @@ export interface PiAiAdapterOptions {
    * every request no matter how often the human signed in.
    */
   auth: PiAiAuthInjection
+  /** Rebuild one opt-in profile from the models its endpoint currently advertises. */
+  refreshModels?: (
+    provider: string,
+    profile: ResolvedPiAiProviderProfile,
+    signal?: AbortSignal,
+  ) => Promise<ResolvedPiAiProviderProfile>
   /** Resolve the optional durable attachment service at request time. */
   resolveAttachments?: () => AttachmentStore | undefined
   /**
@@ -228,10 +238,35 @@ export class PiAiAdapter extends LlmAdapter {
    */
   private current(): PiAiSnapshot {
     const profiles = this.config.profiles()
-    if (this.snapshot?.profiles === profiles) return this.snapshot
+    if (this.snapshot?.sourceProfiles === profiles) return this.snapshot
     const models: MutableModels = createModels(this.config.auth)
     for (const profile of profiles.values()) models.setProvider(profile.piProvider)
-    this.snapshot = { profiles, models }
+    this.snapshot = { sourceProfiles: profiles, profiles, models, refreshed: new Set() }
+    return this.snapshot
+  }
+
+  /** Refresh one endpoint-owned route without mutating a snapshot already held by a request. */
+  private async refreshed(
+    provider: string,
+    force: boolean,
+    model?: string,
+    signal?: AbortSignal,
+  ): Promise<PiAiSnapshot> {
+    const snapshot = this.current()
+    const profile = this.profileOf(snapshot, provider)
+    if (!profile.modelsFromEndpoint || this.config.refreshModels === undefined) return snapshot
+    if (!force && snapshot.refreshed.has(provider) && (model === undefined || snapshot.models.getModel(provider, model) !== undefined)) {
+      return snapshot
+    }
+    const refreshedProfile = await this.config.refreshModels(provider, profile, signal)
+    if (this.current() !== snapshot) return this.current()
+    const profiles = new Map(snapshot.profiles)
+    profiles.set(provider, refreshedProfile)
+    const models: MutableModels = createModels(this.config.auth)
+    for (const entry of profiles.values()) models.setProvider(entry.piProvider)
+    const refreshed = new Set(snapshot.refreshed)
+    refreshed.add(provider)
+    this.snapshot = { sourceProfiles: snapshot.sourceProfiles, profiles, models, refreshed }
     return this.snapshot
   }
 
@@ -265,17 +300,15 @@ export class PiAiAdapter extends LlmAdapter {
     return this.current().profiles.get(provider)?.retryPolicy
   }
 
-  override listModels(provider: string): Promise<readonly LlmModelInfo[]> {
-    return Promise.resolve().then(() => {
-      const snapshot = this.current()
-      this.profileOf(snapshot, provider)
-      return snapshot.models.getModels(provider).map(model => ({
-        provider,
-        id: model.id,
-        name: model.name,
-        inputModalities: [...model.input],
-      }))
-    })
+  override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
+    const snapshot = await this.refreshed(provider, true)
+    this.profileOf(snapshot, provider)
+    return snapshot.models.getModels(provider).map(model => ({
+      provider,
+      id: model.id,
+      name: model.name,
+      inputModalities: [...model.input],
+    }))
   }
 
   override resolveModel(
@@ -283,8 +316,7 @@ export class PiAiAdapter extends LlmAdapter {
     model: string,
     _signal?: AbortSignal,
   ): Promise<LlmResolvedModelInfo> {
-    return Promise.resolve().then(() => {
-      const snapshot = this.current()
+    return this.refreshed(provider, false, model, _signal).then((snapshot) => {
       return this.modelInfo(snapshot, provider, model)
     })
   }
@@ -307,16 +339,17 @@ export class PiAiAdapter extends LlmAdapter {
     }
   }
 
-  override prepareCall(provider: string, model: string, _signal?: AbortSignal): Promise<PreparedAdapterCall> {
-    const snapshot = this.current()
-    return Promise.resolve({
+  override async prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall> {
+    const snapshot = await this.refreshed(provider, false, model, signal)
+    return {
       model: this.modelInfo(snapshot, provider, model),
       stream: options => this.streamWithSnapshot(options, snapshot),
-    })
+    }
   }
 
-  stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    return this.streamWithSnapshot(options, this.current())
+  async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    const snapshot = await this.refreshed(options.provider, false, options.model, options.signal)
+    yield * this.streamWithSnapshot(options, snapshot)
   }
 
   private async * streamWithSnapshot(

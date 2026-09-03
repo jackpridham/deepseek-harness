@@ -55,10 +55,16 @@ export async function mockServer(script: {
         response.end(behavior.body ?? '{}')
         return
       }
+      const events = behavior.events
+      if (events === undefined) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(behavior.body ?? '{}')
+        return
+      }
       response.writeHead(200, { 'content-type': 'text/event-stream' })
       let index = 0
       const writeNext = (): void => {
-        const event = behavior.events?.[index++]
+        const event = events[index++]
         if (event === undefined) { response.end(); return }
         response.write(`data: ${event}\n\n`)
         if (behavior.delayMs === undefined) writeNext()

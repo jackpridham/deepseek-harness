@@ -192,10 +192,41 @@ export function apply(ctx: Context, config: Config): void {
   // through `ctx` per call, so they stay correct across the collection rebuilds
   // a configuration change causes, and a sign-in survives one.
   const auth = { credentials: credentialStoreFrom(ctx), authContext: authContextFrom(ctx) }
+  /** Replace endpoint-owned catalog membership while retaining configured per-model overrides. */
+  const refreshModels = async (
+    provider: string,
+    profile: ResolvedPiAiProviderProfile,
+    signal?: AbortSignal,
+  ): Promise<ResolvedPiAiProviderProfile> => {
+    const source = current().providers?.[provider]
+    if (source?.modelsFromEndpoint !== true) return profile
+    if (source.baseURL === undefined) {
+      throw new LlmError(`pi-ai provider "${provider}" modelsFromEndpoint requires baseURL`, 'INVALID_CATALOG')
+    }
+    const advertised = await discoverModels({
+      baseURL: source.baseURL,
+      ...source.api === undefined ? {} : { api: source.api },
+      ...signal === undefined ? {} : { signal },
+    }, () => resolveApiKey(provider, profile))
+    const configured = new Map((source.models ?? []).map(model => [model.id, model]))
+    const models = advertised.map(model => ({
+      id: model.id,
+      ...model.name === undefined ? {} : { name: model.name },
+      ...model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow },
+      ...model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens },
+      ...model.inputModalities === undefined ? {} : { input: [...model.inputModalities] },
+      ...configured.get(model.id),
+    }))
+    const refreshed = resolveProfiles({ [provider]: { ...source, models } }).get(provider)
+    if (refreshed === undefined) throw new LlmError(`pi-ai adapter does not own provider "${provider}"`, 'NO_ADAPTER')
+    return refreshed
+  }
+
   const adapter = new PiAiAdapter({
     profiles,
     resolveApiKey,
     auth,
+    refreshModels,
     resolveAttachments: () => ctx.get('attachments'),
     onReplayDegrade: ({ provider, model, reason }) => {
       ctx.logger.warn(

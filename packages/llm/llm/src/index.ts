@@ -575,9 +575,11 @@ export class LlmRuntime extends Service {
     for (const model of discovered) {
       if (typeof model.id !== 'string' || model.id.length === 0 || seen.has(model.id)) continue
       seen.add(model.id)
+      const inputModalities = this.detachedModalities(model.inputModalities)
       models.push({
         id: model.id,
         ...model.name === undefined ? {} : { name: model.name },
+        ...inputModalities === undefined ? {} : { inputModalities },
         ...model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow },
         ...model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens },
       })
