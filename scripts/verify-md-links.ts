@@ -18,7 +18,6 @@ const root = resolve(import.meta.dirname, '..')
 /** Repo-authored Markdown checked for relative links. */
 const PATTERNS = [
   'README.md',
-  'README.zh.md',
   '.agents/notes/**/*.md',
   'docs/**/*.md',
   'packages/*/*.md',
@@ -197,8 +196,8 @@ export function findViolations(
 
 // Run only when invoked as a script, not when imported by the spec.
 if (process.argv[1] && import.meta.filename === resolve(process.argv[1])) {
-  // Archived notes remain valid link targets, but their historical outbound links are frozen.
-  const files = uniqueRepoFiles(root, PATTERNS, isArchivedAgentNotePath)
+  // Archived notes and optional translations remain valid targets, but their outbound links are not maintained.
+  const files = uniqueRepoFiles(root, PATTERNS, path => isArchivedAgentNotePath(path) || path.endsWith('.zh.md'))
   const anchorsOf = anchorCache()
   const all = files.flatMap(file => findViolations(file.abs, anchorsOf))
   const checked = files.length

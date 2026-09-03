@@ -3,12 +3,12 @@
 import { join, resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { AttachmentStore } from '@deepseek-ai/dsh-attachment'
+import { AttachmentId, AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import type { ImageAttachmentLimits, ImageAttachmentRef, SaveImageAttachment, StoredImageAttachment } from '@deepseek-ai/dsh-attachment'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
-import { readImageFile, saveImageFile, validateImageFile } from './store.ts'
+import { collectGarbageFiles, readImageFile, saveImageFile, validateImageFile } from './store.ts'
 
-export { readImageFile, saveImageFile, validateImageFile } from './store.ts'
+export { collectGarbageFiles, readImageFile, saveImageFile, validateImageFile } from './store.ts'
 
 /** Default maximum encoded bytes for one image. */
 export const DEFAULT_MAX_IMAGE_BYTES = 3.5 * 1024 * 1024
@@ -57,6 +57,7 @@ export class LocalAttachmentStore extends AttachmentStore {
   /** Absolute versioned storage root. */
   readonly root: string
   readonly imageLimits: ImageAttachmentLimits
+  private operationTail: Promise<void> = Promise.resolve()
 
   constructor(ctx: Context, config: Config) {
     super(ctx)
@@ -76,11 +77,25 @@ export class LocalAttachmentStore extends AttachmentStore {
   }
 
   async saveImage(input: SaveImageAttachment): Promise<ImageAttachmentRef> {
-    return saveImageFile(this.root, input, this.imageLimits)
+    return this.enqueue(() => saveImageFile(this.root, input, this.imageLimits))
   }
 
   async readImage(ref: ImageAttachmentRef, signal?: AbortSignal): Promise<StoredImageAttachment> {
     return readImageFile(this.root, ref, signal)
+  }
+
+  override collectGarbage(candidates: readonly string[], retained: readonly string[]): Promise<number> {
+    return this.enqueue(() => collectGarbageFiles(
+      this.root,
+      new Set(candidates.map(AttachmentId)),
+      new Set(retained.map(AttachmentId)),
+    ))
+  }
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.operationTail.then(operation)
+    this.operationTail = result.then(() => undefined, () => undefined)
+    return result
   }
 }
 

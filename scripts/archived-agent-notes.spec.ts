@@ -29,18 +29,28 @@ describe('archived Agent Notes', () => {
     expect(isArchivedAgentNotePath('.agents/notes/implemented/process/example.md')).toBe(false)
   })
 
-  it('accepts one complete implemented triplet with matching archive metadata', () => {
+  it('accepts an English note with optional historical companion artifacts', () => {
     expect(validateArchiveArtifacts(fixture())).toEqual([])
   })
 
-  it('rejects incomplete triplets and invalid archive headers', () => {
+  it('accepts an English-only archive entry', () => {
     const artifacts = fixture()
     artifacts.delete('process/2026-07-26-example.i18n.yaml')
+    artifacts.delete('process/2026-07-26-example.zh.md')
+    expect(validateArchiveArtifacts(artifacts)).toEqual([])
+  })
+
+  it('rejects companion artifacts without an English note and invalid English archive headers', () => {
+    const companions = fixture()
+    companions.delete('process/2026-07-26-example.md')
+    expect(validateArchiveArtifacts(companions).join('\n')).toMatch(/archived companion files require/)
+
+    const artifacts = fixture()
     artifacts.set(
       'process/2026-07-26-example.md',
       Buffer.from('# Agent Note: Example\n\nStatus: proposed\nArchived: yesterday\n'),
     )
-    expect(validateArchiveArtifacts(artifacts).join('\n')).toMatch(/incomplete archived triplet/)
+    expect(validateArchiveArtifacts(artifacts).join('\n')).toMatch(/line 3 must be/)
   })
 
   it('extends the manifest without permitting a sealed change or removal', () => {

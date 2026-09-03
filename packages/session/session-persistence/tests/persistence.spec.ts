@@ -7,7 +7,7 @@ import {
   SessionPersistence, SessionPersistenceRevision, PersistenceCoordinator,
   type PersistenceBackend, type SessionPersistenceSnapshot, type StoredPrefix, type StoredSuffix,
 } from '../src/index.ts'
-import { runPersistenceContract, meta, oneTurnLog } from './contract.ts'
+import { appendLog, runPersistenceContract, meta, oneTurnLog } from './contract.ts'
 import { runCoordinatorContract, type CoordinatorFixture } from './coordinator-contract.ts'
 
 /** The durable store shape: materialized sessions only (no lazy entries). */
@@ -101,6 +101,10 @@ class MemoryPersistence extends SessionPersistence implements PersistenceBackend
     return this.coordinator.append(id, events)
   }
 
+  delete(id: SessionId): Promise<void> {
+    return this.coordinator.delete(id)
+  }
+
   override prepare(id: SessionId, signal?: AbortSignal): ReturnType<PersistenceCoordinator['prepare']> {
     return this.coordinator.prepare(id, signal)
   }
@@ -129,6 +133,10 @@ class MemoryPersistence extends SessionPersistence implements PersistenceBackend
       events: structuredClone(entry.events),
       revision: memoryRevision(entry),
     }
+  }
+
+  async deleteStored(id: SessionId): Promise<boolean> {
+    return this.store.delete(id)
   }
 
   async readStoredRevision(id: SessionId): Promise<SessionPersistenceRevision | undefined> {
@@ -224,6 +232,10 @@ class ControlledBackend implements PersistenceBackend<never> {
     }
   }
 
+  async deleteStored(id: SessionId): Promise<boolean> {
+    return this.store.delete(id)
+  }
+
   async commitRepair(m: SessionHeader, _tornMarker: undefined, closers: readonly SessionEvent[]): Promise<void> {
     this.repairAttempts += 1
     const entry = this.store.get(m.id)
@@ -268,6 +280,68 @@ describe('the inherited readRaw default', () => {
     await expect(
       ctx.sessionPersistence.readRaw(SessionId('any-session'), controller.signal),
     ).rejects.toThrow('aborted')
+  })
+})
+
+describe('PersistenceCoordinator deletion lifecycle', () => {
+  it('awaits sidecar cleanup before deleting the authoritative store', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(MemoryPersistence)
+    const id = SessionId('deletion-barrier')
+    await ctx.sessionPersistence.create(meta(id))
+    await ctx.sessionPersistence.append(id, oneTurnLog())
+    const failure = new Error('sidecar unavailable')
+    ctx.on('session-persistence/deleting', async () => { throw failure })
+
+    await expect(ctx.sessionPersistence.delete(id)).rejects.toMatchObject({ errors: [failure] })
+    expect((await ctx.sessionPersistence.list()).map(header => header.id)).toContain(id)
+    await ctx.fiber.dispose()
+  })
+
+  it('emits exactly one post-commit deletion event', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(MemoryPersistence)
+    const id = SessionId('deletion-event')
+    const deleted: SessionId[] = []
+    ctx.on('session-persistence/deleted', (deletedId) => { deleted.push(deletedId) })
+    try {
+      await ctx.sessionPersistence.create(meta(id))
+      await ctx.sessionPersistence.append(id, oneTurnLog())
+
+      await ctx.sessionPersistence.delete(id)
+
+      expect(deleted).toEqual([id])
+      await expect(ctx.sessionPersistence.load(id)).rejects.toThrow('not found')
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('rejects live and reserved Sessions before deleting durable state', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(MemoryPersistence)
+    try {
+      const live = ctx.sessions.create(SessionId('delete-live'), { meta: { cwd: '/work' } })
+      appendLog(live, oneTurnLog())
+      await ctx.sessions.flush(live)
+
+      await expect(ctx.sessionPersistence.delete(live.id)).rejects.toThrow('while it is live')
+      expect((await ctx.sessionPersistence.list()).map(header => header.id)).toContain(live.id)
+
+      const cold = meta('delete-reserved')
+      await ctx.sessionPersistence.create(cold)
+      await ctx.sessionPersistence.append(cold.id, oneTurnLog())
+      const preparation = await ctx.sessionPersistence.prepare(cold.id)
+      await expect(ctx.sessionPersistence.delete(cold.id)).rejects.toThrow('preparation is reserved')
+      expect((await ctx.sessionPersistence.list()).map(header => header.id)).toContain(cold.id)
+      preparation[Symbol.dispose]()
+      await expect(ctx.sessionPersistence.delete(cold.id)).resolves.toBeUndefined()
+    } finally {
+      await ctx.fiber.dispose()
+    }
   })
 })
 

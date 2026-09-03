@@ -10,11 +10,10 @@ interface Block {
 const partition = (blocks: Block[]) => partitionPairedMarkdownDerivatives(
   blocks,
   block => block.doc,
-  block => `${block.kind}\0${block.code}`,
 )
 
 describe('partitionPairedMarkdownDerivatives', () => {
-  it('treats a complete byte-identical Chinese sequence as derivative', () => {
+  it('treats optional Chinese blocks as derivatives', () => {
     const english = [
       { doc: 'docs/example.md', kind: 'ts', code: 'const one = 1' },
       { doc: 'docs/example.md', kind: 'type-equiv', code: 'interface Example {}' },
@@ -28,7 +27,7 @@ describe('partitionPairedMarkdownDerivatives', () => {
     })
   })
 
-  it('keeps reordered, changed, partial, and orphan Chinese sequences primary', () => {
+  it('does not require Chinese blocks to match or have an English sibling', () => {
     const sequence = (doc: string) => [
       { doc, kind: 'ts', code: 'const one = 1' },
       { doc, kind: 'ts', code: 'const two = 2' },
@@ -54,13 +53,9 @@ describe('partitionPairedMarkdownDerivatives', () => {
       ...orphan,
     ]
 
-    expect(partition(blocks)).toEqual({ primary: blocks, derivatives: [] })
-  })
-
-  it('requires the fence kind to match as well as the body', () => {
-    const english = { doc: 'docs/example.md', kind: 'type-equiv', code: 'interface Example {}' }
-    const chinese = { ...english, doc: 'docs/example.zh.md', kind: 'public-api' }
-
-    expect(partition([english, chinese])).toEqual({ primary: [english, chinese], derivatives: [] })
+    expect(partition(blocks)).toEqual({
+      primary: [...english, ...reorderedEnglish, ...partialEnglish],
+      derivatives: [...changed, ...reordered, ...partial, ...orphan],
+    })
   })
 })

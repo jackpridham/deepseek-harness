@@ -13,9 +13,10 @@ import { resolve } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import { SpillLocator, SpillStore } from '@deepseek-ai/dsh-spill'
 import type { SaveTextSpill, SpillRef } from '@deepseek-ai/dsh-spill'
-import { privateRoot, saveTextFile } from './store.ts'
+import type {} from '@deepseek-ai/dsh-session-persistence'
+import { deleteSessionSpills, privateRoot, saveTextFile } from './store.ts'
 
-export { encodeSegment, privateRoot, saveTextFile, sessionDir } from './store.ts'
+export { deleteSessionSpills, encodeSegment, privateRoot, saveTextFile, sessionDir } from './store.ts'
 export type { SavedText, SaveTextOptions } from './store.ts'
 
 /** Plugin config (all optional — `static Config` supplies the defaults). */
@@ -45,6 +46,7 @@ export class LocalSpillStore extends SpillStore {
   constructor(ctx: Context, config: Config) {
     super(ctx)
     this.root = config.root !== undefined ? resolve(config.root) : privateRoot()
+    ctx.on('session-persistence/deleting', id => deleteSessionSpills(this.root, id))
   }
 
   async saveText(input: SaveTextSpill): Promise<SpillRef> {

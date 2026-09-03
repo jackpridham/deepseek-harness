@@ -10,7 +10,7 @@
 
 import { createHash, randomBytes } from 'node:crypto'
 import { mkdtempSync } from 'node:fs'
-import { mkdir, open } from 'node:fs/promises'
+import { lstat, mkdir, open, rm, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -117,4 +117,20 @@ export async function saveTextFile(options: SaveTextOptions): Promise<SavedText>
     await handle.close()
   }
   return { path, bytes }
+}
+
+/**
+ * Delete the complete spill directory owned by one Session without following links.
+ * @param root - configured local spill root.
+ * @param sessionId - identity whose hashed spill directory is removed.
+ */
+export async function deleteSessionSpills(root: string, sessionId: string): Promise<void> {
+  const target = sessionDir(root, sessionId)
+  try {
+    const entry = await lstat(target)
+    if (entry.isSymbolicLink() || !entry.isDirectory()) await unlink(target)
+    else await rm(target, { recursive: true })
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
+  }
 }

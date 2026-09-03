@@ -4,6 +4,8 @@ Status: implemented
 
 English | [中文](2026-07-26-briefed-minimal-translation-updates.zh.md)
 
+The [English-only maintenance decision](2026-08-26-english-only-documentation-maintenance.md) makes this update workflow optional and limited to explicitly requested translation work.
+
 ## Problem
 
 The [bilingual pairing contract](2026-07-02-bilingual-docs-and-pairing-gate.md) already prescribed minimal counterpart updates — diff the edited side against its last-confirmed state, patch the counterpart, never re-translate — but the committed workflow made every update pay whole-document overheads. The translating subagent loaded the full guidance corpus (skill, pairing contract, translation rules, the 192-line terminology table, style samples, prose standard) before touching a two-line diff; it re-derived the last-confirmed diff by hand through `git cat-file`; and each iteration re-ran the corpus-wide pairing gate, which parses every pair in the tree to validate one. A small English prose edit routinely cost tens of times its proportional share of tokens and minutes, which taxes exactly the behavior the contract wants — bringing the counterpart along in the same PR.

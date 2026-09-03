@@ -17,7 +17,6 @@ const root = resolve(import.meta.dirname, '..')
 
 const PATTERNS = [
   'README.md',
-  'README.zh.md',
   '.agents/notes/**/*.md',
   'docs/**/*.md',
   'packages/*/*.md',
@@ -66,7 +65,7 @@ const seen = new Set<string>()
 let checkedFiles = 0
 for (const pattern of PATTERNS) {
   for (const match of globSync(pattern, { cwd: root })) {
-    if (isArchivedAgentNotePath(match)) continue
+    if (isArchivedAgentNotePath(match) || match.endsWith('.zh.md')) continue
     const real = realpathSync(resolve(root, match))
     if (seen.has(real)) continue
     seen.add(real)

@@ -70,7 +70,7 @@
 
 ## ⑦ 统一要求（长段拆分示范）
 
-> **Universal requirement**: every in-scope document merges as a complete bilingual pair. The manifest contains only explicit exclusions: it has no per-file rollout list, date cutoff, or README-specific policy class. […] Pairing is a continuing obligation: every later edit to either side updates the counterpart and consistency record in the same change.
+> **Explicit scope**: translation work covers only the pair the user requested. English documentation outside that pair remains complete without a companion, and optional historical translations may remain stale.
 
 **统一要求**：每篇纳入范围的文档合入时都必须构成完整的双语配对。manifest（元数据清单）只包含显式排除项：其中没有逐文件推进清单、日期分界或 README 专用政策类别。（……）配对是一项持续义务：后续修改任一侧时，都必须在同一变更中同步更新对侧文件和一致性记录。
 

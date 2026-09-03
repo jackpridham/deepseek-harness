@@ -133,6 +133,34 @@ runCoordinatorContract('jsonl-none', async (): Promise<CoordinatorFixture> => {
   }
 })
 
+describe('JsonlSessionPersistence deletion', () => {
+  it('removes the complete Session-owned directory and preserves siblings', async () => {
+    const storage = await freshRoot()
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(JsonlSessionPersistence, { root: storage, compression: 'none' })
+    const target = meta('purge-with-sidecars', '/work')
+    const sibling = meta('purge-sibling', '/work')
+    try {
+      for (const header of [target, sibling]) {
+        await ctx.sessionPersistence.create(header)
+        await ctx.sessionPersistence.append(header.id, oneTurnLog())
+      }
+      const owned = sessionDir(storage, target.cwd, target.id)
+      await mkdir(join(owned, 'backups'), { recursive: true })
+      await writeFile(join(owned, 'transcript.txt'), 'derived transcript')
+      await writeFile(join(owned, 'backups', 'session.bak'), 'backup')
+
+      await ctx.sessionPersistence.delete(target.id)
+
+      await expect(stat(owned)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(stat(rawLogPath(storage, sibling.cwd, sibling.id))).resolves.toBeDefined()
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+})
+
 describe('JsonlSessionPersistence: format helpers', () => {
   it('encodeSegment neutralizes traversal, separators, and absolute paths', () => {
     expect(encodeSegment('..')).toBe('~002E~002E')

@@ -296,6 +296,18 @@ abstract create(meta: SessionHeader): Promise<void>
 abstract append(id: SessionId, events: readonly SessionEvent[]): Promise<void>
 
 /**
+ * Permanently delete one Session and every artifact owned by its persistence
+ * backend. The operation serializes with writes for the same id, rejects a
+ * live or exclusively prepared Session before mutation, cancels a lazy
+ * unmaterialized creation intent, and emits `session-persistence/deleted`
+ * only after deletion commits. Unknown ids reject; successful deletion frees
+ * the id for an explicit later {@link create}.
+ * @param id - Session identity to delete.
+ * @returns settlement after backend deletion and commit notification.
+ */
+abstract delete(id: SessionId): Promise<void>
+
+/**
  * Prepare the exact unpublished Session used by resume. Implementations may
  * reuse object graphs retained by an earlier {@link inspect} after confirming
  * their durable revision is still current; disposal releases an unpublished
@@ -381,5 +393,51 @@ abstract listSnapshots(signal?: AbortSignal): Promise<SessionPersistenceSnapshot
 
 Types: [SessionEvent](session.md) · [SessionId](core.md)
 
-Source: [`packages/session/session-persistence/src/index.ts:84`](../../packages/session/session-persistence/src/index.ts)
+Source: [`packages/session/session-persistence/src/index.ts:103`](../../packages/session/session-persistence/src/index.ts)
+
+<a id="session-persistence-events"></a>
+
+### `session-persistence/*` events
+
+<a id="session-persistencedeleted--emit"></a>
+
+#### `session-persistence/deleted` — emit
+
+Emitted after one Session identity and its backend-owned artifacts are permanently deleted. Derived stores use this commit notification to remove Session-keyed sidecars.
+
+```ts cordis-catalog
+/**
+ * Emitted after one Session identity and its backend-owned artifacts are
+ * permanently deleted. Derived stores use this commit notification to
+ * remove Session-keyed sidecars.
+ * @param id - the deleted Session identity.
+ * @mode emit
+ */
+'session-persistence/deleted'(id: SessionId): void
+```
+
+Types: [SessionId](core.md)
+
+Source: [`packages/session/session-persistence/src/index.ts:81`](../../packages/session/session-persistence/src/index.ts)
+
+<a id="session-persistencedeleting--parallel"></a>
+
+#### `session-persistence/deleting` — parallel
+
+Awaited cleanup barrier before a Session's authoritative artifact is removed. Durable sidecars use this point so a failed cleanup leaves the source log available for a safe retry.
+
+```ts cordis-catalog
+/**
+ * Awaited cleanup barrier before a Session's authoritative artifact is
+ * removed. Durable sidecars use this point so a failed cleanup leaves the
+ * source log available for a safe retry.
+ * @param id - the Session identity about to be deleted.
+ * @mode parallel
+ */
+'session-persistence/deleting'(id: SessionId): Promise<void> | void
+```
+
+Types: [SessionId](core.md)
+
+Source: [`packages/session/session-persistence/src/index.ts:73`](../../packages/session/session-persistence/src/index.ts)
 <!-- END GENERATED cordis-surface -->
