@@ -223,6 +223,8 @@ export interface LlmDiscoveredModel {
   id: string
   /** Human-readable name when the endpoint supplies one. */
   name?: string
+  /** Accepted request modalities when the endpoint supplies them. */
+  inputModalities?: readonly ModelModality[]
   /** Maximum combined request and response context, when disclosed. */
   contextWindow?: number
   /** Maximum output tokens, when disclosed. */

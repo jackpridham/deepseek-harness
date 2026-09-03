@@ -10,6 +10,8 @@ Once a pi-ai route became [a declaration rather than a catalog lookup](2026-08-0
 
 The obvious answer, a dynamic runtime catalog refreshed in the background, was rejected with the layer below it: it makes a route's model list external mutable state needing a cache, an invalidation story, and an offline path, while the product need is narrower. What is needed is a *question asked once*, whose answer the user adopts into `settings.yaml` — so `settings.yaml` remains the only thing deciding what a route serves.
 
+That remains the default. The later [endpoint-owned runtime catalog decision](../../implemented/feature/2026-09-04-endpoint-owned-runtime-model-catalog.md) adds an explicit request-boundary refresh mode for deployments whose gateway owns membership.
+
 The awkward part is that the question is about something that does not exist yet. The provider being added has no route, no stored profile, and no stored credential; the endpoint and key are values in a form the user is still typing. Every existing LLM Service Definition operation is keyed by a registered provider route, so none of them can carry this.
 
 ## Decision

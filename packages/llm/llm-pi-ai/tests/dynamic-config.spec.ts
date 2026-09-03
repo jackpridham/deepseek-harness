@@ -50,6 +50,48 @@ async function boot(dir: string, config: LlmPiAi.Config): Promise<Context> {
 }
 
 describe('request-level dynamic profiles', () => {
+  it('uses an endpoint-owned model catalog without storing its membership', async () => {
+    const dir = await home()
+    await writeFile(join(dir, '.credentials.yaml'), 'INF01_KEY: live-key\n', { mode: 0o600 })
+    const server = await mockServer([
+      {
+        body: JSON.stringify({
+          data: [{
+            id: 'qwen-next',
+            name: 'Qwen Next',
+            context_length: 65_536,
+            architecture: { input_modalities: ['text'] },
+          }],
+        }),
+      },
+      { events: textEvents },
+    ])
+    const ctx = await boot(dir, {
+      providers: {
+        inf01: {
+          apiKeyEnv: 'INF01_KEY',
+          api: 'openai-completions',
+          baseURL: server.url,
+          modelsFromEndpoint: true,
+          models: [{ id: 'seed', contextWindow: 1024, maxTokens: 128 }],
+        },
+      },
+    })
+
+    await expect(ctx.llm.listModels('inf01')).resolves.toEqual([{
+      provider: 'inf01',
+      id: 'qwen-next',
+      name: 'Qwen Next',
+      inputModalities: ['text'],
+    }])
+    const resolved = await ctx.llm.resolveModelInfo('inf01', 'qwen-next')
+    expect(resolved.context).toEqual({ contextWindow: 65_536 })
+    const result = await assemble(ctx, { provider: 'inf01', model: 'qwen-next', messages: [] })
+    expect(result.message.content).toEqual([{ type: 'text', text: 'hello' }])
+    expect(server.paths).toEqual(['/models', '/chat/completions'])
+    expect(server.headers.map(headers => headers.authorization)).toEqual(['Bearer live-key', 'Bearer live-key'])
+  })
+
   it('mounts bare and dormant, then registers routes the moment settings supply providers', async () => {
     vi.stubEnv('PI_DYNAMIC_KEY', '')
     const dir = await home()
