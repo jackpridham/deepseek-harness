@@ -1,6 +1,6 @@
 /**
- * Answering "which models can this provider serve?" for the configuration
- * surface's "fetch available models" action.
+ * Answering "which models can this provider serve?" for configuration-time
+ * interrogation and opt-in endpoint-owned runtime catalogs.
  *
  * A route the installed pi-ai catalog ships is answered **from that catalog**,
  * with no network call at all: pi-ai's registry is the authoritative list for
@@ -8,10 +8,9 @@
  * not disclose. Only a route the catalog does not describe — a gateway, a
  * self-hosted server — is interrogated over the wire.
  *
- * Neither path is a catalog refresh. Nothing here is stored: the request
- * carries a draft the user is still editing, and the reply is candidate
- * metadata the surface offers for adoption. `settings.yaml` remains the only
- * thing that decides what a route serves.
+ * The caller decides whether the reply is a draft candidate list or the
+ * current runtime catalog. This module only performs a bounded, authenticated
+ * observation and stores nothing.
  *
  * Only OpenAI-compatible protocols are interrogated. Their listing is the one
  * shape a gateway, a self-hosted server, and the official endpoints all agree
@@ -59,6 +58,14 @@ interface ListingEntry {
   context_length?: unknown
   max_tokens?: unknown
   max_output_tokens?: unknown
+  architecture?: { input_modalities?: unknown } | null
+}
+
+/** Valid request modalities from a gateway extension, or `undefined`. */
+function inputModalities(value: unknown): LlmDiscoveredModel['inputModalities'] {
+  if (!Array.isArray(value)) return undefined
+  const modalities = value.filter((entry): entry is 'text' | 'image' => entry === 'text' || entry === 'image')
+  return modalities.length === 0 ? undefined : [...new Set(modalities)]
 }
 
 /** A positive integer field of a listing entry, or `undefined` when absent or unusable. */
@@ -151,9 +158,11 @@ function readListing(body: unknown): LlmDiscoveredModel[] {
     const name = label(entry?.name, entry?.display_name)
     const contextWindow = capacity(entry?.context_window, entry?.context_length)
     const maxTokens = capacity(entry?.max_output_tokens, entry?.max_tokens)
+    const input = inputModalities(entry?.architecture?.input_modalities)
     models.push({
       id,
       ...name === undefined ? {} : { name },
+      ...input === undefined ? {} : { inputModalities: input },
       ...contextWindow === undefined ? {} : { contextWindow },
       ...maxTokens === undefined ? {} : { maxTokens },
     })
