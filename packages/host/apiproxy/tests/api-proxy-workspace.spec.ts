@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentFactory } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentFactory, AgentHandle } from '@deepseek-ai/dsh-agent'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
 import Storage from '@deepseek-ai/dsh-storage'
@@ -84,6 +84,7 @@ async function harness(
     collectGarbage: () => Promise.resolve(0),
   } as never)
   await ctx.plugin(WorkspaceRegistry)
+  const handleDisposals: SessionId[] = []
 
   const factory: AgentFactory = {
     async createAgent(_ownerCtx, options) {
@@ -96,16 +97,16 @@ async function harness(
       const agentCtx = new Context()
       const agent = stubAgent(session, agentCtx)
       const unregister = ctx.agents.register(agent)
-      agentCtx.effect(() => () => {
-        unregister()
-        detachSession()
-      }, 'testAgent.lifecycle')
-      return {
+      const handle: AgentHandle = {
         agent,
-        dispose: () => {
-          return agentCtx.fiber.dispose()
+        async dispose() {
+          handleDisposals.push(agent.id)
+          unregister()
+          detachSession()
+          await agentCtx.fiber.dispose()
         },
       }
+      return handle
     },
     async resume() {
       throw new Error('test harness has no persisted sessions')
@@ -121,7 +122,7 @@ async function harness(
     ...extras.openPath === undefined ? {} : { openPath: extras.openPath },
     ...extras.canOpenPath === undefined ? {} : { canOpenPath: extras.canOpenPath },
   })
-  return { api, ctx, storageDomain, root }
+  return { api, ctx, storageDomain, root, handleDisposals }
 }
 
 /** Stage one directory under the harness root for path adoption. */
@@ -510,7 +511,7 @@ describe('Host Workspace increments', () => {
   })
 
   it('purges the workspace folder and its live sessions, then streams one removal', async () => {
-    const { api, ctx, root } = await harness()
+    const { api, ctx, root, handleDisposals } = await harness()
     const workspace = expectOk(await api.workspace.create(request({ path: stageDir(root, 'delete-me') }))).workspace
     const sessionId = SessionId('session-purged-with-workspace')
     expectOk(await api.sessions.create(request({ workspaceId: workspace.workspaceId, sessionId })))
@@ -532,6 +533,7 @@ describe('Host Workspace increments', () => {
     expect(expectOk(await api.workspace.list(request({}))).items).toEqual([])
     expect(expectOk(await api.workspace.list(request({}))).archivedSessionIds).toEqual([])
     expect(expectOk(await api.sessions.list(request({}))).items.map(item => item.sessionId)).not.toContain(sessionId)
+    expect(handleDisposals).toEqual([sessionId])
     expect(ctx.agents.get(sessionId)).toBeUndefined()
     expect(existsSync(workspace.path)).toBe(false)
 

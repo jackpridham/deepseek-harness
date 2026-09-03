@@ -9,7 +9,7 @@ import { homedir } from 'node:os'
 import { dirname, isAbsolute, parse, relative, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { Agent, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatus } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatus } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-presets/types'
 import { AttachmentError, admitEncodedImages } from '@deepseek-ai/dsh-attachment'
 import type { AttachmentIdType, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -1089,6 +1089,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
   const presetSwitches = new Map<SessionId, Promise<unknown>>()
   /** Client-chosen identity creation/resume, deduplicated across concurrent retries. */
   const sessionCreations = new Map<SessionId, Promise<Agent>>()
+  /** Handles retained by the Host so its API-created agents can be torn down independently. */
+  const agentHandles = new WeakMap<Agent, AgentHandle>()
   /** Serializes path ownership and explicit title checks with Workspace mutations. */
   let workspaceCreationChain = Promise.resolve()
   const pendingQuestions = new Map<RpcId, PendingQuestion>()
@@ -1170,7 +1172,15 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         : [])
       for (const attachmentId of attachmentIdsIn(events)) candidateAttachments.add(attachmentId)
     }
-    for (const agent of targetAgents) await agent.ctx.fiber.dispose()
+    for (const agent of targetAgents) {
+      const handle = agentHandles.get(agent)
+      if (handle !== undefined) {
+        await handle.dispose()
+        agentHandles.delete(agent)
+      } else {
+        await agent.ctx.fiber.dispose()
+      }
+    }
     for (const id of orderedIds) {
       if (ctx.sessions.get(id) !== undefined || ctx.agents.get(id) !== undefined) {
         throw new Error(`session "${id}" did not dispose before workspace purge`)
@@ -1730,11 +1740,11 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           // session's history was produced under that composition, and
           // rebuilding it differently would replay tool calls the model can no
           // longer make.
-          return (await ctx.agents.resume({
+          return rememberAgentHandle(await ctx.agents.resume({
             resumeSessionId: sessionId,
             agentOptions: agentOptions(),
             setup: (await composeAgent(storedPreset)).setup,
-          })).agent
+          }))
         }
 
         try {
@@ -1743,7 +1753,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           throw new Error(`failed to ensure project directory "${cwd}": ${String(error)}`, { cause: error })
         }
         const composition = await composeAgent(presetId)
-        return (await ctx.agents.create({
+        return rememberAgentHandle(await ctx.agents.create({
           sessionId,
           agentOptions: agentOptions(),
           meta: {
@@ -1751,7 +1761,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             ...composition.agentPreset === undefined ? {} : { agentPreset: composition.agentPreset },
           },
           setup: composition.setup,
-        })).agent
+        }))
       })().catch((error: unknown) => {
         // Another Host entry path may have published the same identity while
         // this operation crossed an asynchronous persistence/filesystem step.
@@ -1780,6 +1790,12 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       throw new SessionCwdConflict(sessionId, cwd, agent.session.header.cwd)
     }
     return agent
+  }
+
+  /** Retain the lifecycle capability returned for one Host-owned Session. */
+  function rememberAgentHandle(handle: AgentHandle): Agent {
+    agentHandles.set(handle.agent, handle)
+    return handle.agent
   }
 
   /** Resolve or create one path while holding the Host's workspace-create chain. */
@@ -2467,7 +2483,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         // plane, composing nothing would leave the child with no tools at all.
         const forkComposition = await composeAgent(resolveSessionPreset(source))
         try {
-          await ctx.agents.create({
+          rememberAgentHandle(await ctx.agents.create({
             sessionId: childId,
             seed: events.slice(0, cut),
             meta: {
@@ -2480,7 +2496,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             },
             agentOptions: agentOptions(),
             setup: forkComposition.setup,
-          })
+          }))
         } catch (error: unknown) {
           return err(request, {
             code: 'internal',
