@@ -11,7 +11,7 @@ import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { RequestPayload, ResponseValue } from './rpc-map.ts'
 import type { Wire } from './rpc.schema.ts'
 import type {
-  HistoryEntry, ModelCatalogFailure, ModelCatalogModel, ModelProviderGroup, ModelReasoning,
+  HistoryEntry, ModelCatalogFailure, ModelCatalogModel, ModelContextChoices, ModelProviderGroup, ModelReasoning,
   ModelReasoningEffort, ModelSelection, SessionListMetadata, SessionProjectionsBlock, SessionSearchItem, SessionSummary,
 } from './sessions.ts'
 import type { ToolEventView } from './events.ts'
@@ -149,6 +149,7 @@ export const sessionHistoryRequestSchema = z.object({
 export const modelSelectionSchema = z.object({
   provider: z.string().min(1),
   model: z.string().min(1),
+  contextWindow: z.number().int().positive().optional(),
   reasoningEffort: z.string().min(1).optional(),
 }) satisfies z.ZodType<Wire<ModelSelection>>
 
@@ -165,11 +166,18 @@ export const modelReasoningSchema = z.object({
   defaultEffort: z.string().min(1).optional(),
 }) satisfies z.ZodType<Wire<ModelReasoning>>
 
+/** Exact-model bounded context choices. */
+export const modelContextChoicesSchema = z.object({
+  defaultContextWindow: z.number().int().positive(),
+  contextWindows: z.array(z.number().int().positive()).min(1),
+}) satisfies z.ZodType<Wire<ModelContextChoices>>
+
 /** One advisory model entry inside a provider group. */
 export const modelCatalogModelSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   description: z.string().optional(),
+  context: modelContextChoicesSchema.optional(),
   reasoning: modelReasoningSchema.optional(),
 }) satisfies z.ZodType<Wire<ModelCatalogModel>>
 
@@ -260,6 +268,7 @@ export const sessionSelectModelRequestSchema = z.object({
   sessionId: sessionIdSchema,
   provider: z.string().min(1),
   model: z.string().min(1),
+  contextWindow: z.number().int().positive().optional(),
   reasoningEffort: z.string().min(1).optional(),
 }) satisfies z.ZodType<Wire<RequestPayload<'session.selectModel'>>>
 

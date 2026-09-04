@@ -1000,6 +1000,41 @@ describe('LlmRuntime', () => {
     expect(Object.isFrozen(seen[1]?.messages)).toBe(true)
   })
 
+  it('materializes and validates endpoint-advertised context choices', async () => {
+    const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
+    const adapter = new class extends RecordingAdapter {
+      override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+        return Promise.resolve({
+          provider,
+          id: model,
+          name: model,
+          context: { contextWindow: 131_072 },
+          contextOptions: { defaultContextWindow: 131_072, contextWindows: [65_536, 131_072] },
+          reasoning: {
+            efforts: [{ id: ReasoningEffortId('high'), name: 'High' }],
+            defaultEffort: ReasoningEffortId('high'),
+          },
+        })
+      }
+    }(SCRIPT)
+    ctx.llm.registerAdapter(['route'], adapter)
+
+    const defaulted = await ctx.llm.prepareCall({ provider: 'route', model: 'model' })
+    expect(defaulted.config).toEqual({
+      provider: 'route', model: 'model', contextWindow: 131_072, reasoningEffort: ReasoningEffortId('high'),
+    })
+    expect(defaulted.context).toEqual({ contextWindow: 131_072 })
+
+    const selected = await ctx.llm.prepareCall({ provider: 'route', model: 'model', contextWindow: 65_536 })
+    expect(selected.config.contextWindow).toBe(65_536)
+    expect(selected.config.reasoningEffort).toBe(ReasoningEffortId('high'))
+    expect(selected.context).toEqual({ contextWindow: 65_536 })
+
+    await expect(ctx.llm.prepareCall({ provider: 'route', model: 'model', contextWindow: 32_768 }))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_CONTEXT_WINDOW' })
+  })
+
   it('passes cancellation through exact-model resolution', async () => {
     const ctx = new Context()
     await ctx.plugin(LlmRuntime)

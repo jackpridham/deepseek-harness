@@ -27,6 +27,7 @@ describe('installModelSelection()', () => {
     selection.current = {
       provider: 'alpha',
       model: 'a1',
+      contextWindow: 65_536,
       reasoningEffort: ReasoningEffortId('high'),
     }
     expect((await ctx.systemPrompt.assemble()).variables).toMatchObject({ provider: 'alpha', model: 'a1' })
@@ -36,6 +37,7 @@ describe('installModelSelection()', () => {
     )).resolves.toEqual({
       provider: 'alpha',
       model: 'a1',
+      contextWindow: 65_536,
       reasoningEffort: ReasoningEffortId('high'),
       temperature: 0.2,
     })
@@ -44,6 +46,7 @@ describe('installModelSelection()', () => {
     const inherited: LlmCallConfig = {
       provider: 'alpha',
       model: 'a1',
+      contextWindow: 32_768,
       reasoningEffort: ReasoningEffortId('max'),
       temperature: 0.2,
     }

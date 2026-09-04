@@ -293,6 +293,12 @@ async function buildModelCatalog(ctx: Context): Promise<{
           id: model.id,
           name: model.name,
           ...model.description === undefined ? {} : { description: model.description },
+          ...resolved.contextOptions === undefined ? {} : {
+            context: {
+              defaultContextWindow: resolved.contextOptions.defaultContextWindow,
+              contextWindows: [...resolved.contextOptions.contextWindows],
+            },
+          },
           ...reasoning === undefined ? {} : { reasoning },
         }
       }))
@@ -1247,6 +1253,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         return {
           provider: logged.provider,
           model: logged.model,
+          ...logged.contextWindow === undefined ? {} : { contextWindow: logged.contextWindow },
           ...logged.reasoningEffort === undefined
             ? {}
             : { reasoningEffort: logged.reasoningEffort },
@@ -2340,7 +2347,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       },
 
       async selectModel(request) {
-        const { sessionId, provider, model, reasoningEffort } = request.payload
+        const { sessionId, provider, model, contextWindow, reasoningEffort } = request.payload
         const found = await agentFor(sessionId)
         if ('error' in found) return err(request, found.error)
         return serializeImageAdmission(found.agent, async () => {
@@ -2348,6 +2355,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             const resolved = await ctx.llm.resolveCallConfig({
               provider,
               model,
+              ...contextWindow === undefined ? {} : { contextWindow },
               ...reasoningEffort === undefined
                 ? {}
                 : { reasoningEffort: ReasoningEffortId(reasoningEffort) },
@@ -2355,6 +2363,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             const selected: ModelSelection = {
               provider: resolved.provider,
               model: resolved.model,
+              ...resolved.contextWindow === undefined ? {} : { contextWindow: resolved.contextWindow },
               ...resolved.reasoningEffort === undefined
                 ? {}
                 : { reasoningEffort: resolved.reasoningEffort },

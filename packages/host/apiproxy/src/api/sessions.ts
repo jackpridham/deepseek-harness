@@ -98,6 +98,8 @@ export interface ModelSelection {
   provider: string
   /** Provider-owned model id. */
   model: string
+  /** Adapter-advertised effective context tier. */
+  contextWindow?: number
   /** Adapter-owned reasoning effort; absence preserves adapter/provider default behavior. */
   reasoningEffort?: string
 }
@@ -128,8 +130,18 @@ export interface ModelCatalogModel {
   name: string
   /** Optional provider-supplied description. */
   description?: string
+  /** Bounded selectable context sizes and their default. */
+  context?: ModelContextChoices
   /** Exact-route reasoning metadata when the adapter exposes it. */
   reasoning?: ModelReasoning
+}
+
+/** Exact-model context choices advertised by the owning adapter. */
+export interface ModelContextChoices {
+  /** Context used when the caller does not choose another allowed tier. */
+  defaultContextWindow: number
+  /** Allowed effective context sizes in display order. */
+  contextWindows: number[]
 }
 
 /** One provider and the models it advertised successfully. */
@@ -301,6 +313,7 @@ export interface SessionsApi {
     sessionId: SessionId
     provider: string
     model: string
+    contextWindow?: number
     reasoningEffort?: string
   }>):
   Promise<RpcResponse<{ selected: ModelSelection }>>

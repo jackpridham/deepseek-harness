@@ -114,6 +114,20 @@ describe('draft-provider model discovery', () => {
             id: 'acme-large',
             display_name: 'Acme Large',
             context_length: 65_536,
+            context_windows: [
+              { context_window: 32_768, model: 'acme-large--ctx-32768' },
+              { context_window: 65_536, model: 'acme-large' },
+              { context_window: 65_536, model: 'duplicate-is-ignored' },
+              { context_window: 0, model: 'invalid' },
+            ],
+            reasoning: {
+              format: 'qwen-chat-template',
+              default_effort: 'high',
+              efforts: [
+                { id: 'off', name: 'Off', wire_value: null },
+                { id: 'high', name: 'On', wire_value: 'high' },
+              ],
+            },
             max_output_tokens: 4096,
             architecture: { input_modalities: ['text', 'image', 'audio', 'image'] },
           },
@@ -131,6 +145,18 @@ describe('draft-provider model discovery', () => {
         name: 'Acme Large',
         inputModalities: ['text', 'image'],
         contextWindow: 65_536,
+        contextWindows: [
+          { contextWindow: 32_768, model: 'acme-large--ctx-32768' },
+          { contextWindow: 65_536, model: 'acme-large' },
+        ],
+        reasoning: {
+          format: 'qwen-chat-template',
+          defaultEffort: 'high',
+          efforts: [
+            { id: 'off', name: 'Off', wireValue: null },
+            { id: 'high', name: 'On', wireValue: 'high' },
+          ],
+        },
         maxTokens: 4096,
       },
       { id: 'acme-small' },

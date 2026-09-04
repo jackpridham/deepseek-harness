@@ -3,7 +3,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import LlmRuntime, { LlmAdapter } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { LlmAdapter, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { LocalCredentialProvider } from '@deepseek-ai/dsh-credentials-local'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
@@ -86,10 +86,23 @@ describe('request-level dynamic profiles', () => {
             id: 'qwen-next',
             name: 'Qwen Next',
             context_length: 65_536,
+            context_windows: [
+              { context_window: 32_768, model: 'qwen-next--ctx-32768' },
+              { context_window: 65_536, model: 'qwen-next' },
+            ],
+            reasoning: {
+              format: 'qwen-chat-template',
+              default_effort: 'high',
+              efforts: [
+                { id: 'off', name: 'Off', wire_value: null },
+                { id: 'high', name: 'High', wire_value: 'high' },
+              ],
+            },
             architecture: { input_modalities: ['text'] },
           }],
         }),
       },
+      { events: textEvents },
       { events: textEvents },
     ])
     const ctx = await boot(dir, {
@@ -109,13 +122,67 @@ describe('request-level dynamic profiles', () => {
       id: 'qwen-next',
       name: 'Qwen Next',
       inputModalities: ['text'],
+      contextOptions: { defaultContextWindow: 65_536, contextWindows: [32_768, 65_536] },
     }])
     const resolved = await ctx.llm.resolveModelInfo('inf01', 'qwen-next')
     expect(resolved.context).toEqual({ contextWindow: 65_536 })
-    const result = await assemble(ctx, { provider: 'inf01', model: 'qwen-next', messages: [] })
+    expect(resolved.contextOptions).toEqual({ defaultContextWindow: 65_536, contextWindows: [32_768, 65_536] })
+    expect(resolved.reasoning).toEqual({
+      defaultEffort: 'high',
+      efforts: [{ id: 'off', name: 'Off' }, { id: 'high', name: 'High' }],
+    })
+    const prepared = await ctx.llm.resolveCallConfig({
+      provider: 'inf01', model: 'qwen-next', contextWindow: 32_768,
+    })
+    const result = await assemble(ctx, { ...prepared, messages: [] })
     expect(result.message.content).toEqual([{ type: 'text', text: 'hello' }])
     expect(server.paths).toEqual(['/models', '/chat/completions'])
-    expect(server.headers.map(headers => headers.authorization)).toEqual(['Bearer live-key', 'Bearer live-key'])
+    expect(server.requests[1]).toMatchObject({ model: 'qwen-next--ctx-32768' })
+    expect(server.requests[1]).toMatchObject({
+      chat_template_kwargs: { enable_thinking: true, preserve_thinking: true },
+    })
+    const withoutReasoning = await ctx.llm.resolveCallConfig({
+      provider: 'inf01', model: 'qwen-next', contextWindow: 32_768, reasoningEffort: ReasoningEffortId('off'),
+    })
+    await assemble(ctx, { ...withoutReasoning, messages: [] })
+    expect(server.requests[2]).toMatchObject({
+      model: 'qwen-next--ctx-32768',
+      chat_template_kwargs: { enable_thinking: false, preserve_thinking: true },
+    })
+    expect(server.headers.map(headers => headers.authorization)).toEqual([
+      'Bearer live-key', 'Bearer live-key', 'Bearer live-key',
+    ])
+  })
+
+  it('rejects endpoint reasoning formats that the runtime cannot apply', async () => {
+    const dir = await home()
+    await writeFile(join(dir, '.credentials.yaml'), 'INF01_KEY: live-key\n', { mode: 0o600 })
+    const server = await mockServer([{
+      body: JSON.stringify({
+        data: [{
+          id: 'unsafe',
+          reasoning: {
+            format: 'unknown-template-flag',
+            default_effort: 'high',
+            efforts: [{ id: 'high', name: 'High', wire_value: 'high' }],
+          },
+        }],
+      }),
+    }])
+    const ctx = await boot(dir, {
+      providers: {
+        inf01: {
+          apiKeyEnv: 'INF01_KEY',
+          api: 'openai-completions',
+          baseURL: server.url,
+          modelsFromEndpoint: true,
+          models: [{ id: 'seed', contextWindow: 1024, maxTokens: 128 }],
+        },
+      },
+    })
+
+    await expect(ctx.llm.listModels('inf01')).rejects.toMatchObject({ code: 'INVALID_CATALOG' })
+    expect(server.paths).toEqual(['/models'])
   })
 
   it('mounts bare and dormant, then registers routes the moment settings supply providers', async () => {

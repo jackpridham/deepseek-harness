@@ -99,6 +99,9 @@ export class ModelDirectory {
       sessionId: this.sessionId,
       provider: selection.provider,
       model: selection.model,
+      ...selection.contextWindow === undefined
+        ? {}
+        : { contextWindow: selection.contextWindow },
       ...selection.reasoningEffort === undefined
         ? {}
         : { reasoningEffort: selection.reasoningEffort },

@@ -209,6 +209,10 @@ export interface ResolvedPiAiProviderProfile
    * own, so a catalog capability must not appear here.
    */
   configuredMaxTokens: ReadonlyMap<string, number>
+  /** Endpoint-owned context tiers and exact runtime route ids by logical model id. */
+  contextRoutes: ReadonlyMap<string, ReadonlyMap<number, string>>
+  /** Endpoint-owned default reasoning effort by logical model id. */
+  reasoningDefaults: ReadonlyMap<string, ModelThinkingLevel>
 }
 
 /** Plugin configuration: the provider routes this instance owns. */
@@ -457,6 +461,8 @@ export function resolveProfiles(
       ...rest.headers === undefined ? {} : { headers: { ...rest.headers } },
       ...rest.thinkingBudgets === undefined ? {} : { thinkingBudgets: { ...rest.thinkingBudgets } },
       configuredMaxTokens: catalog.configuredMaxTokens,
+      contextRoutes: new Map(),
+      reasoningDefaults: new Map(),
       piProvider: buildProvider({
         provider,
         displayName,
