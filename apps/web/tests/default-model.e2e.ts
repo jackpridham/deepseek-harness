@@ -31,6 +31,11 @@ const START_MODEL = 'origin-large'
 /** The route the switch lands on, which then becomes the saved default. */
 const ROUTE = 'acme-gateway'
 const MODEL = 'acme-large'
+const EXTRA_MODELS = Array.from({ length: 10 }, (_, index) => ({
+  id: `origin-extra-${index}`,
+  name: `Origin Extra ${index}`,
+  contextWindow: 65_536,
+}))
 
 describe('web e2e: the composer model switch is the default for later sessions', () => {
   let scaffold: WebScaffold
@@ -70,7 +75,7 @@ describe('web e2e: the composer model switch is the default for later sessions',
           displayName: 'Origin Gateway',
           api: 'openai-completions',
           baseURL: 'https://gateway.origin.example/v1',
-          models: [{ id: START_MODEL, name: 'Origin Large', contextWindow: 65_536 }],
+          models: [{ id: START_MODEL, name: 'Origin Large', contextWindow: 65_536 }, ...EXTRA_MODELS],
         },
         [ROUTE]: {
           displayName: 'Acme Gateway',
@@ -100,6 +105,22 @@ describe('web e2e: the composer model switch is the default for later sessions',
     await browser?.close()
     await scaffold?.close()
   })
+
+  it('keeps a long model menu within a resized viewport', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-model-menu-viewport'))
+    await page.setViewportSize({ width: 800, height: 600 })
+    const trigger = page.getByRole('button', { name: /^选择模型/ })
+    await trigger.click()
+    const menu = page.getByRole('menu')
+    await menu.waitFor()
+    const box = await menu.boundingBox()
+    expect(box).not.toBeNull()
+    expect(box?.y).toBeGreaterThanOrEqual(8)
+    expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(592)
+    await page.keyboard.press('Escape')
+    await page.setViewportSize({ width: 1680, height: 1000 })
+    expect(tripwire.pageErrors).toEqual([])
+  }, 30_000)
 
   it('writes the switched model as the default and leaves a logged session alone', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-default-model'))

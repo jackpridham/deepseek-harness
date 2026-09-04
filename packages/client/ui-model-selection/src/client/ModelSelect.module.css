@@ -64,6 +64,7 @@
 }
 
 .menu {
+  box-sizing: border-box;
   position: absolute;
   right: 0;
   bottom: calc(100% + 8px);
@@ -75,7 +76,7 @@
   width: max-content;
   min-width: min(240px, calc(100vw - 32px));
   max-width: min(420px, calc(100vw - 32px));
-  max-height: min(360px, calc(100vh - 96px));
+  max-height: var(--dsh-model-menu-max-height, min(360px, calc(100vh - 96px)));
   overflow: hidden;
   padding: 4px;
   /* Surface tokens match the Menu primitive card (ui-primitives
@@ -92,6 +93,11 @@
      styles/scrollbar.css for the rebinding contract). */
   --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
   --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+.menuBelow {
+  top: calc(100% + 8px);
+  bottom: auto;
 }
 
 .status,
@@ -184,8 +190,7 @@
 }
 
 .option:disabled {
-  color: var(--dsw-alias-label-dimmed);
-  opacity: 0.45;
+  color: var(--dsw-alias-label-tertiary);
   cursor: default;
 }
 

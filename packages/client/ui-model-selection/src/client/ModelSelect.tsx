@@ -10,8 +10,8 @@
  * card; the in-menu strip with Retry remains the catalog-load surface.
  */
 import {
-  useEffect, useId, useMemo, useRef, useState, useSyncExternalStore,
-  type KeyboardEvent, type FocusEvent,
+  useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
+  type CSSProperties, type KeyboardEvent, type FocusEvent,
 } from 'react'
 import clsx from 'clsx'
 import type { ModelReasoningEffort, ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
@@ -33,6 +33,9 @@ interface EffortChoice {
   description?: string
 }
 
+/** Component-local CSS variables used to keep the open menu inside the viewport. */
+type MenuStyle = CSSProperties & { '--dsh-model-menu-max-height': string }
+
 /**
  * Render the composer model seat.
  * @param props - owner share (locked) + injected face (shared directory
@@ -49,6 +52,7 @@ export function ModelSelect(
   )
   const [open, setOpen] = useState(false)
   const [pane, setPane] = useState<Pane>('model')
+  const [menuLayout, setMenuLayout] = useState({ below: false, maxHeight: 360 })
   // The in-menu error strip serves catalog loads (its Retry re-runs the
   // load); a rejected SELECTION announces through the transient toast
   // instead, so the strip renders only while the latest failure-capable
@@ -141,6 +145,30 @@ export function ModelSelect(
     }
     document.addEventListener('mousedown', closeOutside)
     return () => { document.removeEventListener('mousedown', closeOutside) }
+  }, [open])
+
+  useLayoutEffect(() => {
+    if (!open) return
+    const place = (): void => {
+      const rect = rootRef.current?.getBoundingClientRect()
+      if (rect === undefined) return
+      const edge = 8
+      const gap = 8
+      const above = Math.max(0, rect.top - edge - gap)
+      const below = Math.max(0, window.innerHeight - rect.bottom - edge - gap)
+      const openBelow = below > above
+      const maxHeight = Math.floor(Math.min(360, openBelow ? below : above))
+      setMenuLayout(current => current.below === openBelow && current.maxHeight === maxHeight
+        ? current
+        : { below: openBelow, maxHeight })
+    }
+    place()
+    window.addEventListener('resize', place)
+    window.addEventListener('scroll', place, true)
+    return () => {
+      window.removeEventListener('resize', place)
+      window.removeEventListener('scroll', place, true)
+    }
   }, [open])
 
   if (!available) return null
@@ -309,10 +337,11 @@ export function ModelSelect(
       {open && (
         <div
           id={`${id}-menu`}
-          className={css.menu}
+          className={clsx(css.menu, menuLayout.below && css.menuBelow)}
           role="menu"
           aria-label={t('menu.aria')}
           aria-busy={state.status === 'loading' || busy}
+          style={{ '--dsh-model-menu-max-height': `${menuLayout.maxHeight}px` } as MenuStyle}
         >
           {pane === 'model' && (
             <>
