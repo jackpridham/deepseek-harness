@@ -280,15 +280,24 @@ export class PiAiAdapter extends LlmAdapter {
     const profile = this.profileOf(snapshot, provider)
     return snapshot.models.getModels(provider).map((model) => {
       const contextRoutes = profile.contextRoutes.get(model.id)
+      const state = profile.modelStates.get(model.id)
       return {
         provider,
         id: model.id,
         name: model.name,
         inputModalities: [...model.input],
-        ...contextRoutes === undefined ? {} : {
+        selectable: state?.selectable ?? true,
+        active: state?.active ?? false,
+        ...state?.selectable === false ? {} : {
           contextOptions: {
             defaultContextWindow: model.contextWindow,
-            contextWindows: [...contextRoutes.keys()],
+            contextWindows: contextRoutes === undefined
+              ? [{ contextWindow: model.contextWindow, available: true }]
+              : [...contextRoutes.entries()].map(([contextWindow, route]) => ({
+                contextWindow,
+                available: route.available,
+                ...route.unavailableReason === undefined ? {} : { unavailableReason: route.unavailableReason },
+              })),
           },
         },
       }
@@ -311,16 +320,25 @@ export class PiAiAdapter extends LlmAdapter {
       // catalog's `maxTokens` sizes the model and stops there.
       const configuredMaxTokens = profile.configuredMaxTokens.get(model)
       const contextRoutes = profile.contextRoutes.get(model)
+      const state = profile.modelStates.get(model)
       return {
         provider,
         id: model,
         name: resolvedModel.name,
         inputModalities: [...resolvedModel.input],
+        selectable: state?.selectable ?? true,
+        active: state?.active ?? false,
         context: { contextWindow: resolvedModel.contextWindow },
-        ...contextRoutes === undefined ? {} : {
+        ...state?.selectable === false ? {} : {
           contextOptions: {
             defaultContextWindow: resolvedModel.contextWindow,
-            contextWindows: [...contextRoutes.keys()],
+            contextWindows: contextRoutes === undefined
+              ? [{ contextWindow: resolvedModel.contextWindow, available: true }]
+              : [...contextRoutes.entries()].map(([contextWindow, route]) => ({
+                contextWindow,
+                available: route.available,
+                ...route.unavailableReason === undefined ? {} : { unavailableReason: route.unavailableReason },
+              })),
           },
         },
         ...configuredMaxTokens === undefined ? {} : { defaultMaxTokens: configuredMaxTokens },
@@ -349,9 +367,16 @@ export class PiAiAdapter extends LlmAdapter {
         'UNSUPPORTED_CONTEXT_WINDOW',
       )
     }
-    const runtimeModel = contextRoute === undefined || contextRoute === model.id
+    if (contextRoute?.available === false && options.bestTryContext !== true) {
+      throw new LlmError(
+        contextRoute.unavailableReason
+          ?? `pi-ai provider "${options.provider}" model "${options.model}" context window ${contextWindow} requires best-try mode`,
+        'UNAVAILABLE_CONTEXT_WINDOW',
+      )
+    }
+    const runtimeModel = contextRoute === undefined || contextRoute.model === model.id
       ? model
-      : { ...model, id: contextRoute }
+      : { ...model, id: contextRoute.model }
     const reasoning = resolveReasoningLevel(
       model,
       options.reasoningEffort ?? profile.reasoningDefaults.get(options.model) ?? profile.reasoning,

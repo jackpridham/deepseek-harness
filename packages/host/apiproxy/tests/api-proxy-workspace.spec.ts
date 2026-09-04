@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -6,7 +6,7 @@ import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentFactory, AgentHandle } from '@deepseek-ai/dsh-agent'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import type { Session } from '@deepseek-ai/dsh-session'
+import type { Session, SessionHeader } from '@deepseek-ai/dsh-session'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
@@ -64,6 +64,9 @@ async function harness(
   extras: {
     openPath?: (path: string, signal: AbortSignal) => Promise<void>
     canOpenPath?: () => boolean
+    parents?: ReadonlyMap<SessionId, SessionId>
+    persisted?: SessionHeader[]
+    resumeGate?: Promise<void>
   } = {},
 ) {
   const ctx = new Context()
@@ -75,10 +78,20 @@ async function harness(
   const storageDomain = new DomainFacility(ctx, { backend: 'memory', routes: {} })
   ctx.storage.mount('domain', storageDomain)
   ctx.provide('storageDomain', storageDomain)
+  const persisted = [...extras.persisted ?? []]
   ctx.provide('sessionPersistence', {
-    list: () => Promise.resolve([]),
-    inspect: () => Promise.reject(new Error('test harness has no persisted sessions')),
-    delete: () => Promise.resolve(),
+    list: () => Promise.resolve([...persisted]),
+    inspect: (id: SessionId) => {
+      const meta = persisted.find(header => header.id === id)
+      return meta === undefined
+        ? Promise.reject(new Error(`test harness has no persisted session ${id}`))
+        : Promise.resolve({ meta, events: [] })
+    },
+    delete: (id: SessionId) => {
+      const index = persisted.findIndex(header => header.id === id)
+      if (index !== -1) persisted.splice(index, 1)
+      return Promise.resolve()
+    },
   } as never)
   ctx.provide('attachments', {
     collectGarbage: () => Promise.resolve(0),
@@ -88,9 +101,12 @@ async function harness(
 
   const factory: AgentFactory = {
     async createAgent(_ownerCtx, options) {
+      const parentSession = extras.parents?.get(options.sessionId)
       const session = ctx.sessions.prepare(
         options.sessionId,
-        options.meta === undefined ? {} : { meta: options.meta },
+        options.meta === undefined && parentSession === undefined
+          ? {}
+          : { meta: { ...options.meta, ...parentSession === undefined ? {} : { parentSession } } },
       )
       const detachSession = ctx.sessions.enter(session)
       ctx.sessions.announce(session)
@@ -108,8 +124,29 @@ async function harness(
       }
       return handle
     },
-    async resume() {
-      throw new Error('test harness has no persisted sessions')
+    async resume(_ownerCtx, options) {
+      await extras.resumeGate
+      const inspected = await ctx.sessionPersistence.inspect(options.resumeSessionId)
+      const session = ctx.sessions.prepare(inspected.meta.id, {
+        meta: structuredClone(inspected.meta),
+        seed: structuredClone([...inspected.events]),
+        seedSource: 'persistence',
+      })
+      const detachSession = ctx.sessions.enter(session)
+      ctx.sessions.announce(session)
+      const agentCtx = new Context()
+      const agent = stubAgent(session, agentCtx)
+      const unregister = ctx.agents.register(agent)
+      const handle: AgentHandle = {
+        agent,
+        async dispose() {
+          handleDisposals.push(agent.id)
+          unregister()
+          detachSession()
+          await agentCtx.fiber.dispose()
+        },
+      }
+      return handle
     },
   }
   ctx.agents.setFactory(factory)
@@ -550,6 +587,198 @@ describe('Host Workspace increments', () => {
     expect(reregistered.sessionIds).toEqual([])
     expect(expectOk(await api.sessions.list(request({}))).items.map(item => item.sessionId)).not.toContain(sessionId)
     abort.abort()
+  })
+
+  it('unlinks a workspace path replaced by a symlink without following its target', async () => {
+    const { api, root } = await harness()
+    const workspacePath = stageDir(root, 'replace-me')
+    const target = stageDir(root, 'keep-target')
+    const sentinel = join(target, 'valuable.txt')
+    writeFileSync(sentinel, 'keep')
+    const workspace = expectOk(await api.workspace.create(request({ path: workspacePath }))).workspace
+    rmSync(workspacePath, { recursive: true })
+    symlinkSync(target, workspacePath, process.platform === 'win32' ? 'junction' : 'dir')
+
+    expectOk(await api.workspace.delete(request({ workspaceId: workspace.workspaceId })))
+
+    expect(existsSync(workspacePath)).toBe(false)
+    expect(existsSync(sentinel)).toBe(true)
+    expect(existsSync(target)).toBe(true)
+  })
+
+  it('serializes workspace deletion after session creation and attachment', async () => {
+    const { api, ctx, root } = await harness()
+    const workspace = expectOk(await api.workspace.create(request({ path: stageDir(root, 'serialized') }))).workspace
+    const entity = ctx.workspaceRegistry.get(workspace.workspaceId)
+    if (entity === undefined) throw new Error('workspace missing from registry')
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const attach = entity.attachSession.bind(entity)
+    vi.spyOn(entity, 'attachSession').mockImplementationOnce(async (sessionId) => {
+      entered.resolve(undefined)
+      await release.promise
+      await attach(sessionId)
+    })
+    const sessionId = SessionId('session-create-delete-race')
+    const creation = api.sessions.create(request({ workspaceId: workspace.workspaceId, sessionId }))
+    await entered.promise
+    let deletionSettled = false
+    const deletion = api.workspace.delete(request({ workspaceId: workspace.workspaceId }))
+      .finally(() => { deletionSettled = true })
+    await Promise.resolve()
+    expect(deletionSettled).toBe(false)
+
+    release.resolve(undefined)
+    expectOk(await creation)
+    expectOk(await deletion)
+    expect(ctx.agents.get(sessionId)).toBeUndefined()
+    expect(existsSync(workspace.path)).toBe(false)
+  })
+
+  it('deletes one session lineage while preserving siblings and the workspace directory', async () => {
+    const parent = SessionId('session-delete-parent')
+    const child = SessionId('session-delete-child')
+    const sibling = SessionId('session-delete-sibling')
+    const { api, ctx, root, handleDisposals } = await harness(undefined, undefined, {
+      parents: new Map([[child, parent]]),
+    })
+    const workspace = expectOk(await api.workspace.create(request({ path: stageDir(root, 'keep-me') }))).workspace
+    for (const sessionId of [parent, child, sibling]) {
+      expectOk(await api.sessions.create(request({ workspaceId: workspace.workspaceId, sessionId })))
+    }
+    expectOk(await api.workspace.archiveSession(request({ sessionId: parent })))
+
+    expectOk(await api.workspace.deleteSession(request({ sessionId: parent })))
+
+    expect(handleDisposals).toEqual([child, parent])
+    expect(ctx.agents.get(parent)).toBeUndefined()
+    expect(ctx.agents.get(child)).toBeUndefined()
+    expect(ctx.agents.get(sibling)).toBeDefined()
+    expect(existsSync(workspace.path)).toBe(true)
+    const listed = expectOk(await api.workspace.list(request({})))
+    expect(listed.items[0]?.sessionIds).toEqual([sibling])
+    expect(listed.archivedSessionIds).toEqual([])
+    expect(expectOk(await api.sessions.list(request({}))).items.map(item => item.sessionId)).toEqual([sibling])
+    expect((await api.workspace.deleteSession(request({ sessionId: parent }))).result).toMatchObject({
+      ok: false,
+      error: { code: 'session-not-found', details: { sessionId: parent } },
+    })
+  })
+
+  it('includes a descendant published while its parent reaches quiescence', async () => {
+    const parent = SessionId('session-delete-racing-parent')
+    const child = SessionId('session-delete-racing-child')
+    const { api, ctx, root } = await harness()
+    const workspace = expectOk(await api.workspace.create(request({ path: stageDir(root, 'racing-child') }))).workspace
+    expectOk(await api.sessions.create(request({ workspaceId: workspace.workspaceId, sessionId: parent })))
+    const parentAgent = ctx.agents.get(parent)
+    if (parentAgent === undefined) throw new Error('parent agent missing')
+    let published = false
+    parentAgent.whenIdle = async () => {
+      if (published) return
+      published = true
+      const session = ctx.sessions.prepare(child, { meta: { cwd: workspace.path, parentSession: parent } })
+      const detach = ctx.sessions.enter(session)
+      ctx.sessions.announce(session)
+      const childCtx = new Context()
+      const childAgent = stubAgent(session, childCtx)
+      const unregister = ctx.agents.register(childAgent)
+      childCtx.effect(() => () => {
+        unregister()
+        detach()
+      }, 'racing child registration')
+    }
+
+    const deleted = expectOk(await api.workspace.deleteSession(request({ sessionId: parent })))
+
+    expect(deleted.deletedSessionIds).toEqual([child, parent])
+    expect(ctx.sessions.get(parent)).toBeUndefined()
+    expect(ctx.sessions.get(child)).toBeUndefined()
+  })
+
+  it('waits for an in-flight cold resume and then removes the published agent', async () => {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-apiproxy-workspace-')))
+    const cwd = stageDir(root, 'cold-resume')
+    const sessionId = SessionId('session-cold-resume-race')
+    const release = Promise.withResolvers<undefined>()
+    const { api, ctx } = await harness(root, undefined, {
+      persisted: [{ version: 0, id: sessionId, createdAt: 1, cwd }],
+      resumeGate: release.promise,
+    })
+    const resume = api.sessions.rename(request({ sessionId, title: 'renamed' }))
+    let deletionSettled = false
+    const deletion = api.workspace.deleteSession(request({ sessionId }))
+      .finally(() => { deletionSettled = true })
+    await Promise.resolve()
+    expect(deletionSettled).toBe(false)
+
+    release.resolve(undefined)
+    await resume
+    expect(expectOk(await deletion).deletedSessionIds).toEqual([sessionId])
+    expect(ctx.sessions.get(sessionId)).toBeUndefined()
+    expect(ctx.agents.get(sessionId)).toBeUndefined()
+  })
+
+  it('broadcasts a permanent cold-session removal to every connected client', async () => {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-apiproxy-workspace-')))
+    const cwd = stageDir(root, 'cold-broadcast')
+    const sessionId = SessionId('session-cold-broadcast')
+    const { api } = await harness(root, undefined, {
+      persisted: [{ version: 0, id: sessionId, createdAt: 1, cwd }],
+    })
+    const firstAbort = new AbortController()
+    const secondAbort = new AbortController()
+    const first = api.events.host(request({}), firstAbort.signal)[Symbol.asyncIterator]()
+    const second = api.events.host(request({}), secondAbort.signal)[Symbol.asyncIterator]()
+    const nextRemoval = async (stream: AsyncIterator<RpcRequest<HostFrame>>) => {
+      for (;;) {
+        const frame = await nextHostFrame(stream)
+        if (frame.payload.type === 'host/session-removed' && frame.payload.sessionId === sessionId) {
+          return frame
+        }
+      }
+    }
+    const firstFrame = nextRemoval(first)
+    const secondFrame = nextRemoval(second)
+
+    expectOk(await api.workspace.deleteSession(request({ sessionId })))
+
+    const expected = { type: 'host/session-removed', sessionId, deleted: true }
+    expect((await firstFrame).payload).toEqual(expected)
+    expect((await secondFrame).payload).toEqual(expected)
+    firstAbort.abort()
+    secondAbort.abort()
+  })
+
+  it('keeps persistence retryable when workspace accounting fails first', async () => {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-apiproxy-workspace-')))
+    const cwd = stageDir(root, 'cold-retry')
+    const sessionId = SessionId('session-cold-retry')
+    const { api, ctx } = await harness(root, undefined, {
+      persisted: [{ version: 0, id: sessionId, createdAt: 1, cwd }],
+    })
+    vi.spyOn(ctx.workspaceRegistry, 'purgeSessions').mockRejectedValueOnce(new Error('storage unavailable'))
+    const remove = vi.spyOn(ctx.sessionPersistence, 'delete')
+
+    await expect(api.workspace.deleteSession(request({ sessionId }))).rejects.toThrow('storage unavailable')
+    expect(remove).not.toHaveBeenCalled()
+    expect(expectOk(await api.workspace.deleteSession(request({ sessionId }))).deletedSessionIds)
+      .toEqual([sessionId])
+    expect(remove).toHaveBeenCalledWith(sessionId)
+  })
+
+  it('commits deletion even when best-effort attachment collection fails', async () => {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-apiproxy-workspace-')))
+    const cwd = stageDir(root, 'cold-gc')
+    const sessionId = SessionId('session-cold-gc')
+    const { api, ctx } = await harness(root, undefined, {
+      persisted: [{ version: 0, id: sessionId, createdAt: 1, cwd }],
+    })
+    vi.spyOn(ctx.attachments, 'collectGarbage').mockRejectedValueOnce(new Error('gc unavailable'))
+
+    expect(expectOk(await api.workspace.deleteSession(request({ sessionId }))).deletedSessionIds)
+      .toEqual([sessionId])
+    expect(expectOk(await api.sessions.list(request({}))).items).toEqual([])
   })
 
   it('archives a session into the global set, keeps its accounting, and streams the set once', async () => {

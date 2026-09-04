@@ -925,7 +925,14 @@ describe('LlmRuntime', () => {
           id: model,
           name: model,
           context: { contextWindow: 131_072 },
-          contextOptions: { defaultContextWindow: 131_072, contextWindows: [65_536, 131_072] },
+          contextOptions: {
+            defaultContextWindow: 131_072,
+            contextWindows: [
+              { contextWindow: 65_536, available: true },
+              { contextWindow: 131_072, available: true },
+              { contextWindow: 262_144, available: false, unavailableReason: 'host constrained' },
+            ],
+          },
           reasoning: {
             efforts: [{ id: ReasoningEffortId('high'), name: 'High' }],
             defaultEffort: ReasoningEffortId('high'),
@@ -948,6 +955,19 @@ describe('LlmRuntime', () => {
 
     await expect(ctx.llm.prepareCall({ provider: 'route', model: 'model', contextWindow: 32_768 }))
       .rejects.toMatchObject({ code: 'UNSUPPORTED_CONTEXT_WINDOW' })
+    await expect(ctx.llm.prepareCall({ provider: 'route', model: 'model', contextWindow: 262_144 }))
+      .rejects.toMatchObject({ code: 'UNAVAILABLE_CONTEXT_WINDOW', message: 'host constrained' })
+    await expect(ctx.llm.prepareCall({
+      provider: 'route', model: 'model', contextWindow: 262_144, bestTryContext: true,
+    })).resolves.toMatchObject({
+      config: { contextWindow: 262_144, bestTryContext: true },
+      context: { contextWindow: 262_144 },
+    })
+    await expect(ctx.llm.prepareCall({
+      provider: 'route', model: 'model', bestTryContext: true,
+    })).resolves.toMatchObject({
+      config: { contextWindow: 131_072, bestTryContext: true },
+    })
   })
 
   it('passes cancellation through exact-model resolution', async () => {

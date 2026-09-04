@@ -3247,7 +3247,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'GenerateOptions',
-    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    messages: Message[];\n    system?: string;\n    tools?: ToolSchema[];\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\';\n}',
+    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    contextWindow?: number;\n    bestTryContext?: boolean;\n    messages: Message[];\n    system?: string;\n    tools?: ToolSchema[];\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\';\n}',
   },
   {
     name: 'GenericCallView',
@@ -3423,7 +3423,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LlmCallConfig',
-    declaration: 'export interface LlmCallConfig {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n}',
+    declaration: 'export interface LlmCallConfig {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    contextWindow?: number;\n    bestTryContext?: boolean;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n}',
   },
   {
     name: 'LlmCallConfigAdapterDefaults',
@@ -3434,8 +3434,20 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface LlmConfigurableProvider {\n    provider: string;\n    displayName: string;\n    settingsNs: string;\n    settingsPath: readonly string[];\n    declared?: boolean;\n}',
   },
   {
+    name: 'LlmDiscoveredContextWindow',
+    declaration: 'export interface LlmDiscoveredContextWindow {\n    contextWindow: number;\n    model: string;\n    available?: boolean;\n    unavailableReason?: string;\n}',
+  },
+  {
     name: 'LlmDiscoveredModel',
-    declaration: 'export interface LlmDiscoveredModel {\n    id: string;\n    name?: string;\n    contextWindow?: number;\n    maxTokens?: number;\n}',
+    declaration: 'export interface LlmDiscoveredModel {\n    id: string;\n    name?: string;\n    inputModalities?: readonly ModelModality[];\n    contextWindow?: number;\n    contextWindows?: readonly LlmDiscoveredContextWindow[];\n    selectable?: boolean;\n    active?: boolean;\n    reasoning?: LlmDiscoveredReasoningInfo;\n    maxTokens?: number;\n}',
+  },
+  {
+    name: 'LlmDiscoveredReasoningEffort',
+    declaration: 'export interface LlmDiscoveredReasoningEffort {\n    id: ReasoningEffortId;\n    name: string;\n    wireValue: string | null;\n}',
+  },
+  {
+    name: 'LlmDiscoveredReasoningInfo',
+    declaration: 'export interface LlmDiscoveredReasoningInfo {\n    format: string;\n    defaultEffort?: ReasoningEffortId;\n    efforts: readonly LlmDiscoveredReasoningEffort[];\n}',
   },
   {
     name: 'LlmFailure',
@@ -3446,12 +3458,20 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface LlmModelContext {\n    contextWindow: number;\n}',
   },
   {
+    name: 'LlmModelContextChoice',
+    declaration: 'export interface LlmModelContextChoice {\n    contextWindow: number;\n    available: boolean;\n    unavailableReason?: string;\n}',
+  },
+  {
+    name: 'LlmModelContextOptions',
+    declaration: 'export interface LlmModelContextOptions {\n    defaultContextWindow: number;\n    contextWindows: readonly LlmModelContextChoice[];\n}',
+  },
+  {
     name: 'LlmModelDiscoveryRequest',
     declaration: 'export interface LlmModelDiscoveryRequest {\n    provider?: string;\n    baseURL?: string;\n    api?: string;\n    apiKey?: string;\n    signal?: AbortSignal;\n}',
   },
   {
     name: 'LlmModelInfo',
-    declaration: 'export interface LlmModelInfo {\n    provider: string;\n    id: string;\n    name: string;\n    description?: string;\n    inputModalities?: readonly ModelModality[];\n}',
+    declaration: 'export interface LlmModelInfo {\n    provider: string;\n    id: string;\n    name: string;\n    description?: string;\n    inputModalities?: readonly ModelModality[];\n    selectable?: boolean;\n    active?: boolean;\n    contextOptions?: LlmModelContextOptions;\n}',
   },
   {
     name: 'LlmModelReasoningInfo',

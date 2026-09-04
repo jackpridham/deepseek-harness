@@ -614,6 +614,23 @@ describe('scope lifecycle rides the list mirror (entity parity: no client-side p
     await Promise.resolve()
     expect(b.svc.scope(sid('s-new'))).toBeUndefined()
   })
+
+  it('a permanent removal clears the selected session and releases its staged scope', async () => {
+    const b = bench()
+    await feedList(b, [{ id: 's-delete' }, { id: 's-safe' }])
+    b.svc.open(sid('s-delete'))
+    expect(b.svc.scope(sid('s-delete'))).toBeDefined()
+
+    b.svc.handleHostEnvelope({
+      rpcId: 'delete' as never,
+      payload: { type: 'host/session-removed', sessionId: sid('s-delete'), deleted: true },
+    })
+    await Promise.resolve()
+
+    expect(b.svc.list.getSnapshot().current).toBeUndefined()
+    expect(b.svc.scope(sid('s-delete'))).toBeUndefined()
+    expect(b.svc.list.getSnapshot().ids).toEqual([sid('s-safe')])
+  })
 })
 
 describe('blank mirror', () => {

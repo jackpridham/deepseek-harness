@@ -88,6 +88,7 @@ function scriptedApi(overrides: {
       insertBefore: r => ok(r, { workspaceIds: [r.payload.workspaceId] }),
       insertSessionBefore: r => ok(r, { workspace: { workspaceId: 'w1' as never, path: '/t', title: 't', sessionIds: [], createdAt: '0', updatedAt: '0' } }),
       archiveSession: r => ok(r, { archivedSessionIds: [r.payload.sessionId] }),
+      deleteSession: r => ok(r, { deleted: true as const, deletedSessionIds: [r.payload.sessionId] }),
     },
     skills: { list: r => ok(r, { skills: [] }), ...overrides.skills },
     agentPresets: {
@@ -228,6 +229,11 @@ describe('unary round trip', () => {
     expect(blankTitle.result).toMatchObject({ ok: false, error: { code: 'bad-request' } })
     const deleted = await c.workspace.delete({ workspaceId: 'w1' as never })
     expect(deleted.result).toEqual({ ok: true, value: { deleted: true } })
+    const deletedSession = await c.workspace.deleteSession({ sessionId: sid('s1') })
+    expect(deletedSession.result).toEqual({
+      ok: true,
+      value: { deleted: true, deletedSessionIds: ['s1'] },
+    })
     const workspaceOrder = await c.workspace.insertBefore({
       workspaceId: 'w1' as never,
       beforeWorkspaceId: 'w2' as never,
@@ -433,6 +439,11 @@ describe('workspace domain round trip', () => {
     if (created.result.ok) expect(created.result.value.created).toBe(true)
     const archivedResponse = await c.workspace.archiveSession({ sessionId: 's-arch' as never })
     expect(archivedResponse.result).toEqual({ ok: true, value: { archivedSessionIds: ['s-arch'] } })
+    const deletedResponse = await c.workspace.deleteSession({ sessionId: 's-delete' as never })
+    expect(deletedResponse.result).toEqual({
+      ok: true,
+      value: { deleted: true, deletedSessionIds: ['s-delete'] },
+    })
   })
 
   it('rejects a pathless create payload at the handler schema', async () => {

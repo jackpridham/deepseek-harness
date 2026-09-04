@@ -100,7 +100,15 @@ describe('hand-declared providers', () => {
     const ctx = await harness(gateway(`${server.url}/v1`))
 
     expect(await ctx.llm.listModels('acme-gateway')).toEqual([
-      { provider: 'acme-gateway', id: 'acme-large', name: 'Acme Large', inputModalities: ['text'] },
+      {
+        provider: 'acme-gateway', id: 'acme-large', name: 'Acme Large', inputModalities: ['text'],
+        selectable: true,
+        active: false,
+        contextOptions: {
+          defaultContextWindow: 65_536,
+          contextWindows: [{ contextWindow: 65_536, available: true }],
+        },
+      },
     ])
     const info = await ctx.llm.resolveModelInfo('acme-gateway', 'acme-large')
     expect(info).toMatchObject({
@@ -108,8 +116,14 @@ describe('hand-declared providers', () => {
       id: 'acme-large',
       name: 'Acme Large',
       context: { contextWindow: 65_536 },
+      contextOptions: {
+        defaultContextWindow: 65_536,
+        contextWindows: [{ contextWindow: 65_536, available: true }],
+      },
       defaultMaxTokens: 4096,
     })
+    await expect(ctx.llm.resolveCallConfig({ provider: 'acme-gateway', model: 'acme-large' }))
+      .resolves.toMatchObject({ contextWindow: 65_536 })
   })
 
   it('offers no reasoning control it could not honour', async () => {

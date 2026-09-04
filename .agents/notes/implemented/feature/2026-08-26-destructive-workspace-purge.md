@@ -20,13 +20,13 @@ Before deleting the target logs, the Host records their attachment references. I
 
 Sidecar cleanup precedes source deletion, so a sidecar failure leaves the authoritative log available for retry. Workspace registrations are removed last, preserving a retry handle if a later storage or filesystem step fails. Session persistence serializes deletion with writes, refuses live or reserved identities, and frees a successfully deleted id for explicit reuse.
 
-The confirmation names the permanent consequences and cannot be dismissed or submitted twice while deletion is pending. Exported downloads or copies moved outside Harness storage are outside this boundary and cannot be recalled.
+The browser interaction that invokes this boundary and the narrower Session-deletion boundary are owned by the later [direct Workspace and Session deletion decision](2026-09-04-direct-workspace-and-session-deletion.md). Exported downloads or copies moved outside Harness storage are outside this boundary and cannot be recalled.
 
 This decision supersedes the Host/UI behavior in the [metadata-only Workspace deletion note](2026-07-27-workspace-registration-deletion.md). The lower-level WorkspaceRegistry.delete operation intentionally remains metadata-only; only the Host orchestration combines it with Session and filesystem deletion.
 
 ## Alternatives considered
 
-**Keep Session logs or the source folder.** Rejected because the required product contract is a complete purge, and the confirmation now explicitly names that irreversible effect.
+**Keep Session logs or the source folder.** Rejected because the required product contract is a complete purge.
 
 **Delete every attachment referenced by a target Session.** Rejected because forked or otherwise surviving Sessions can share a content-addressed object. Marking all surviving logs before collection preserves shared data.
 
@@ -34,7 +34,7 @@ This decision supersedes the Host/UI behavior in the [metadata-only Workspace de
 
 ## Verification
 
-Shared persistence contracts cover materialized and lazy deletion, unknown and live refusal, id reuse, and commit events. JSONL and zstd tests pin complete directory removal while preserving sibling Sessions; SQLite tests exercise its transactional backend. Focused tests cover reference-aware attachment collection, per-Session spill removal, Workspace account cleanup, live Agent teardown, filesystem removal, stream convergence, and the irreversible confirmation copy.
+Shared persistence contracts cover materialized and lazy deletion, unknown and live refusal, id reuse, and commit events. JSONL and zstd tests pin complete directory removal while preserving sibling Sessions; SQLite tests exercise its transactional backend. Focused tests cover reference-aware attachment collection, per-Session spill removal, Workspace account cleanup, live Agent teardown, filesystem removal, and stream convergence.
 
 ## Consequences
 

@@ -65,10 +65,7 @@ export interface IWorkspaces {
    * @returns the updated Workspace view.
    */
   rename(workspaceId: WorkspaceId, title: string): Promise<WorkspaceView>
-  /**
-   * Delete a Workspace (its sessions fall back to the unaccounted group).
-   * @param workspaceId - target workspace.
-   */
+  /** Delete a Workspace directory and its owned sessions. */
   delete(workspaceId: WorkspaceId): Promise<void>
   /**
    * Move a Workspace within the registry display order.
@@ -91,4 +88,9 @@ export interface IWorkspaces {
    * @param sessionId - session to archive.
    */
   archiveSession(sessionId: SessionId): Promise<void>
+  /**
+   * Permanently delete a session and its lineage descendants.
+   * @param sessionId - root session to delete.
+   */
+  deleteSession(sessionId: SessionId): Promise<void>
 }

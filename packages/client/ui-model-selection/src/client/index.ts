@@ -49,6 +49,7 @@ function optionsOf(directory: SessionModels, t: TranslateNS<'model'>): SelectOpt
   const rows: SelectOption[] = []
   for (const group of directory.groups) {
     for (const model of group.models) {
+      if (model.selectable === false) continue
       rows.push({
         id: rowId(group.id, model.id),
         label: model.name,
@@ -79,6 +80,7 @@ function selectionOf(state: ModelDirectoryState, id: string): ModelSelection | u
   for (const group of state.groups) {
     for (const model of group.models) {
       if (rowId(group.id, model.id) !== id) continue
+      if (model.selectable === false) return undefined
       const sameRoute = state.current?.provider === group.id && state.current.model === model.id
       const reasoningEffort = sameRoute
         ? state.current?.reasoningEffort ?? model.reasoning?.defaultEffort

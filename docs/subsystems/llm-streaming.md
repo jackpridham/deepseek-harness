@@ -439,6 +439,12 @@ interface LlmModelInfo {
   description?: string
   /** Accepted request modalities; absent means unknown, while an explicit omission is negative capability. */
   inputModalities?: readonly ModelModality[]
+  /** Whether an ordinary conversation may select this model; omission means yes. */
+  selectable?: boolean
+  /** Whether this model or one of its private runtime routes is currently loaded. */
+  active?: boolean
+  /** Bounded context choices, with the model default identified separately. */
+  contextOptions?: LlmModelContextOptions
 }
 ```
 
@@ -504,6 +510,10 @@ interface GenerateOptions {
   model: string
   /** Adapter-owned reasoning effort selected for this exact model. */
   reasoningEffort?: ReasoningEffortId
+  /** Adapter-advertised effective context selected for this conversation. */
+  contextWindow?: number
+  /** Permit one advertised host-constrained context tier for a best-effort request. */
+  bestTryContext?: boolean
   /**
    * Ordered conversation messages, exactly as the provider sees them (after
    * the `system` slot). A loop-built request assembles them as
@@ -617,8 +627,18 @@ interface LlmDiscoveredModel {
   id: string
   /** Human-readable name when the endpoint supplies one. */
   name?: string
+  /** Accepted request modalities when the endpoint supplies them. */
+  inputModalities?: readonly ModelModality[]
   /** Maximum combined request and response context, when disclosed. */
   contextWindow?: number
+  /** Bounded context choices and the endpoint model id that activates each one. */
+  contextWindows?: readonly LlmDiscoveredContextWindow[]
+  /** Whether an ordinary conversation may select this model; omission means yes. */
+  selectable?: boolean
+  /** Whether this model or one of its private runtime routes is currently loaded. */
+  active?: boolean
+  /** Bounded reasoning choices and transport advertised by the endpoint. */
+  reasoning?: LlmDiscoveredReasoningInfo
   /** Maximum output tokens, when disclosed. */
   maxTokens?: number
 }
@@ -636,15 +656,17 @@ FIXME(call-config-shape): revisit which remaining fields are genuinely epoch-lev
 
 ```ts type-equiv
 /**
- * Provider, model, reasoning effort, and sampling scalars of one conversation's
- * requests. Every field maps 1:1 onto the same-named `GenerateOptions` field;
- * the loop builds requests from the logged header rather than accepting these
- * per call.
+ * Provider, model, context/reasoning selection, and sampling scalars of one
+ * conversation's requests. Every field maps 1:1 onto the same-named
+ * `GenerateOptions` field; the loop builds requests from the logged header
+ * rather than accepting these per call.
  */
 interface LlmCallConfig {
   provider: string
   model: string
   reasoningEffort?: ReasoningEffortId
+  contextWindow?: number
+  bestTryContext?: boolean
   temperature?: number
   maxTokens?: number
   stop?: string[]

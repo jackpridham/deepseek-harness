@@ -4,18 +4,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-runtime/client'
 import { apply, inject } from '../src/client/index.ts'
-import { OfficialBrandMark, OfficialBrandName } from '../src/client/Brand.tsx'
+import { OfficialBrandName } from '../src/client/Brand.tsx'
 
 afterEach(() => {
   cleanup()
   vi.unstubAllEnvs()
 })
 
-const HOLES = [
-  'sidebar.brand.mark',
-  'sidebar.brand.name',
-  'conversation.hero.brand.mark',
-] as const
+const HOLES = ['sidebar.brand.name'] as const
 
 async function bench(declare = true) {
   const ctx = new Context()
@@ -65,15 +61,9 @@ describe('official browser-brand plugin', () => {
     for (const hole of HOLES) expect(after.slots.entries(hole)).toHaveLength(1)
   })
 
-  it('renders the official name independently from both requested mark sizes', () => {
+  it('renders the Vortex Harness name without legacy artwork', () => {
     const name = render(<OfficialBrandName />)
-    expect(name.container.querySelector('svg')?.getAttribute('viewBox')).toBe('26 0 156 24')
-    name.unmount()
-
-    const mark = render(<OfficialBrandMark size={34} className="hero-mark" />)
-    expect(mark.container.querySelector('svg')?.getAttribute('width')).toBe('34')
-    expect(mark.container.querySelector('svg')?.getAttribute('class')).toBe('hero-mark')
-    mark.rerender(<OfficialBrandMark size={24} />)
-    expect(mark.container.querySelector('svg')?.getAttribute('width')).toBe('24')
+    expect(name.getByText('Vortex Harness')).toBeTruthy()
+    expect(name.container.querySelector('svg')).toBeNull()
   })
 })

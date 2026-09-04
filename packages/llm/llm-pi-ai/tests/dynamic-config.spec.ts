@@ -63,6 +63,12 @@ describe('request-level dynamic profiles', () => {
             context_windows: [
               { context_window: 32_768, model: 'qwen-next--ctx-32768' },
               { context_window: 65_536, model: 'qwen-next' },
+              {
+                context_window: 262_144,
+                model: 'qwen-next--ctx-262144-best-try',
+                available: false,
+                unavailable_reason: 'Requires best-try mode.',
+              },
             ],
             reasoning: {
               format: 'qwen-chat-template',
@@ -73,9 +79,24 @@ describe('request-level dynamic profiles', () => {
               ],
             },
             architecture: { input_modalities: ['text'] },
+          }, {
+            id: 'image-gen',
+            name: 'Image Generator',
+            context_length: 4096,
+            selectable: false,
           }],
         }),
       },
+      {
+        body: JSON.stringify({
+          running: [
+            { model: 'qwen-next--ctx-32768', state: 'ready' },
+            { model: 'image-gen', state: 'stopping' },
+            { model: 42, state: 'ready' },
+          ],
+        }),
+      },
+      { events: textEvents },
       { events: textEvents },
       { events: textEvents },
     ])
@@ -84,7 +105,7 @@ describe('request-level dynamic profiles', () => {
         inf01: {
           apiKeyEnv: 'INF01_KEY',
           api: 'openai-completions',
-          baseURL: server.url,
+          baseURL: `${server.url}/v1`,
           modelsFromEndpoint: true,
           models: [{ id: 'seed', contextWindow: 1024, maxTokens: 128 }],
         },
@@ -96,11 +117,34 @@ describe('request-level dynamic profiles', () => {
       id: 'qwen-next',
       name: 'Qwen Next',
       inputModalities: ['text'],
-      contextOptions: { defaultContextWindow: 65_536, contextWindows: [32_768, 65_536] },
+      selectable: true,
+      active: true,
+      contextOptions: {
+        defaultContextWindow: 65_536,
+        contextWindows: [
+          { contextWindow: 32_768, available: true },
+          { contextWindow: 65_536, available: true },
+          { contextWindow: 262_144, available: false, unavailableReason: 'Requires best-try mode.' },
+        ],
+      },
+    }, {
+      provider: 'inf01',
+      id: 'image-gen',
+      name: 'Image Generator',
+      inputModalities: ['text'],
+      selectable: false,
+      active: false,
     }])
     const resolved = await ctx.llm.resolveModelInfo('inf01', 'qwen-next')
     expect(resolved.context).toEqual({ contextWindow: 65_536 })
-    expect(resolved.contextOptions).toEqual({ defaultContextWindow: 65_536, contextWindows: [32_768, 65_536] })
+    expect(resolved.contextOptions).toEqual({
+      defaultContextWindow: 65_536,
+      contextWindows: [
+        { contextWindow: 32_768, available: true },
+        { contextWindow: 65_536, available: true },
+        { contextWindow: 262_144, available: false, unavailableReason: 'Requires best-try mode.' },
+      ],
+    })
     expect(resolved.reasoning).toEqual({
       defaultEffort: 'high',
       efforts: [{ id: 'off', name: 'Off' }, { id: 'high', name: 'High' }],
@@ -110,22 +154,57 @@ describe('request-level dynamic profiles', () => {
     })
     const result = await assemble(ctx, { ...prepared, messages: [] })
     expect(result.message.content).toEqual([{ type: 'text', text: 'hello' }])
-    expect(server.paths).toEqual(['/models', '/chat/completions'])
-    expect(server.requests[1]).toMatchObject({ model: 'qwen-next--ctx-32768' })
-    expect(server.requests[1]).toMatchObject({
+    expect(server.paths).toEqual(['/v1/models', '/running', '/v1/chat/completions'])
+    expect(server.requests[2]).toMatchObject({ model: 'qwen-next--ctx-32768' })
+    expect(server.requests[2]).toMatchObject({
       chat_template_kwargs: { enable_thinking: true, preserve_thinking: true },
     })
     const withoutReasoning = await ctx.llm.resolveCallConfig({
       provider: 'inf01', model: 'qwen-next', contextWindow: 32_768, reasoningEffort: ReasoningEffortId('off'),
     })
     await assemble(ctx, { ...withoutReasoning, messages: [] })
-    expect(server.requests[2]).toMatchObject({
+    expect(server.requests[3]).toMatchObject({
       model: 'qwen-next--ctx-32768',
       chat_template_kwargs: { enable_thinking: false, preserve_thinking: true },
     })
+    await expect(ctx.llm.resolveCallConfig({
+      provider: 'inf01', model: 'qwen-next', contextWindow: 262_144,
+    })).rejects.toMatchObject({ code: 'UNAVAILABLE_CONTEXT_WINDOW' })
+    const bestTry = await ctx.llm.resolveCallConfig({
+      provider: 'inf01', model: 'qwen-next', contextWindow: 262_144, bestTryContext: true,
+    })
+    await assemble(ctx, { ...bestTry, messages: [] })
+    expect(server.requests[4]).toMatchObject({ model: 'qwen-next--ctx-262144-best-try' })
     expect(server.headers.map(headers => headers.authorization)).toEqual([
-      'Bearer live-key', 'Bearer live-key', 'Bearer live-key',
+      'Bearer live-key', 'Bearer live-key', 'Bearer live-key', 'Bearer live-key', 'Bearer live-key',
     ])
+  })
+
+  it.each([
+    { label: 'failed', status: 500, body: '{}' },
+    { label: 'malformed', status: 200, body: '{"not_running":[]}' },
+  ])('keeps a valid catalog when the runtime-state request is $label', async ({ status, body }) => {
+    const dir = await home()
+    const server = await mockServer([
+      { body: JSON.stringify({ data: [{ id: 'available', context_length: 4096 }] }) },
+      { status, body },
+    ])
+    const ctx = await boot(dir, {
+      providers: {
+        local: {
+          api: 'openai-completions',
+          baseURL: server.url,
+          modelsFromEndpoint: true,
+          models: [{ id: 'seed', contextWindow: 1024, maxTokens: 128 }],
+        },
+      },
+    })
+
+    await expect(ctx.llm.listModels('local')).resolves.toMatchObject([{
+      id: 'available',
+      active: false,
+    }])
+    expect(server.paths).toEqual(['/models', '/running'])
   })
 
   it('rejects endpoint reasoning formats that the runtime cannot apply', async () => {
@@ -156,7 +235,7 @@ describe('request-level dynamic profiles', () => {
     })
 
     await expect(ctx.llm.listModels('inf01')).rejects.toMatchObject({ code: 'INVALID_CATALOG' })
-    expect(server.paths).toEqual(['/models'])
+    expect(server.paths).toEqual(['/models', '/running'])
   })
 
   it('mounts bare and dormant, then registers routes the moment settings supply providers', async () => {

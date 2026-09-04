@@ -14,7 +14,7 @@ The existing visual-only menu row also left deletion semantics undefined across 
 
 `ctx.workspaceRegistry.delete(id)` deletes only the Workspace registration: its id leaves durable `workspaceIds`, its `workspaces` table row and entity-cache entry disappear, and its ordered `sessionIds` account disappears with that row. It never calls filesystem removal or `SessionPersistence`; the directory, every user file, every live Session, and every persisted Session log remain. Because sidebar grouping is the complement of all surviving Workspace accounts, those Sessions immediately appear under Ungrouped, including the current Session.
 
-Unknown ids return `false` at the domain contract. `workspace.delete({ workspaceId })` maps that distinction to `workspace-not-found`; success returns `{ deleted: true }`. `workspace.list` remains the reconnect baseline.
+Unknown ids return `false` at the domain contract. The Host's public `workspace.delete({ workspaceId })` composes this metadata commit as the final step of the separately owned [destructive Workspace purge](2026-08-26-destructive-workspace-purge.md); it maps an unknown registration to `workspace-not-found`. `workspace.list` remains the reconnect baseline.
 
 ## Durable commit and publication
 
@@ -28,17 +28,15 @@ Create and delete write a durable `pendingMutation` before their record/order pa
 
 `WorkspaceManager` treats both `host/workspace-changed` and `host/workspace-removed` as ordered deltas replayed over an in-flight `workspace.list` response. A successful unary delete removes the row immediately instead of waiting for its own stream echo. Removal is idempotent, and a process-local tombstone rejects late changed frames or stale baseline rows for the never-reused Workspace id. A reconnect still refreshes from `workspace.list`; Session state is never pruned by a Workspace delta.
 
-The delete confirmation remains pending until the React Workspace projection has committed the removed id, so the next Workspace gesture cannot observe or target one stale list frame.
+The browser's direct destructive interaction is owned by the later [Workspace and Session deletion decision](2026-09-04-direct-workspace-and-session-deletion.md). Registry removal still converges through the unary result and committed stream frame.
 
-## Confirmation interaction
+## Product boundary
 
-The existing Workspace row menu opens a shared `Modal` before deletion. The text states all three consequences: the Workspace leaves the list, the folder and session logs remain, and its Sessions appear under Ungrouped. While the request is pending, the confirm and Cancel controls are disabled, duplicate confirmation is ignored, and Escape or Close cannot dismiss the operation. Failure keeps the Modal open with the error; Cancel, Escape, and Close before submission never delete.
-
-The menu, Modal, and buttons retain their existing structure and design tokens. Session deletion remains visual-only and outside this decision.
+`WorkspaceRegistry.delete` remains a metadata-only domain operation. The Host does not expose it as a metadata-only browser action: `workspace.delete` first purges the owned filesystem and Sessions, then commits this registry removal. `workspace.deleteSession` uses `WorkspaceRegistry.purgeSessions` without deleting the Workspace registration or directory. The destructive orchestration and direct row interactions belong to the linked later decisions rather than this lower-level registry contract.
 
 ## Alternatives considered
 
-**Cascade-delete Sessions.** Rejected because Workspace registration does not own Session persistence and the product requirement is to preserve histories under Ungrouped. Session deletion needs its own lifecycle, running checks, descendant semantics, and explicit UI.
+**Cascade-delete Sessions inside `WorkspaceRegistry.delete`.** Rejected because the registry record does not own Session persistence. The Host-level purge performs the coordinated lifecycle, descendant, sidecar, attachment, and filesystem work before invoking this metadata operation.
 
 **Move the folder to Trash.** Rejected because the record cannot prove directory ownership. A future destructive filesystem action must be separately named, separately confirmed, and enforce explicit safety boundaries.
 
@@ -50,10 +48,8 @@ The menu, Modal, and buttons retain their existing structure and design tokens. 
 
 ## Verification
 
-Workspace package tests pin successful metadata-only deletion, same-path re-registration, unknown-id idempotence, table-failure rollback, explicit-marker restart recovery, unexplained-corruption rejection, and cache/table invariant behavior. Apiproxy and carrier tests pin the schema, handler, `workspace-not-found`, retained Session/folder, fresh-id re-registration, and committed `host/workspace-removed` frame. Client tests pin unary direct echo, duplicate removal, late changed frames, and deletion racing an in-flight baseline. Component tests pin confirmation, projection-settled closing, success-frame-before-unary ordering, failure, Cancel, Escape, and Close. The browser scenario observes every transient alert, slot error, console error, and page error while reusing a deleted title for a different directory.
-
-The assembled keyless Web scenario registers an existing temporary project directory, accounts a persisted Session, makes that Session current, confirms deletion in Chromium, and verifies the Workspace group disappears while Ungrouped retains the current Session. It checks the user file and JSONL log before and after deletion and repeats the UI, directory, and log assertions after reload.
+Workspace package tests pin successful metadata-only deletion, same-path re-registration, unknown-id idempotence, table-failure rollback, explicit-marker restart recovery, unexplained-corruption rejection, and cache/table invariant behavior. Host and client tests pin `workspace-not-found`, the committed `host/workspace-removed` frame, unary direct echo, duplicate removal, late changed frames, and deletion racing an in-flight baseline. Destructive filesystem and Session behavior is verified by the later purge decisions.
 
 ## Consequences
 
-Deleting a Workspace is intentionally reversible by registering the same directory again with a fresh id, although its prior manual Session order is gone; re-registration does not automatically re-adopt existing Sessions after bootstrap. The operation gives up a one-click cleanup of Session histories or source directories in exchange for a deletion boundary that matches what the record actually owns.
+The metadata operation is reversible by registering the same surviving directory again with a fresh id, although its prior manual Session order is gone. The public Host deletion is intentionally not reversible because its wider ownership boundary removes the directory and Sessions first. Keeping those responsibilities separate prevents the registry primitive from silently acquiring filesystem or persistence authority.

@@ -17,6 +17,7 @@ import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import { SessionId } from '@deepseek-ai/dsh-session'
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { launchWebScaffold, watchConsole, type WebScaffold } from './scaffold.ts'
 import { ZH_BROWSER_LOCALE, connectFreshWorkspaceZh, saveFailureShot } from './support.ts'
@@ -69,13 +70,19 @@ describe('web e2e: the composer model switch is the default for later sessions',
           displayName: 'Origin Gateway',
           api: 'openai-completions',
           baseURL: 'https://gateway.origin.example/v1',
-          models: [{ id: START_MODEL, name: 'Origin Large' }],
+          models: [{ id: START_MODEL, name: 'Origin Large', contextWindow: 65_536 }],
         },
         [ROUTE]: {
           displayName: 'Acme Gateway',
           api: 'openai-completions',
           baseURL: 'https://gateway.acme.example/v1',
-          models: [{ id: MODEL, name: 'Acme Large' }],
+          reasoning: 'off',
+          models: [{
+            id: MODEL,
+            name: 'Acme Large',
+            contextWindow: 131_072,
+            reasoningEfforts: { off: null, high: 'high' },
+          }],
         },
       },
     })
@@ -100,31 +107,54 @@ describe('web e2e: the composer model switch is the default for later sessions',
     // leaves behind: its own logged route.
     const loggedId = await createSession('default-model-logged')
     scaffold.ctx.sessions.get(SessionId(loggedId))?.append('request/header', {
-      header: { config: { provider: START_ROUTE, model: START_MODEL } },
+      header: {
+        config: {
+          provider: START_ROUTE,
+          model: START_MODEL,
+          contextWindow: 65_536,
+          reasoningEffort: ReasoningEffortId('off'),
+        },
+      },
       reason: 'initial',
     })
 
     const trigger = page.getByRole('button', { name: /^选择模型/ })
     await trigger.waitFor({ timeout: 15_000 })
     await trigger.click()
-    await page.getByRole('menuitem', { name: /模型/ }).click()
     await page.getByRole('menuitemradio', { name: 'Acme Large' }).click()
+    const effort = page.getByRole('button', { name: /^选择推理等级/ })
+    await effort.click()
+    await page.getByRole('menuitemradio', { name: 'High' }).click()
 
     // The switch is what sets the default: the shared Agent-route settings section
     // now names it, beside the provider profiles the Models page writes.
     await expect.poll(
       async () => readFile(join(scaffold.harnessHome, 'settings.yaml'), 'utf8'),
       { timeout: 10_000 },
-    ).toContain('agent-default-model:')
+    ).toContain('reasoningEffort: high')
     const document = await readFile(join(scaffold.harnessHome, 'settings.yaml'), 'utf8')
     expect(document).toContain(`provider: ${ROUTE}`)
     expect(document).toContain(`model: ${MODEL}`)
+    expect(document).toContain('contextWindow: 131072')
+    expect(document).toContain('reasoningEffort: high')
 
-    // A session created after the switch starts from it...
-    expect(await currentOf(await createSession('default-model-after')))
-      .toEqual({ provider: ROUTE, model: MODEL })
+    // A session created after the switch starts from the complete last choice...
+    const afterId = await createSession('default-model-after')
+    expect(scaffold.ctx.agentDefaultModel.currentSelection()).toEqual({
+      provider: ROUTE,
+      model: MODEL,
+      contextWindow: 131_072,
+      reasoningEffort: 'high',
+    })
+    expect(await currentOf(afterId))
+      .toEqual({ provider: ROUTE, model: MODEL, contextWindow: 131_072, reasoningEffort: 'high' })
     // ...while the one holding a logged route keeps deriving from its log.
-    expect(await currentOf(loggedId)).toEqual({ provider: START_ROUTE, model: START_MODEL })
+    expect(await currentOf(loggedId)).toEqual({
+      provider: START_ROUTE,
+      model: START_MODEL,
+      contextWindow: 65_536,
+      reasoningEffort: 'off',
+    })
     expect(tripwire.pageErrors).toEqual([])
   }, 60_000)
 
@@ -159,7 +189,6 @@ describe('web e2e: the composer model switch is the default for later sessions',
     const seat = page.getByRole('button', { name: /^选择模型/ })
     expect(await seat.isEnabled()).toBe(true)
     await seat.click()
-    await page.getByRole('menuitem', { name: /模型/ }).click()
     await page.getByRole('menuitemradio').first().click()
     await expect.poll(async () => box.isEnabled(), { timeout: 15_000 }).toBe(true)
     expect(tripwire.pageErrors).toEqual([])

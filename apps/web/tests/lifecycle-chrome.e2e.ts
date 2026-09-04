@@ -158,9 +158,7 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
     if (MODE !== 'record') {
       expect(fixtureUserPrompts(await readFile(FIXTURE, 'utf8'))).toEqual([PROMPT])
     }
-    // The blank frame renders the hero, not the resident composer: the
-    // headline plus the guidance placeholder are the empty state's anchors.
-    await expect.poll(() => page.getByText('Into the Unknown', { exact: false }).count(), { timeout: 15_000 }).toBe(1)
+    await page.locator('[data-phase="hero"]').waitFor({ timeout: 15_000 })
     const input = page.locator('textarea').first()
     await input.waitFor({ timeout: 10_000 })
     if (MODE !== 'record') {

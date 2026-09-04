@@ -16,6 +16,8 @@ describe('callConfigEquals', () => {
     expect(callConfigEquals(base, { provider: 'x', model: 'm' })).toBe(false)
     expect(callConfigEquals(base, { provider: 'p', model: 'x' })).toBe(false)
     expect(callConfigEquals({ ...base, reasoningEffort: ReasoningEffortId('high') }, base)).toBe(false)
+    expect(callConfigEquals({ ...base, contextWindow: 65_536 }, base)).toBe(false)
+    expect(callConfigEquals({ ...base, bestTryContext: true }, base)).toBe(false)
     expect(callConfigEquals(
       { ...base, reasoningEffort: ReasoningEffortId('high') },
       { ...base, reasoningEffort: ReasoningEffortId('high') },

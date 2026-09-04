@@ -13,6 +13,8 @@ import type { ObservableSnapshot } from './store.ts'
 /** Session-list row facts sibling domains read: recency, blank-reuse eligibility, and its cwd canon. */
 export interface SessionsPortSummary {
   id: SessionId
+  /** Parent session when this row belongs to a subagent lineage. */
+  parentId?: SessionId
   /** Empty-log bit (blank sessions are reused by New Session instead of minting another). */
   blank: boolean
   cwd?: string
@@ -37,6 +39,10 @@ export interface SessionsPort {
    * @returns the new session id.
    */
   create(opts: { workspaceId: WorkspaceId }): Promise<SessionId>
+  /** Apply Host-confirmed permanent removals to the local session mirror. */
+  removeDeleted(sessionIds: readonly SessionId[]): void
+  /** Refresh the authoritative Host session list. */
+  refresh(): Promise<void>
   /**
    * Select a session as current.
    * @param id - session id (must exist in the list store).

@@ -198,7 +198,13 @@ export interface ResolvedPiAiProviderProfile
    */
   configuredMaxTokens: ReadonlyMap<string, number>
   /** Endpoint-owned context tiers and exact runtime route ids by logical model id. */
-  contextRoutes: ReadonlyMap<string, ReadonlyMap<number, string>>
+  contextRoutes: ReadonlyMap<string, ReadonlyMap<number, {
+    model: string
+    available: boolean
+    unavailableReason?: string
+  }>>
+  /** Endpoint-owned selector and current runtime state by logical model id. */
+  modelStates: ReadonlyMap<string, { selectable: boolean; active: boolean }>
   /** Endpoint-owned default reasoning effort by logical model id. */
   reasoningDefaults: ReadonlyMap<string, ModelThinkingLevel>
 }
@@ -438,6 +444,7 @@ export function resolveProfiles(
       ...rest.thinkingBudgets === undefined ? {} : { thinkingBudgets: { ...rest.thinkingBudgets } },
       configuredMaxTokens: catalog.configuredMaxTokens,
       contextRoutes: new Map(),
+      modelStates: new Map(),
       reasoningDefaults: new Map(),
       piProvider: buildProvider({
         provider,

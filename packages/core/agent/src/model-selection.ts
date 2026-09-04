@@ -14,6 +14,8 @@ export interface ModelSelection {
   model: string
   /** Adapter-advertised context tier, or the model default when absent. */
   contextWindow?: number
+  /** Permit an advertised host-constrained context tier for best-effort dispatch. */
+  bestTryContext?: boolean
   /** Adapter-owned reasoning effort, or provider/default behavior when absent. */
   reasoningEffort?: ReasoningEffortId
 }
@@ -62,6 +64,7 @@ export function installModelSelection(agentCtx: Context, selection: ModelSelecti
       const {
         reasoningEffort: _inheritedEffort,
         contextWindow: _inheritedContextWindow,
+        bestTryContext: _inheritedBestTryContext,
         ...withoutInheritedSelection
       } = resolved
       return {
@@ -71,6 +74,9 @@ export function installModelSelection(agentCtx: Context, selection: ModelSelecti
         ...selected.contextWindow === undefined
           ? {}
           : { contextWindow: selected.contextWindow },
+        ...selected.bestTryContext === undefined
+          ? {}
+          : { bestTryContext: selected.bestTryContext },
         ...selected.reasoningEffort === undefined
           ? {}
           : { reasoningEffort: selected.reasoningEffort },

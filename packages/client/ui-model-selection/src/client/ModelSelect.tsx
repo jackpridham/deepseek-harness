@@ -1,10 +1,8 @@
 /**
  * ModelSelect: the composer's named model seat (`conversation.input.model`).
- * Two-level selection per figma 496:26454's MenuDropdown: the root menu is
- * the Model / Context / Effort rows (label + current value + a right chevron),
- * each drilling into its own list — the provider-grouped model list over
- * the shared directory, and the effort levels. The trigger (313:14108's
- * ToggleButton) shows both: model name + effort in the caption tone.
+ * Three sibling one-click selectors expose model, context, and effort.
+ * Each trigger opens its own list directly; the context list is the union of
+ * endpoint-advertised tiers and mutes tiers unavailable for the selected model.
  * Data and submission ride the SAME per-session ModelDirectory as the
  * /model popup; exact-model reasoning metadata and the selected effort come
  * from the Host rather than a client-owned vocabulary. A rejected selection
@@ -18,15 +16,14 @@ import {
 import clsx from 'clsx'
 import type { ModelReasoningEffort, ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
 import {
-  IconCheckOutline16, IconChevronDownOutline14, IconChevronRightOutline14,
-  IconWarningOutline16, Toast,
+  IconCheckOutline16, IconChevronDownOutline14, IconWarningOutline16, StateDot, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ModelSelectInjected } from './slots.ts'
 import css from './ModelSelect.module.css'
 
-/** Which pane the dropdown shows: the two-row root or one drilled-in list. */
-type Pane = 'root' | 'model' | 'context' | 'effort'
+/** Which sibling selector owns the open dropdown. */
+type Pane = 'model' | 'context' | 'effort'
 
 /** One dynamic effort row; undefined means preserve the provider default. */
 interface EffortChoice {
@@ -51,7 +48,7 @@ export function ModelSelect(
     () => directory.getSnapshot(),
   )
   const [open, setOpen] = useState(false)
-  const [pane, setPane] = useState<Pane>('root')
+  const [pane, setPane] = useState<Pane>('model')
   // The in-menu error strip serves catalog loads (its Retry re-runs the
   // load); a rejected SELECTION announces through the transient toast
   // instead, so the strip renders only while the latest failure-capable
@@ -85,6 +82,20 @@ export function ModelSelect(
   const currentChoice = choices[selectedIndex]
   const reasoning = currentChoice?.model.reasoning
   const context = currentChoice?.model.context
+  const contextChoices = useMemo(() => {
+    const options = new Map<number, { contextWindow: number; available: boolean; unavailableReason?: string }>()
+    for (const group of state.groups) {
+      for (const model of group.models) {
+        for (const option of model.context?.contextWindows ?? []) {
+          if (!options.has(option.contextWindow)) {
+            options.set(option.contextWindow, { ...option, available: false })
+          }
+        }
+      }
+    }
+    for (const option of context?.contextWindows ?? []) options.set(option.contextWindow, option)
+    return [...options.values()]
+  }, [context, state.groups])
   const effectiveContext = state.current?.contextWindow ?? context?.defaultContextWindow
   const contextLabel = effectiveContext === undefined
     ? undefined
@@ -134,15 +145,19 @@ export function ModelSelect(
 
   if (!available) return null
 
-  const show = (): void => {
-    setPane('root')
+  const show = (nextPane: Pane, trigger: HTMLButtonElement): void => {
+    triggerRef.current = trigger
+    if (open && pane === nextPane) {
+      close()
+      return
+    }
+    setPane(nextPane)
     setOpen(true)
     reload()
   }
 
   const close = (restoreFocus = false): void => {
     setOpen(false)
-    setPane('root')
     if (restoreFocus) queueMicrotask(() => { triggerRef.current?.focus() })
   }
 
@@ -157,9 +172,7 @@ export function ModelSelect(
   const onRootKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.key === 'Escape' && open) {
       event.preventDefault()
-      // Escape backs out of a drilled pane first, then closes.
-      if (pane !== 'root') setPane('root')
-      else close(true)
+      close(true)
       return
     }
     if (!open) return
@@ -228,8 +241,6 @@ export function ModelSelect(
   }
 
   const modelLabel = currentChoice?.model.name ?? t('trigger.fallback')
-  const triggerDetails = [contextLabel, effortLabel].filter((value): value is string => value !== undefined)
-  const triggerLabel = triggerDetails.length === 0 ? modelLabel : `${modelLabel} · ${triggerDetails.join(' · ')}`
   const triggerAria = currentChoice === undefined
     ? t('trigger.selectAria')
     : contextLabel === undefined && effortLabel === undefined
@@ -249,28 +260,51 @@ export function ModelSelect(
   return (
     <div ref={rootRef} className={css.root} onKeyDown={onRootKeyDown} onBlur={onBlur}>
       <button
-        ref={triggerRef}
         type="button"
         className={css.trigger}
         aria-label={triggerAria}
         aria-haspopup="menu"
-        aria-expanded={open}
+        aria-expanded={open && pane === 'model'}
         aria-controls={open ? `${id}-menu` : undefined}
-        title={triggerLabel}
+        title={modelLabel}
         disabled={locked}
-        onClick={() => {
-          if (open) {
-            close()
-          } else {
-            show()
-          }
-        }}
+        onClick={(event) => { show('model', event.currentTarget) }}
       >
         <span className={css.triggerLabel}>{modelLabel}</span>
-        {contextLabel !== undefined && <span className={css.triggerEffort}>{contextLabel}</span>}
-        {effortLabel !== undefined && <span className={css.triggerEffort}>{effortLabel}</span>}
-        <IconChevronDownOutline14 className={clsx(css.chevron, open && css.chevronOpen)} />
+        <IconChevronDownOutline14 className={clsx(css.chevron, open && pane === 'model' && css.chevronOpen)} />
       </button>
+
+      {context !== undefined && (
+        <button
+          type="button"
+          className={css.trigger}
+          aria-label={t('trigger.contextAria', { context: contextLabel })}
+          aria-haspopup="menu"
+          aria-expanded={open && pane === 'context'}
+          aria-controls={open ? `${id}-menu` : undefined}
+          disabled={locked}
+          onClick={(event) => { show('context', event.currentTarget) }}
+        >
+          <span className={css.triggerLabel}>{contextLabel}</span>
+          <IconChevronDownOutline14 className={clsx(css.chevron, open && pane === 'context' && css.chevronOpen)} />
+        </button>
+      )}
+
+      {reasoning !== undefined && (
+        <button
+          type="button"
+          className={css.trigger}
+          aria-label={t('trigger.effortAria', { effort: effortLabel })}
+          aria-haspopup="menu"
+          aria-expanded={open && pane === 'effort'}
+          aria-controls={open ? `${id}-menu` : undefined}
+          disabled={locked}
+          onClick={(event) => { show('effort', event.currentTarget) }}
+        >
+          <span className={css.triggerLabel}>{effortLabel}</span>
+          <IconChevronDownOutline14 className={clsx(css.chevron, open && pane === 'effort' && css.chevronOpen)} />
+        </button>
+      )}
 
       {open && (
         <div
@@ -280,30 +314,6 @@ export function ModelSelect(
           aria-label={t('menu.aria')}
           aria-busy={state.status === 'loading' || busy}
         >
-          {pane === 'root' && (
-            <>
-              <button ref={itemRef()} type="button" role="menuitem" className={css.cell} onClick={() => { setPane('model') }}>
-                <span className={css.cellLabel}>{t('menu.model')}</span>
-                <span className={css.cellValue}>{modelLabel}</span>
-                <IconChevronRightOutline14 className={css.cellChevron} />
-              </button>
-              {context !== undefined && (
-                <button ref={itemRef()} type="button" role="menuitem" className={css.cell} onClick={() => { setPane('context') }}>
-                  <span className={css.cellLabel}>{t('menu.context')}</span>
-                  <span className={css.cellValue}>{contextLabel}</span>
-                  <IconChevronRightOutline14 className={css.cellChevron} />
-                </button>
-              )}
-              {reasoning !== undefined && (
-                <button ref={itemRef()} type="button" role="menuitem" className={css.cell} onClick={() => { setPane('effort') }}>
-                  <span className={css.cellLabel}>{t('menu.effort')}</span>
-                  <span className={css.cellValue}>{effortLabel}</span>
-                  <IconChevronRightOutline14 className={css.cellChevron} />
-                </button>
-              )}
-            </>
-          )}
-
           {pane === 'model' && (
             <>
               {state.status === 'loading' && (
@@ -338,11 +348,20 @@ export function ModelSelect(
                             className={clsx(css.option, selected && css.selected)}
                             key={model.id}
                             title={model.name}
-                            disabled={busy}
-                            onClick={() => { choose({ provider: group.id, model: model.id }) }}
+                            disabled={busy || model.selectable === false}
+                            onClick={() => {
+                              const choice = choices.find(candidate =>
+                                candidate.group.id === group.id && candidate.model.id === model.id)
+                              choose(choice?.selection ?? { provider: group.id, model: model.id })
+                            }}
                           >
                             <span className={css.optionCopy}>
-                              <span className={css.modelName}>{model.name}</span>
+                              <span className={css.modelName}>
+                                {model.active === true && (
+                                  <StateDot className={css.activity} state="done" size={8} />
+                                )}
+                                {model.name}
+                              </span>
                               {model.description !== undefined && (
                                 <span className={css.description}>{model.description}</span>
                               )}
@@ -365,9 +384,10 @@ export function ModelSelect(
 
           {pane === 'context' && (
             <>
-              {context === undefined
+              {contextChoices.length === 0
                 ? <div className={css.empty}>{t('empty.contexts')}</div>
-                : context.contextWindows.map((value) => {
+                : contextChoices.map((option) => {
+                  const value = option.contextWindow
                   const label = value % 1024 === 0 ? `${value / 1024}K` : value.toLocaleString()
                   return (
                     <button
@@ -377,14 +397,16 @@ export function ModelSelect(
                       aria-checked={effectiveContext === value}
                       className={clsx(css.option, effectiveContext === value && css.selected)}
                       key={value}
-                      disabled={busy}
+                      disabled={busy || !option.available}
                       onClick={() => { chooseContext(value) }}
                     >
                       <span className={css.optionCopy}>
                         <span className={css.modelName}>{label}</span>
-                        {value === context.defaultContextWindow && (
-                          <span className={css.description}>{t('context.default')}</span>
-                        )}
+                        {option.unavailableReason !== undefined
+                          ? <span className={css.description}>{option.unavailableReason}</span>
+                          : value === context?.defaultContextWindow && (
+                            <span className={css.description}>{t('context.default')}</span>
+                          )}
                       </span>
                       <span className={css.check}>
                         {effectiveContext === value ? <IconCheckOutline16 /> : null}

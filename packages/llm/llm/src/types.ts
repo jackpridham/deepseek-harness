@@ -229,6 +229,10 @@ export interface LlmDiscoveredModel {
   contextWindow?: number
   /** Bounded context choices and the endpoint model id that activates each one. */
   contextWindows?: readonly LlmDiscoveredContextWindow[]
+  /** Whether an ordinary conversation may select this model; omission means yes. */
+  selectable?: boolean
+  /** Whether this model or one of its private runtime routes is currently loaded. */
+  active?: boolean
   /** Bounded reasoning choices and transport advertised by the endpoint. */
   reasoning?: LlmDiscoveredReasoningInfo
   /** Maximum output tokens, when disclosed. */
@@ -261,6 +265,10 @@ export interface LlmDiscoveredContextWindow {
   contextWindow: number
   /** Endpoint model id to send when this tier is selected. */
   model: string
+  /** Whether ordinary selection may use this tier; omission means yes. */
+  available?: boolean
+  /** Endpoint-supplied explanation for an unavailable tier. */
+  unavailableReason?: string
 }
 
 /** One adapter-discovered model; catalog membership is advisory, not request validation. */
@@ -275,16 +283,30 @@ export interface LlmModelInfo {
   description?: string
   /** Accepted request modalities; absent means unknown, while an explicit omission is negative capability. */
   inputModalities?: readonly ModelModality[]
+  /** Whether an ordinary conversation may select this model; omission means yes. */
+  selectable?: boolean
+  /** Whether this model or one of its private runtime routes is currently loaded. */
+  active?: boolean
   /** Bounded context choices, with the model default identified separately. */
   contextOptions?: LlmModelContextOptions
 }
 
-/** Selectable context metadata for one exact logical model route. */
+/** Advertised context metadata for one exact logical model route. */
 export interface LlmModelContextOptions {
   /** Context used when a caller does not choose a tier. */
   defaultContextWindow: number
-  /** Allowed context sizes in adapter-preferred display order. */
-  contextWindows: readonly number[]
+  /** Advertised context tiers in adapter-preferred display order. */
+  contextWindows: readonly LlmModelContextChoice[]
+}
+
+/** One advertised context tier and its ordinary-selection availability. */
+export interface LlmModelContextChoice {
+  /** Effective combined request and response context in tokens. */
+  contextWindow: number
+  /** Whether ordinary selection may use this tier. */
+  available: boolean
+  /** Endpoint-supplied explanation for an unavailable tier. */
+  unavailableReason?: string
 }
 
 /** Provider-owned context capacity for one exact provider/model route. */
@@ -390,6 +412,8 @@ export interface GenerateOptions {
   reasoningEffort?: ReasoningEffortId
   /** Adapter-advertised effective context selected for this conversation. */
   contextWindow?: number
+  /** Permit one advertised host-constrained context tier for a best-effort request. */
+  bestTryContext?: boolean
   /**
    * Ordered conversation messages, exactly as the provider sees them (after
    * the `system` slot). A loop-built request assembles them as

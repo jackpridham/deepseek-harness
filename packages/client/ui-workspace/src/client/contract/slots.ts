@@ -116,19 +116,15 @@ export type WorkspaceBrowserInjected = {
   forkSession: (sessionId: SessionId) => void
   /** Rename a Host Workspace (rejects on name conflict; resolves on durability). */
   renameWorkspace: (workspaceId: WorkspaceId, title: string) => Promise<void>
-  /** Delete only a Host Workspace registration; directory and Session logs remain. */
+  /** Permanently delete a Host Workspace, its directory, and owned session data. */
   deleteWorkspace: (workspaceId: WorkspaceId) => Promise<void>
   /**
    * Reorder a Workspace in the durable registry display order.
    * Omitted anchor appends to the end.
    */
   insertWorkspaceBefore: (workspaceId: WorkspaceId, beforeWorkspaceId?: WorkspaceId) => Promise<void>
-  /**
-   * Archive a Session into the registry-global set: hidden from grouping
-   * surfaces, log and accounting slot retained. Archiving the current
-   * session clears the selection into the New Session view state.
-   */
-  archiveSession: (sessionId: SessionId) => Promise<void>
+  /** Permanently delete a Session and its persisted data. */
+  deleteSession: (sessionId: SessionId) => Promise<void>
   /**
    * Reorder a session inside its Workspace account (DOM-insertBefore
    * semantics: omitted anchor appends to the end). The view refreshes from

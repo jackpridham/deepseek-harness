@@ -424,6 +424,16 @@ export class SessionRuntime implements ISessions {
   }
 
   /**
+   * Apply exact Host-confirmed permanent removals and release their local scopes.
+   * @param sessionIds - permanently deleted session ids.
+   */
+  removeDeleted(sessionIds: readonly SessionId[]): void {
+    this.manager.removeDeleted(sessionIds)
+    this.purgeDeletedScopes(sessionIds)
+    this.projectList()
+  }
+
+  /**
    * Refresh the real Session baseline, reusing an in-flight pull.
    * @returns completion of the current or newly started baseline pull.
    */
@@ -459,6 +469,10 @@ export class SessionRuntime implements ISessions {
    */
   handleHostEnvelope(envelope: Parameters<SessionManager['handleHostEnvelope']>[0]): void {
     this.manager.handleHostEnvelope(envelope)
+    const frame = envelope.payload
+    if (frame.type === 'host/session-removed' && frame.deleted === true) {
+      this.purgeDeletedScopes([frame.sessionId])
+    }
   }
 
   /** Rebuild the Session baseline and every opened window after connection. */
@@ -763,6 +777,18 @@ export class SessionRuntime implements ISessions {
     // declared dependency; a slots-less boot (object-layer tests) skips.
     this.rootCtx.get('slots')?.pruneStoreScope(id)
     this.manager.drop(id)
+  }
+
+  /** Permanent deletion does not retain the staged scope's frozen view. */
+  private purgeDeletedScopes(sessionIds: readonly SessionId[]): void {
+    for (const id of sessionIds) {
+      const record = this.scopes.get(id)
+      this.deferredRemovals.delete(id)
+      if (this.watched === id) this.watched = undefined
+      if (record === undefined) continue
+      this.scopes.delete(id)
+      this.dropScope(id, record)
+    }
   }
 
   /** Run deferred teardowns whose session is no longer staged (called when the stage moves). */

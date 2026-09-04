@@ -65,11 +65,7 @@ export interface WorkspaceApi {
   rename(request: RpcRequest<{ workspaceId: WorkspaceId; title: string }>):
   Promise<RpcResponse<{ workspace: WorkspaceView }>>
 
-  /**
-   * Removes one Workspace registration. The directory, every user file, and
-   * every session log remain untouched; those Sessions consequently become
-   * ungrouped. An unknown id fails with `workspace-not-found`.
-   */
+  /** Permanently removes one Workspace directory and every session it owns. */
   delete(request: RpcRequest<{ workspaceId: WorkspaceId }>):
   Promise<RpcResponse<{ deleted: true }>>
 
@@ -106,4 +102,11 @@ export interface WorkspaceApi {
    */
   archiveSession(request: RpcRequest<{ sessionId: SessionId }>):
   Promise<RpcResponse<{ archivedSessionIds: SessionId[] }>>
+
+  /**
+   * Permanently deletes one session and all of its lineage descendants while
+   * preserving sibling sessions and the workspace directory.
+   */
+  deleteSession(request: RpcRequest<{ sessionId: SessionId }>):
+  Promise<RpcResponse<{ deleted: true; deletedSessionIds: SessionId[] }>>
 }

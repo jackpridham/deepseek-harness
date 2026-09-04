@@ -116,7 +116,12 @@ describe('draft-provider model discovery', () => {
             context_length: 65_536,
             context_windows: [
               { context_window: 32_768, model: 'acme-large--ctx-32768' },
-              { context_window: 65_536, model: 'acme-large' },
+              {
+                context_window: 65_536,
+                model: 'acme-large',
+                available: false,
+                unavailable_reason: 'host constrained',
+              },
               { context_window: 65_536, model: 'duplicate-is-ignored' },
               { context_window: 0, model: 'invalid' },
             ],
@@ -129,6 +134,7 @@ describe('draft-provider model discovery', () => {
               ],
             },
             max_output_tokens: 4096,
+            selectable: false,
             architecture: { input_modalities: ['text', 'image', 'audio', 'image'] },
           },
           { id: 'acme-small' },
@@ -142,12 +148,18 @@ describe('draft-provider model discovery', () => {
     expect(models).toEqual([
       {
         id: 'acme-large',
+        selectable: false,
         name: 'Acme Large',
         inputModalities: ['text', 'image'],
         contextWindow: 65_536,
         contextWindows: [
-          { contextWindow: 32_768, model: 'acme-large--ctx-32768' },
-          { contextWindow: 65_536, model: 'acme-large' },
+          { contextWindow: 32_768, model: 'acme-large--ctx-32768', available: true },
+          {
+            contextWindow: 65_536,
+            model: 'acme-large',
+            available: false,
+            unavailableReason: 'host constrained',
+          },
         ],
         reasoning: {
           format: 'qwen-chat-template',
@@ -159,7 +171,7 @@ describe('draft-provider model discovery', () => {
         },
         maxTokens: 4096,
       },
-      { id: 'acme-small' },
+      { id: 'acme-small', selectable: true },
     ])
     expect(server.paths).toEqual(['/v1/models'])
     expect(server.headers[0]?.authorization).toBe('Bearer probe-key')
@@ -244,7 +256,7 @@ describe('draft-provider model discovery', () => {
     const ctx = await harness()
 
     expect(await ctx.llm.discoverModels('llm-pi-ai', { baseURL: server.url }))
-      .toEqual([{ id: 'good' }, { id: 'zero-capacity' }])
+      .toEqual([{ id: 'good', selectable: true }, { id: 'zero-capacity', selectable: true }])
   })
 
   it('points at the credential for a rejected one, and only then', async () => {

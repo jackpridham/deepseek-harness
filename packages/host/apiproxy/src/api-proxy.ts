@@ -4,7 +4,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { lstat, mkdir, realpath, rm, stat, unlink } from 'node:fs/promises'
+import { lstat, mkdir, rm, stat, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, parse, relative, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -297,6 +297,8 @@ async function buildModelCatalog(ctx: Context): Promise<{
           id: model.id,
           name: model.name,
           ...model.description === undefined ? {} : { description: model.description },
+          ...model.selectable === undefined ? {} : { selectable: model.selectable },
+          ...model.active === undefined ? {} : { active: model.active },
           ...resolved.contextOptions === undefined ? {} : {
             context: {
               defaultContextWindow: resolved.contextOptions.defaultContextWindow,
@@ -591,6 +593,12 @@ export interface ApiProxyDefaults {
    * reaches the sessions that have not run a turn yet.
    */
   defaultModelSelection: () => ModelSelection
+  /**
+   * Record an ordinary accepted selection as the default for new sessions.
+   * Rejections are reported and swallowed because the session-local switch
+   * has already succeeded. Best-try selections are deliberately not saved.
+   */
+  saveDefaultModelSelection?: (selection: ModelSelection) => Promise<void>
   /** Default project directory for new sessions whose create request carries no cwd. */
   cwd: string
   /** Native open-with-default-application; injectable for carrier tests. */
@@ -1093,51 +1101,52 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
   const pendingQuestions = new Map<RpcId, PendingQuestion>()
   const pendingApprovals = new Map<RpcId, PendingApproval>()
   const muxQueues = new Set<FrameQueue<RpcRequest<MuxFrame>>>()
+  const hostQueues = new Set<FrameQueue<RpcRequest<HostFrame>>>()
   const imageAdmissionChains = new WeakMap<Agent, Promise<void>>()
 
-  /** Permanently remove one workspace tree and every Harness record that owns it. */
-  async function purgeWorkspace(workspace: Workspace): Promise<void> {
-    const declaredRoot = workspace.path
-    if (!isAbsolute(declaredRoot) || parse(declaredRoot).root === declaredRoot) {
-      throw new Error(`refusing to purge unsafe workspace path "${declaredRoot}"`)
-    }
-    const root = await realpath(declaredRoot).catch(() => resolve(declaredRoot))
-    if (parse(root).root === root) throw new Error(`refusing to purge unsafe workspace path "${root}"`)
+  /** Run one session/workspace publication or deletion after earlier ownership mutations settle. */
+  function serializeWorkspaceOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = workspaceCreationChain.then(operation)
+    workspaceCreationChain = result.then(() => undefined, () => undefined)
+    return result
+  }
 
-    const nestedWorkspaces = []
-    for (const candidate of ctx.workspaceRegistry.list()) {
-      const candidatePath = await realpath(candidate.path).catch(() => resolve(candidate.path))
-      if (pathWithin(root, candidatePath)) nestedWorkspaces.push(candidate)
-    }
-    const storedHeaders = await ctx.sessionPersistence.list()
-    const liveSessions = ctx.sessions.list()
+  /** Push one committed Host increment to every connected client. */
+  function broadcastHost(payload: HostFrame): void {
+    const envelope = frame(payload)
+    for (const queue of hostQueues) queue.push(envelope)
+  }
+
+  /** Current durable and attached session headers, with attached state winning. */
+  async function sessionHeaders(): Promise<Map<SessionId, SessionHeader>> {
     const headers = new Map<SessionId, SessionHeader>()
-    for (const header of storedHeaders) headers.set(header.id, header)
-    for (const session of liveSessions) headers.set(session.id, session.header)
+    for (const header of await ctx.sessionPersistence.list()) headers.set(header.id, header)
+    for (const session of ctx.sessions.list()) headers.set(session.id, session.header)
+    return headers
+  }
 
-    const targetIds = new Set<SessionId>()
-    for (const header of headers.values()) {
-      const declaredCwd = header.cwd
-      if (declaredCwd === undefined) continue
-      const cwd = await realpath(declaredCwd).catch(() => resolve(declaredCwd))
-      if (pathWithin(root, cwd)) targetIds.add(header.id)
-    }
-    for (const candidate of nestedWorkspaces) {
-      for (const id of candidate.sessionIds) targetIds.add(id)
-    }
-    // Seed lineage is also ownership: a subagent can run outside the parent's
-    // cwd but its transcript and sidecars still belong to that conversation.
+  /** Expand seed ids through their complete session lineage. */
+  function withDescendants(headers: ReadonlyMap<SessionId, SessionHeader>, seeds: Iterable<SessionId>): Set<SessionId> {
+    const ids = new Set(seeds)
     let grew = true
     while (grew) {
       grew = false
       for (const header of headers.values()) {
-        if (header.parentSession === undefined || !targetIds.has(header.parentSession)
-          || targetIds.has(header.id)) continue
-        targetIds.add(header.id)
+        if (header.parentSession === undefined || !ids.has(header.parentSession) || ids.has(header.id)) continue
+        ids.add(header.id)
         grew = true
       }
     }
+    return ids
+  }
 
+  /** Quiesce and permanently remove session records while retaining their workspace directories. */
+  async function purgeSessionRecords(
+    initialTargetIds: ReadonlySet<SessionId>,
+    initialHeaders: ReadonlyMap<SessionId, SessionHeader>,
+  ): Promise<SessionId[]> {
+    let targetIds = new Set(initialTargetIds)
+    let headers = new Map(initialHeaders)
     const depth = (id: SessionId): number => {
       let result = 0
       let current = headers.get(id)
@@ -1149,18 +1158,31 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       }
       return result
     }
+    for (;;) {
+      const targetAgents = [...targetIds].flatMap((id) => {
+        const session = ctx.sessions.get(id)
+        if (session === undefined) return []
+        const agent = ctx.agents.get(id)
+        if (agent === undefined) throw new Error(`cannot purge session "${id}" while it is live without an owning agent`)
+        return [agent]
+      })
+      for (const agent of targetAgents) agent.cancel({ kind: 'disposed' })
+      await Promise.all(targetAgents.map(agent => agent.whenIdle()))
+      const currentHeaders = await sessionHeaders()
+      const expanded = withDescendants(currentHeaders, targetIds)
+      headers = currentHeaders
+      if (expanded.size === targetIds.size) break
+      targetIds = expanded
+    }
+
     const orderedIds = [...targetIds].sort((left, right) => depth(right) - depth(left))
     const targetAgents = orderedIds.flatMap((id) => {
       const session = ctx.sessions.get(id)
       if (session === undefined) return []
       const agent = ctx.agents.get(id)
-      if (agent === undefined) {
-        throw new Error(`cannot purge workspace while session "${id}" is live without an owning agent`)
-      }
+      if (agent === undefined) throw new Error(`cannot purge session "${id}" while it is live without an owning agent`)
       return [agent]
     })
-    for (const agent of targetAgents) agent.cancel({ kind: 'disposed' })
-    await Promise.all(targetAgents.map(agent => agent.whenIdle()))
     const candidateAttachments = new Set<AttachmentIdType>()
     for (const id of orderedIds) {
       const live = ctx.sessions.get(id)
@@ -1180,21 +1202,66 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     }
     for (const id of orderedIds) {
       if (ctx.sessions.get(id) !== undefined || ctx.agents.get(id) !== undefined) {
-        throw new Error(`session "${id}" did not dispose before workspace purge`)
+        throw new Error(`session "${id}" did not dispose before purge`)
       }
+    }
+    // Accounting goes first: if it fails, every authoritative log remains and
+    // the same request can repair the partial idempotent detach on retry.
+    await ctx.workspaceRegistry.purgeSessions(orderedIds)
+    for (const id of orderedIds) {
       if (headers.has(id)) await ctx.sessionPersistence.delete(id)
-      await ctx.workspaceRegistry.purgeSessions([id])
+      // A later sibling delete may fail. Publish each durable commit now so
+      // every connected client forgets records already gone before a retry.
+      broadcastHost({ type: 'host/session-removed', sessionId: id, deleted: true })
     }
 
-    const retainedAttachments = new Set<AttachmentIdType>()
-    for (const session of ctx.sessions.list()) {
-      for (const id of attachmentIdsIn(session.events)) retainedAttachments.add(id)
+    try {
+      const retainedAttachments = new Set<AttachmentIdType>()
+      for (const session of ctx.sessions.list()) {
+        for (const id of attachmentIdsIn(session.events)) retainedAttachments.add(id)
+      }
+      for (const header of await ctx.sessionPersistence.list()) {
+        const inspected = await ctx.sessionPersistence.inspect(header.id)
+        for (const id of attachmentIdsIn(inspected.events)) retainedAttachments.add(id)
+      }
+      await ctx.attachments.collectGarbage([...candidateAttachments], [...retainedAttachments])
+    } catch (error: unknown) {
+      ctx.logger.warn(`api-proxy: deleted sessions but attachment garbage collection failed: ${String(error)}`)
     }
-    for (const header of await ctx.sessionPersistence.list()) {
-      const inspected = await ctx.sessionPersistence.inspect(header.id)
-      for (const id of attachmentIdsIn(inspected.events)) retainedAttachments.add(id)
+    return orderedIds
+  }
+
+  /** Permanently remove one workspace tree and every Harness record that owns it. */
+  async function purgeWorkspace(workspace: Workspace): Promise<void> {
+    const declaredRoot = workspace.path
+    if (!isAbsolute(declaredRoot) || parse(declaredRoot).root === declaredRoot) {
+      throw new Error(`refusing to purge unsafe workspace path "${declaredRoot}"`)
     }
-    await ctx.attachments.collectGarbage([...candidateAttachments], [...retainedAttachments])
+    // Workspace records are already canonical. Do not realpath again here: a
+    // directory may have been replaced by a link since registration, and a
+    // destructive operation must unlink that entry rather than follow it.
+    const root = resolve(declaredRoot)
+    if (parse(root).root === root) throw new Error(`refusing to purge unsafe workspace path "${root}"`)
+
+    const nestedWorkspaces = []
+    for (const candidate of ctx.workspaceRegistry.list()) {
+      const candidatePath = resolve(candidate.path)
+      if (pathWithin(root, candidatePath)) nestedWorkspaces.push(candidate)
+    }
+    const headers = await sessionHeaders()
+
+    const targetIds = new Set<SessionId>()
+    for (const header of headers.values()) {
+      const declaredCwd = header.cwd
+      if (declaredCwd === undefined) continue
+      const cwd = resolve(declaredCwd)
+      if (pathWithin(root, cwd)) targetIds.add(header.id)
+    }
+    for (const candidate of nestedWorkspaces) {
+      for (const id of candidate.sessionIds) targetIds.add(id)
+    }
+    const ownedIds = withDescendants(headers, targetIds)
+    await purgeSessionRecords(ownedIds, headers)
 
     try {
       const entry = await lstat(root)
@@ -1203,13 +1270,6 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
     }
-    if (declaredRoot !== root) {
-      await unlink(declaredRoot).catch((error: unknown) => {
-        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
-      })
-    }
-
-    await ctx.workspaceRegistry.purgeSessions([...targetIds])
     for (const candidate of nestedWorkspaces.sort((left, right) => right.path.length - left.path.length)) {
       await ctx.workspaceRegistry.delete(candidate.id)
     }
@@ -1249,6 +1309,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           provider: logged.provider,
           model: logged.model,
           ...logged.contextWindow === undefined ? {} : { contextWindow: logged.contextWindow },
+          ...logged.bestTryContext === undefined ? {} : { bestTryContext: logged.bestTryContext },
           ...logged.reasoningEffort === undefined
             ? {}
             : { reasoningEffort: logged.reasoningEffort },
@@ -1348,12 +1409,14 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
   // composition, and the header is written once at creation. Reading the
   // header here would silently undo the switch on the next restart and
   // restore that history under the old tool set.
-  const agentFor = createApiRemoteAgentResolver(ctx, {
+  const resolveAgent = createApiRemoteAgentResolver(ctx, {
     agentOptions,
     setup: async ({ meta, events }) =>
       (await composeAgent(resolveSessionPreset({ header: meta, events }))).setup,
     retainHandle: rememberAgentHandle,
   })
+  const agentFor: typeof resolveAgent = sessionId =>
+    serializeWorkspaceOperation(() => resolveAgent(sessionId))
 
   /** Send one transient frame to every connected mux consumer. */
   function broadcast(payload: MuxFrame): void {
@@ -1799,13 +1862,11 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
 
   /** Resolve or create one path while holding the Host's workspace-create chain. */
   function ensureWorkspace(path: string): Promise<{ workspace: Workspace; created: boolean }> {
-    const operation = workspaceCreationChain.then(async () => {
+    return serializeWorkspaceOperation(async () => {
       const existing = await ctx.workspaceRegistry.resolveByPath(path)
       if (existing !== undefined) return { workspace: existing, created: false }
       return { workspace: await ctx.workspaceRegistry.create(path), created: true }
     })
-    workspaceCreationChain = operation.then(() => undefined, () => undefined)
-    return operation
   }
 
   /**
@@ -2227,78 +2288,80 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       },
 
       async create(request) {
-        const sessionId = request.payload.sessionId ?? `session-${randomUUID()}` as SessionId
-        let workspace: Workspace | undefined
-        if (request.payload.workspaceId !== undefined) {
-          workspace = ctx.workspaceRegistry.get(brandWorkspaceId(request.payload.workspaceId))
-          if (workspace === undefined) {
-            return err(request, {
-              code: 'workspace-not-found',
-              message: `workspace "${request.payload.workspaceId}" not found`,
-              details: { workspaceId: request.payload.workspaceId },
-            })
+        return serializeWorkspaceOperation(async () => {
+          const sessionId = request.payload.sessionId ?? `session-${randomUUID()}` as SessionId
+          let workspace: Workspace | undefined
+          if (request.payload.workspaceId !== undefined) {
+            workspace = ctx.workspaceRegistry.get(brandWorkspaceId(request.payload.workspaceId))
+            if (workspace === undefined) {
+              return err(request, {
+                code: 'workspace-not-found',
+                message: `workspace "${request.payload.workspaceId}" not found`,
+                details: { workspaceId: request.payload.workspaceId },
+              })
+            }
           }
-        }
-        const cwd = workspace?.path ?? request.payload.cwd ?? defaults.cwd
-        const requestedPreset = request.payload.agentPreset
-        try {
-          await ensureSession(sessionId, cwd, request.payload.sessionId !== undefined, requestedPreset)
-        } catch (error: unknown) {
-          if (error instanceof AgentPresetConflict) {
-            return err(request, {
-              code: 'agent-preset-conflict',
-              message: error.message,
-              details: {
-                sessionId: error.sessionId,
-                requestedPreset: error.requestedPreset,
-                ...error.existingPreset === undefined ? {} : { existingPreset: error.existingPreset },
-              },
-            })
-          }
-          const refused = presetFailure(request, error)
-          if (refused !== undefined) return refused
-          if (error instanceof SessionCwdConflict) {
-            return err(request, {
-              code: 'session-conflict',
-              message: error.message,
-              details: {
-                sessionId: error.sessionId,
-                requestedCwd: error.requestedCwd,
-                ...error.existingCwd === undefined ? {} : { existingCwd: error.existingCwd },
-              },
-            })
-          }
-          if (error instanceof SubagentSessionOwnership) {
-            return err(request, subagentOwnershipError(error.sessionId))
-          }
-          return err(request, {
-            code: 'internal',
-            message: `failed to create session "${sessionId}": ${String(error)}`,
-            details: {},
-          })
-        }
-        if (workspace !== undefined) {
+          const cwd = workspace?.path ?? request.payload.cwd ?? defaults.cwd
+          const requestedPreset = request.payload.agentPreset
           try {
-            await workspace.attachSession(sessionId)
+            await ensureSession(sessionId, cwd, request.payload.sessionId !== undefined, requestedPreset)
           } catch (error: unknown) {
+            if (error instanceof AgentPresetConflict) {
+              return err(request, {
+                code: 'agent-preset-conflict',
+                message: error.message,
+                details: {
+                  sessionId: error.sessionId,
+                  requestedPreset: error.requestedPreset,
+                  ...error.existingPreset === undefined ? {} : { existingPreset: error.existingPreset },
+                },
+              })
+            }
+            const refused = presetFailure(request, error)
+            if (refused !== undefined) return refused
+            if (error instanceof SessionCwdConflict) {
+              return err(request, {
+                code: 'session-conflict',
+                message: error.message,
+                details: {
+                  sessionId: error.sessionId,
+                  requestedCwd: error.requestedCwd,
+                  ...error.existingCwd === undefined ? {} : { existingCwd: error.existingCwd },
+                },
+              })
+            }
+            if (error instanceof SubagentSessionOwnership) {
+              return err(request, subagentOwnershipError(error.sessionId))
+            }
             return err(request, {
-              code: 'workspace-attach-failed',
-              message: `session "${sessionId}" was created but could not attach to workspace "${workspace.id}": ${String(error)}`,
-              details: { sessionId, workspaceId: workspace.id },
+              code: 'internal',
+              message: `failed to create session "${sessionId}": ${String(error)}`,
+              details: {},
             })
           }
-        }
-        // Echo the composition the session RUNS so a client can label it
-        // without waiting for the next list refresh — the create is the commit
-        // point that knows it (a caller that named none gets the default).
-        // Resolved from the log for the same reason `sessionListFields()` is:
-        // this handler also adopts an already-live session, and one that
-        // switched while blank runs a preset its header no longer names, so
-        // echoing the header would contradict both the adoption this call just
-        // allowed and the row `session.list` serves for the same session.
-        const created = ctx.agents.get(sessionId)
-        const createdPreset = created === undefined ? undefined : resolveSessionPreset(created.session)
-        return ok(request, { sessionId, ...createdPreset === undefined ? {} : { agentPreset: createdPreset } })
+          if (workspace !== undefined) {
+            try {
+              await workspace.attachSession(sessionId)
+            } catch (error: unknown) {
+              return err(request, {
+                code: 'workspace-attach-failed',
+                message: `session "${sessionId}" was created but could not attach to workspace "${workspace.id}": ${String(error)}`,
+                details: { sessionId, workspaceId: workspace.id },
+              })
+            }
+          }
+          // Echo the composition the session RUNS so a client can label it
+          // without waiting for the next list refresh — the create is the commit
+          // point that knows it (a caller that named none gets the default).
+          // Resolved from the log for the same reason `sessionListFields()` is:
+          // this handler also adopts an already-live session, and one that
+          // switched while blank runs a preset its header no longer names, so
+          // echoing the header would contradict both the adoption this call just
+          // allowed and the row `session.list` serves for the same session.
+          const created = ctx.agents.get(sessionId)
+          const createdPreset = created === undefined ? undefined : resolveSessionPreset(created.session)
+          return ok(request, { sessionId, ...createdPreset === undefined ? {} : { agentPreset: createdPreset } })
+        })
       },
 
       async history(request) {
@@ -2342,7 +2405,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       },
 
       async selectModel(request) {
-        const { sessionId, provider, model, contextWindow, reasoningEffort } = request.payload
+        const { sessionId, provider, model, contextWindow, bestTryContext, reasoningEffort } = request.payload
         const found = await agentFor(sessionId)
         if ('error' in found) return err(request, found.error)
         return serializeImageAdmission(found.agent, async () => {
@@ -2351,6 +2414,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
               provider,
               model,
               ...contextWindow === undefined ? {} : { contextWindow },
+              ...bestTryContext === undefined ? {} : { bestTryContext },
               ...reasoningEffort === undefined
                 ? {}
                 : { reasoningEffort: ReasoningEffortId(reasoningEffort) },
@@ -2371,11 +2435,21 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
               provider: resolved.provider,
               model: resolved.model,
               ...resolved.contextWindow === undefined ? {} : { contextWindow: resolved.contextWindow },
+              ...resolved.bestTryContext === undefined ? {} : { bestTryContext: resolved.bestTryContext },
               ...resolved.reasoningEffort === undefined
                 ? {}
                 : { reasoningEffort: resolved.reasoningEffort },
             }
             selectionFor(found.agent).current = selected
+            if (selected.bestTryContext !== true) {
+              try {
+                await defaults.saveDefaultModelSelection?.(selected)
+              } catch (error: unknown) {
+                ctx.logger.warn(
+                  `api-proxy: the model switch applies to this session but was not saved as the default: ${String(error)}`,
+                )
+              }
+            }
             return ok(request, { selected: { ...selected } })
           } catch (error: unknown) {
             return err(request, {
@@ -2890,14 +2964,13 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         // they observe the state left by earlier queued renames — checked
         // up front, a queued A→A could report success while an earlier A→B
         // still lands afterwards.
-        const operation = workspaceCreationChain.then(async () => {
+        const operation = serializeWorkspaceOperation(async () => {
           if (title === workspace.title) return
           if (ctx.workspaceRegistry.list().some(other => other.id !== workspace.id && other.title === title)) {
             throw new WorkspaceNameConflictError(title)
           }
           await workspace.setTitle(title)
         })
-        workspaceCreationChain = operation.then(() => undefined, () => undefined)
         try {
           await operation
         } catch (error: unknown) {
@@ -2915,13 +2988,12 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
 
       async delete(request) {
         const { workspaceId } = request.payload
-        const operation = workspaceCreationChain.then(async () => {
+        const operation = serializeWorkspaceOperation(async () => {
           const workspace = ctx.workspaceRegistry.get(brandWorkspaceId(workspaceId))
           if (workspace === undefined) return false
           await purgeWorkspace(workspace)
           return true
         })
-        workspaceCreationChain = operation.then(() => undefined, () => undefined)
         if (!await operation) return workspaceNotFound(request, workspaceId)
         return ok(request, { deleted: true as const })
       },
@@ -2978,6 +3050,24 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           })
         }
         return ok(request, { archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds] })
+      },
+
+      async deleteSession(request) {
+        const { sessionId } = request.payload
+        const operation = serializeWorkspaceOperation(async () => {
+          const headers = await sessionHeaders()
+          if (!headers.has(sessionId)) return false
+          return purgeSessionRecords(withDescendants(headers, [sessionId]), headers)
+        })
+        const deletedSessionIds = await operation
+        if (deletedSessionIds === false) {
+          return err(request, {
+            code: 'session-not-found',
+            message: `session "${sessionId}" was not found`,
+            details: { sessionId },
+          })
+        }
+        return ok(request, { deleted: true as const, deletedSessionIds })
       },
     },
 
@@ -3592,6 +3682,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
 
       host(_request, signal) {
         const queue = new FrameQueue<RpcRequest<HostFrame>>()
+        hostQueues.add(queue)
         const committedWorkspaces = ctx.workspaceRegistry.list()
         const committedWorkspaceIds = new Set(
           committedWorkspaces.map(workspace => String(workspace.id)),
@@ -3691,7 +3782,10 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             }),
           )),
         ]
-        return queue.iterate(signal, () => { for (const dispose of disposers) dispose() })
+        return queue.iterate(signal, () => {
+          hostQueues.delete(queue)
+          for (const dispose of disposers) dispose()
+        })
       },
     },
 

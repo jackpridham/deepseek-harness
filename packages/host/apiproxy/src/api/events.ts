@@ -134,7 +134,12 @@ export type HostFrame =
     cwd?: string
     agentPreset?: string
   }
-  | { type: 'host/session-removed'; sessionId: SessionId }
+  | {
+    type: 'host/session-removed'
+    sessionId: SessionId
+    /** True only after the durable session record was permanently deleted. */
+    deleted?: boolean
+  }
   | { type: 'host/session-status'; sessionId: SessionId; running: boolean }
   | { type: 'host/agent-error'; sessionId: SessionId; message: string }
   | { type: 'host/workspace-changed'; workspace: WorkspaceView }

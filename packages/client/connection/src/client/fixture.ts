@@ -2788,6 +2788,44 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
         }
         return ok(request, { archivedSessionIds: [...archivedSessionIds] })
       },
+      deleteSession: (request) => {
+        const missing = requireSession(request)
+        if (missing !== undefined) return missing
+        const deleted = new Set<SessionId>([request.payload.sessionId])
+        let grew = true
+        while (grew) {
+          grew = false
+          for (const session of sessions) {
+            if (session.parentSessionId === undefined || !deleted.has(session.parentSessionId)
+              || deleted.has(session.sessionId)) continue
+            deleted.add(session.sessionId)
+            grew = true
+          }
+        }
+        for (let index = sessions.length - 1; index >= 0; index--) {
+          const session = sessions[index]
+          if (session === undefined || !deleted.has(session.sessionId)) continue
+          sessions.splice(index, 1)
+          logs.delete(session.sessionId)
+          modelSelections.delete(session.sessionId)
+          emitHost({ type: 'host/session-removed', sessionId: session.sessionId, deleted: true })
+        }
+        for (const workspace of workspaces) {
+          const sessionIds = workspace.sessionIds.filter(id => !deleted.has(id))
+          if (sessionIds.length === workspace.sessionIds.length) continue
+          workspace.sessionIds = sessionIds
+          emitHost({ type: 'host/workspace-changed', workspace: { ...workspace } })
+        }
+        const archivedCount = archivedSessionIds.length
+        for (let index = archivedSessionIds.length - 1; index >= 0; index--) {
+          const id = archivedSessionIds[index]
+          if (id !== undefined && deleted.has(id)) archivedSessionIds.splice(index, 1)
+        }
+        if (archivedSessionIds.length !== archivedCount) {
+          emitHost({ type: 'host/archived-sessions-changed', archivedSessionIds: [...archivedSessionIds] })
+        }
+        return ok(request, { deleted: true as const, deletedSessionIds: [...deleted] })
+      },
     },
     agentPresets: {
       // Both trusts appear, because a surface must present a locally authored
@@ -3203,6 +3241,7 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'workspace.insertBefore': return this.api.workspace.insertBefore(request)
       case 'workspace.insertSessionBefore': return this.api.workspace.insertSessionBefore(request)
       case 'workspace.archiveSession': return this.api.workspace.archiveSession(request)
+      case 'workspace.deleteSession': return this.api.workspace.deleteSession(request)
       case 'skill.list': return this.api.skills.list(request)
       case 'agentPreset.list': return this.api.agentPresets.list(request)
       case 'agentPreset.select': return this.api.agentPresets.select(request)

@@ -261,11 +261,7 @@ export class WorkspaceRuntime implements IWorkspaces {
     return result.value.workspace
   }
 
-  /**
-   * Delete one Workspace registration. Sessions, session logs, and the
-   * directory remain Host-owned outside this operation.
-   * @param workspaceId - target workspace.
-   */
+  /** Delete one Workspace directory and its owned sessions. */
   async delete(workspaceId: WorkspaceId): Promise<void> {
     const result = await this.manager.delete(workspaceId)
     if (!result.ok) throw new Error(`workspace delete failed: ${result.error.code}: ${result.error.message}`)
@@ -290,6 +286,14 @@ export class WorkspaceRuntime implements IWorkspaces {
   async archiveSession(sessionId: SessionId): Promise<void> {
     const result = await this.manager.archiveSession(sessionId)
     if (!result.ok) throw new Error(`session archive failed: ${result.error.code}: ${result.error.message}`)
+  }
+
+  /** Permanently delete one session and its lineage descendants. */
+  async deleteSession(sessionId: SessionId): Promise<void> {
+    const result = await this.manager.deleteSession(sessionId)
+    if (!result.ok) throw new Error(`session delete failed: ${result.error.code}: ${result.error.message}`)
+    this.sessions.removeDeleted(result.value.deletedSessionIds)
+    await this.sessions.refresh()
   }
 
   /**

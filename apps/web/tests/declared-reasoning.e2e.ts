@@ -65,8 +65,8 @@ describe.skipIf(MODE === 'record')('web e2e: declared reasoning efforts reach th
     onTestFailed(() => saveFailureShot(page, 'web-e2e-declared-reasoning'))
     const trigger = page.getByRole('button', { name: /^选择模型/ })
     await trigger.waitFor({ timeout: 15_000 })
-    await trigger.click()
-    await page.getByRole('menuitem', { name: /推理等级/ }).click()
+    const effort = page.getByRole('button', { name: /^选择推理等级/ })
+    await effort.click()
 
     // Declared levels, nothing else: the provider-default entry (the route
     // configures no `reasoning`), then Off/High/Max — minimal, low, medium,
@@ -84,8 +84,8 @@ describe.skipIf(MODE === 'record')('web e2e: declared reasoning efforts reach th
       async () => readFile(join(scaffold.harnessHome, 'settings.yaml'), 'utf8'),
       { timeout: 10_000 },
     ).toContain('reasoningEffort: high')
-    await expect.poll(() => trigger.getAttribute('aria-label'), { timeout: 10_000 })
-      .toBe('选择模型，当前 Acme Think，推理等级 High')
+    await expect.poll(() => effort.getAttribute('aria-label'), { timeout: 10_000 })
+      .toBe('选择推理等级，当前 High')
     expect(tripwire.pageErrors).toEqual([])
   }, 60_000)
 

@@ -64,8 +64,12 @@ interface CatalogInflight {
   readonly promise: Promise<void>
   readonly expandableRows: Set<SessionId>
   readonly activityRows: Map<SessionId, 'running' | 'inactive'>
+  /** Permanently removed children replayed over the response this request predates. */
+  readonly removedRows: Set<SessionId>
   /** Removal-time invalidation replayed over the response this request predates. */
   parentAvailableOverride: false | undefined
+  /** A permanently deleted owner must not reinstall its catalog when this request settles. */
+  ownerDeleted: boolean
 }
 
 type SessionListMutation =
@@ -226,6 +230,14 @@ export class SessionManager {
   }
 
   /**
+   * Apply exact Host-confirmed permanent removals, including list-pull replay.
+   * @param sessionIds - permanently deleted session ids.
+   */
+  removeDeleted(sessionIds: readonly SessionId[]): void {
+    for (const sessionId of sessionIds) this.handleSessionRemoved(sessionId, true)
+  }
+
+  /**
    * Return the durable catalog address retained for one child.
    * @param sessionId - possible addressed child id.
    * @returns The direct-parent address, when navigation discovered one.
@@ -350,6 +362,7 @@ export class SessionManager {
     const previous = this.catalogs.get(parentSessionId)
     const expandableRows = new Set<SessionId>()
     const activityRows = new Map<SessionId, 'running' | 'inactive'>()
+    const removedRows = new Set<SessionId>()
     this.catalogs.set(parentSessionId, {
       entries: previous?.entries ?? [],
       parentAvailable: previous?.parentAvailable ?? false,
@@ -365,7 +378,9 @@ export class SessionManager {
             ?? result.value.parentAvailable
           this.catalogs.set(parentSessionId, {
             ...result.value,
-            entries: this.withCatalogMutations(result.value.entries, expandableRows, activityRows),
+            entries: this.withCatalogMutations(
+              result.value.entries, expandableRows, activityRows, removedRows,
+            ),
             parentAvailable,
             state: 'ready',
             error: null,
@@ -377,7 +392,7 @@ export class SessionManager {
         } else {
           this.catalogs.set(parentSessionId, {
             entries: this.withCatalogMutations(
-              previous?.entries ?? [], expandableRows, activityRows,
+              previous?.entries ?? [], expandableRows, activityRows, removedRows,
             ),
             parentAvailable: this.catalogInflight.get(parentSessionId)?.parentAvailableOverride
               ?? previous?.parentAvailable ?? false,
@@ -389,7 +404,7 @@ export class SessionManager {
         const folded = transportError<never>(error)
         this.catalogs.set(parentSessionId, {
           entries: this.withCatalogMutations(
-            previous?.entries ?? [], expandableRows, activityRows,
+            previous?.entries ?? [], expandableRows, activityRows, removedRows,
           ),
           parentAvailable: this.catalogInflight.get(parentSessionId)?.parentAvailableOverride
             ?? previous?.parentAvailable ?? false,
@@ -397,11 +412,14 @@ export class SessionManager {
           error: folded.ok ? null : folded.error,
         })
       } finally {
+        const inflight = this.catalogInflight.get(parentSessionId)
         this.catalogInflight.delete(parentSessionId)
+        if (inflight?.ownerDeleted === true) this.catalogs.delete(parentSessionId)
         // Re-arm the trailing pull before the dirty notify: the response the
         // caller observed predates the stale-marking change, so the follow-up
         // refresh is the only carrier of that change.
-        if (this.catalogStale.delete(parentSessionId)) void this.refreshSubagents(parentSessionId)
+        const stale = this.catalogStale.delete(parentSessionId)
+        if (stale && inflight?.ownerDeleted !== true) void this.refreshSubagents(parentSessionId)
         this.notifier.markDirty()
       }
     })()
@@ -409,7 +427,9 @@ export class SessionManager {
       promise: operation,
       expandableRows,
       activityRows,
+      removedRows,
       parentAvailableOverride: undefined,
+      ownerDeleted: false,
     })
     return operation
   }
@@ -814,50 +834,7 @@ export class SessionManager {
         return
       }
       case 'host/session-removed': {
-        const summary = this.summaries.find(candidate => candidate.sessionId === frame.sessionId)
-        const durableSubagent = summary?.origin === 'subagent' || this.addresses.has(frame.sessionId)
-        this.recordMutation(durableSubagent
-          ? { kind: 'status', sessionId: frame.sessionId, running: false }
-          : { kind: 'remove', sessionId: frame.sessionId })
-        this.updateCatalogActivity(frame.sessionId, false)
-        if (durableSubagent) {
-          // An Activation detaching is not durable child deletion:
-          // keep its lineage and conversation while returning it to idle.
-          this.sessions.get(frame.sessionId)?.handleRunning(false)
-        } else {
-          this.sessions.get(frame.sessionId)?.handleRemoved()
-        }
-        this.pendingBuffers.delete(frame.sessionId) // a removed session's buffered frames must not replay on a future instantiation
-        this.pendingInteractions.delete(frame.sessionId) // a removed session cannot wait on anyone
-        // Owner disposal already dropped these registry-side, but that lands on
-        // the mux stream while this frame rides the host stream, so the two have
-        // no relative order. Clearing here makes a detached Activation's rows
-        // disappear whichever arrives first.
-        this.jobsBySession.delete(frame.sessionId)
-        if (!durableSubagent) this.projectionStores.delete(frame.sessionId)
-        // A pull already in flight was requested before this removal and can
-        // carry the pre-removal parentAvailable:true, which would resurrect
-        // the writable editor this invalidation just closed. Replay false over
-        // that response and queue one trailing refresh so the post-removal
-        // host truth converges.
-        const inflightCatalog = this.catalogInflight.get(frame.sessionId)
-        if (inflightCatalog !== undefined) {
-          inflightCatalog.parentAvailableOverride = false
-          this.catalogStale.add(frame.sessionId)
-        }
-        // The removed session can no longer be the delivery owner of its
-        // catalog: invalidate availability immediately. Removal schedules no
-        // catalog refresh, and without this an addressed child keeps a
-        // writable editor against a dead continuation owner until an
-        // unrelated refresh (or forever, for a closed menu).
-        const ownedCatalog = this.catalogs.get(frame.sessionId)
-        if (ownedCatalog !== undefined && ownedCatalog.parentAvailable) {
-          this.catalogs.set(frame.sessionId, { ...ownedCatalog, parentAvailable: false })
-        }
-        for (const [childId, address] of this.addresses) {
-          if (address.parentSessionId !== frame.sessionId) continue
-          this.sessions.get(childId)?.handleSubagentParentAvailable(false)
-        }
+        this.handleSessionRemoved(frame.sessionId, frame.deleted === true)
         return
       }
       case 'host/session-status': {
@@ -972,8 +949,9 @@ export class SessionManager {
     entries: SubagentCatalog['entries'],
     expandableRows: ReadonlySet<SessionId>,
     activityRows: ReadonlyMap<SessionId, 'running' | 'inactive'>,
+    removedRows: ReadonlySet<SessionId>,
   ): SubagentCatalog['entries'] {
-    return entries.map((entry) => {
+    return entries.filter(entry => entry.kind !== 'child' || !removedRows.has(entry.id)).map((entry) => {
       if (entry.kind !== 'child') return entry
       const activity = activityRows.get(entry.id)
       if (!expandableRows.has(entry.id) && activity === undefined) return entry
@@ -983,6 +961,60 @@ export class SessionManager {
         ...activity === undefined ? {} : { activity },
       }
     })
+  }
+
+  /** Shared detach/permanent-delete cleanup; only permanent deletion removes durable child state. */
+  private handleSessionRemoved(sessionId: SessionId, deleted: boolean): void {
+    const summary = this.summaries.find(candidate => candidate.sessionId === sessionId)
+    const durableSubagent = !deleted && (summary?.origin === 'subagent' || this.addresses.has(sessionId))
+    this.recordMutation(durableSubagent
+      ? { kind: 'status', sessionId, running: false }
+      : { kind: 'remove', sessionId })
+    if (deleted) this.removeCatalogMembership(sessionId)
+    else this.updateCatalogActivity(sessionId, false)
+    if (durableSubagent) {
+      // An Activation detaching is not durable child deletion:
+      // keep its lineage and conversation while returning it to idle.
+      this.sessions.get(sessionId)?.handleRunning(false)
+    } else {
+      this.sessions.get(sessionId)?.handleRemoved()
+    }
+    this.pendingBuffers.delete(sessionId)
+    this.pendingInteractions.delete(sessionId)
+    this.jobsBySession.delete(sessionId)
+    if (!durableSubagent) this.projectionStores.delete(sessionId)
+    const inflightCatalog = this.catalogInflight.get(sessionId)
+    if (inflightCatalog !== undefined) {
+      inflightCatalog.parentAvailableOverride = false
+      if (deleted) inflightCatalog.ownerDeleted = true
+      else this.catalogStale.add(sessionId)
+    }
+    const ownedCatalog = this.catalogs.get(sessionId)
+    if (deleted) {
+      this.addresses.delete(sessionId)
+      this.catalogs.delete(sessionId)
+      this.openCatalogs.delete(sessionId)
+      const timer = this.catalogDebounce.get(sessionId)
+      if (timer !== undefined) clearTimeout(timer)
+      this.catalogDebounce.delete(sessionId)
+      if (this.selected === sessionId) this.selected = undefined
+      this.sessions.delete(sessionId)
+    } else if (ownedCatalog !== undefined && ownedCatalog.parentAvailable) {
+      this.catalogs.set(sessionId, { ...ownedCatalog, parentAvailable: false })
+    }
+    for (const [childId, address] of this.addresses) {
+      if (address.parentSessionId !== sessionId) continue
+      this.sessions.get(childId)?.handleSubagentParentAvailable(false)
+    }
+  }
+
+  /** Remove a permanently deleted child from loaded and in-flight catalogs. */
+  private removeCatalogMembership(sessionId: SessionId): void {
+    for (const inflight of this.catalogInflight.values()) inflight.removedRows.add(sessionId)
+    for (const [parentSessionId, catalog] of this.catalogs) {
+      const entries = catalog.entries.filter(entry => entry.kind !== 'child' || entry.id !== sessionId)
+      if (entries.length !== catalog.entries.length) this.catalogs.set(parentSessionId, { ...catalog, entries })
+    }
   }
 
   /**

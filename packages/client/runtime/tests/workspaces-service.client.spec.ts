@@ -488,6 +488,95 @@ describe('WorkspaceRuntime', () => {
     expect(workspaces.list.getSnapshot().archivedSessionIds).toEqual(['s-open'])
   })
 
+  it('permanently deletes a session and clears a selected descendant only after success', async () => {
+    const ctx = new Context()
+    const api = new FakeApiClient()
+    const sessions = new SessionRuntime(ctx, api, fakeRemote())
+    const workspaces = new WorkspaceRuntime(ctx, api, sessions)
+    let items = [
+      { sessionId: sid('s-root'), updatedAt: 4, running: false, blank: false },
+      {
+        sessionId: sid('s-child'), parentSessionId: sid('s-root'),
+        updatedAt: 3, running: false, blank: false,
+      },
+      {
+        sessionId: sid('s-open'), parentSessionId: sid('s-child'),
+        updatedAt: 2, running: false, blank: false,
+      },
+      { sessionId: sid('s-idle'), updatedAt: 1, running: false, blank: false },
+    ]
+    api.onList = () => Promise.resolve(ok({ items }) as never)
+    await sessions.refresh()
+    sessions.open(sid('s-open'))
+
+    api.onWorkspaceDeleteSession = () => {
+      items = items.filter(item => item.sessionId !== sid('s-idle'))
+      return Promise.resolve(ok({ deleted: true, deletedSessionIds: [sid('s-idle')] }))
+    }
+    await expect(workspaces.deleteSession(sid('s-idle'))).resolves.toBeUndefined()
+    expect(api.callsOf('workspace.deleteSession')).toEqual([{ sessionId: 's-idle' }])
+    expect(sessions.list.getSnapshot().ids).not.toContain('s-idle')
+    expect(sessions.list.getSnapshot().current).toBe('s-open')
+
+    api.onWorkspaceDeleteSession = () => Promise.resolve(err({
+      code: 'session-not-found', message: 'busy', details: { sessionId: sid('s-root') },
+    }))
+    await expect(workspaces.deleteSession(sid('s-root'))).rejects.toThrow(/session-not-found/)
+    expect(sessions.list.getSnapshot().current).toBe('s-open')
+
+    api.onWorkspaceDeleteSession = () => {
+      items = items.filter(item => item.sessionId !== sid('s-root')
+        && item.sessionId !== sid('s-child') && item.sessionId !== sid('s-open'))
+      return Promise.resolve(ok({
+        deleted: true,
+        deletedSessionIds: [sid('s-root'), sid('s-child'), sid('s-open')],
+      }))
+    }
+    await expect(workspaces.deleteSession(sid('s-root'))).resolves.toBeUndefined()
+    expect(sessions.list.getSnapshot().ids).toEqual([])
+    expect(sessions.list.getSnapshot().current).toBeUndefined()
+  })
+
+  it('shields exact delete ids from a stale list pull without clearing a newly selected sibling', async () => {
+    const ctx = new Context()
+    const api = new FakeApiClient()
+    const sessions = new SessionRuntime(ctx, api, fakeRemote())
+    const workspaces = new WorkspaceRuntime(ctx, api, sessions)
+    const before = [
+      { sessionId: sid('s-root'), updatedAt: 3, running: false, blank: false },
+      {
+        sessionId: sid('s-child'), parentSessionId: sid('s-root'),
+        updatedAt: 2, running: false, blank: false,
+      },
+      { sessionId: sid('s-safe'), updatedAt: 1, running: false, blank: false },
+    ]
+    api.onList = () => Promise.resolve(ok({ items: before }) as never)
+    await sessions.refresh()
+    sessions.open(sid('s-child'))
+
+    const staleList = deferred<Awaited<ReturnType<FakeApiClient['onList']>>>()
+    api.onList = () => staleList.promise
+    const refresh = sessions.refresh()
+    api.onWorkspaceDeleteSession = () => Promise.resolve(ok({
+      deleted: true,
+      deletedSessionIds: [sid('s-root'), sid('s-child')],
+    }))
+    const deletion = workspaces.deleteSession(sid('s-root'))
+    sessions.open(sid('s-safe'))
+    await vi.waitFor(() => {
+      expect(sessions.list.getSnapshot()).toMatchObject({
+        ids: ['s-safe'],
+        current: 's-safe',
+      })
+    })
+    staleList.resolve(ok({ items: before }) as never)
+    await Promise.all([refresh, deletion])
+    expect(sessions.list.getSnapshot()).toMatchObject({
+      ids: ['s-safe'],
+      current: 's-safe',
+    })
+  })
+
   it('clears a current archived by a remote frame and shields the set from a stale in-flight baseline', async () => {
     const ctx = new Context()
     const api = new FakeApiClient()

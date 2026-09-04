@@ -28,6 +28,7 @@ describe('installModelSelection()', () => {
       provider: 'alpha',
       model: 'a1',
       contextWindow: 65_536,
+      bestTryContext: true,
       reasoningEffort: ReasoningEffortId('high'),
     }
     expect((await ctx.systemPrompt.assemble()).variables).toMatchObject({ provider: 'alpha', model: 'a1' })
@@ -38,6 +39,7 @@ describe('installModelSelection()', () => {
       provider: 'alpha',
       model: 'a1',
       contextWindow: 65_536,
+      bestTryContext: true,
       reasoningEffort: ReasoningEffortId('high'),
       temperature: 0.2,
     })
@@ -47,6 +49,7 @@ describe('installModelSelection()', () => {
       provider: 'alpha',
       model: 'a1',
       contextWindow: 32_768,
+      bestTryContext: false,
       reasoningEffort: ReasoningEffortId('max'),
       temperature: 0.2,
     }

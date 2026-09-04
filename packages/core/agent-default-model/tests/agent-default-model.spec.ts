@@ -48,10 +48,14 @@ describe('AgentDefaultModelConfig', () => {
     })
 
     await bench.defaultModel.saveSelection({
-      provider: 'acme-gateway', model: 'acme-large', reasoningEffort: ReasoningEffortId('high'),
+      provider: 'acme-gateway', model: 'acme-large', contextWindow: 131_072,
+      reasoningEffort: ReasoningEffortId('high'),
+    })
+    expect(bench.ctx.settings.get(AGENT_DEFAULT_MODEL_SETTINGS_NAMESPACE)).toEqual({
+      provider: 'acme-gateway', model: 'acme-large', contextWindow: 131_072, reasoningEffort: 'high',
     })
     expect(bench.defaultModel.currentSelection()).toEqual({
-      provider: 'acme-gateway', model: 'acme-large', reasoningEffort: 'high',
+      provider: 'acme-gateway', model: 'acme-large', contextWindow: 131_072, reasoningEffort: 'high',
     })
     await bench.ctx.fiber.dispose()
   })

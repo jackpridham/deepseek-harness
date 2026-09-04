@@ -65,16 +65,9 @@ describe('web e2e: startup auto-selection', () => {
     await scaffold?.close()
   })
 
-  it('keeps the resident Hero and composer nodes when the first Workspace session appears', async () => {
+  it('keeps the resident composer nodes when the first Workspace session appears', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-first-workspace-stable-tree'))
     await page.locator(`${ROOT_PHASE}[data-phase="hero"]`).waitFor({ timeout: 15_000 })
-    const headline = page.getByText('Into the Unknown', { exact: true })
-    const fishHitbox = headline.locator('xpath=preceding-sibling::span[1]')
-    const fish = fishHitbox.locator('svg')
-    expect(await fish.evaluate(node => getComputedStyle(node).color))
-      .toBe(await headline.evaluate(node => getComputedStyle(node).color))
-    await fishHitbox.hover()
-    expect(await fish.evaluate(node => getComputedStyle(node).animationName)).not.toBe('none')
     await page.evaluate(() => {
       const refs = {
         root: document.querySelector('div[data-phase="hero"]'),
@@ -83,7 +76,7 @@ describe('web e2e: startup auto-selection', () => {
         composerSeat: document.querySelector('[data-composer-seat]'),
         textarea: document.querySelector('textarea'),
       }
-      if (Object.values(refs).some(node => node === null)) throw new Error('incomplete initial Hero tree')
+      if (Object.values(refs).some(node => node === null)) throw new Error('incomplete initial composer tree')
       ;(window as unknown as { __heroTree: typeof refs }).__heroTree = refs
     })
 
@@ -147,12 +140,12 @@ describe('web e2e: startup auto-selection', () => {
     await page.reload({ waitUntil: 'commit' })
     await historyInFlight
 
-    // The frame a user sees while the session is still opening: hero phase, the
-    // hero title, and a composer that is actually painted (`settling` hides the
+    // The frame a user sees while the session is still opening: hero phase and
+    // a composer that is actually painted (`settling` hides the
     // seat with `visibility:hidden`, which Playwright reports as not visible).
     await page.waitForSelector(ROOT_PHASE, { timeout: 15_000 })
     expect(await page.locator(ROOT_PHASE).first().getAttribute('data-phase')).toBe('hero')
-    expect(await page.getByText('Into the Unknown').isVisible()).toBe(true)
+    expect(await page.getByText('Into the Unknown').count()).toBe(0)
     expect(await page.locator('textarea').first().isVisible()).toBe(true)
 
     releaseHistory()

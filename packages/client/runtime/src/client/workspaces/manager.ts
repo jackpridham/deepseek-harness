@@ -149,8 +149,7 @@ export class WorkspaceManager {
   }
 
   /**
-   * Delete a Workspace registration and remove its local projection from the
-   * unary response without waiting for the Host frame.
+   * Delete a Workspace and remove its local projection from the unary response.
    * @param workspaceId - target workspace.
    * @returns the wire result.
    */
@@ -228,6 +227,19 @@ export class WorkspaceManager {
   async archiveSession(sessionId: SessionId): Promise<RpcResult<{ archivedSessionIds: SessionId[] }>> {
     const { result } = await this.api.workspace.archiveSession({ sessionId })
     if (result.ok) this.installArchived(result.value.archivedSessionIds)
+    return result
+  }
+
+  /**
+   * Permanently delete one session and its descendants.
+   * @param sessionId - root session to delete.
+   * @returns the wire result.
+   */
+  async deleteSession(sessionId: SessionId): Promise<RpcResult<{
+    deleted: true
+    deletedSessionIds: SessionId[]
+  }>> {
+    const { result } = await this.api.workspace.deleteSession({ sessionId })
     return result
   }
 

@@ -213,7 +213,7 @@ export function apply(ctx: Context, config: Config): void {
       baseURL: source.baseURL,
       ...source.api === undefined ? {} : { api: source.api },
       ...signal === undefined ? {} : { signal },
-    }, () => resolveApiKey(provider, profile))
+    }, () => resolveApiKey(provider, profile), { includeRuntimeState: true })
     const configured = new Map((source.models ?? []).map(model => [model.id, model]))
     const models = advertised.map((model) => {
       if (model.reasoning !== undefined && model.reasoning.format !== 'qwen-chat-template') {
@@ -248,11 +248,19 @@ export function apply(ctx: Context, config: Config): void {
     if (refreshed === undefined) throw new LlmError(`pi-ai adapter does not own provider "${provider}"`, 'NO_ADAPTER')
     const contextRoutes = new Map(advertised.flatMap(model => model.contextWindows === undefined
       ? []
-      : [[model.id, new Map(model.contextWindows.map(context => [context.contextWindow, context.model]))] as const]))
+      : [[model.id, new Map(model.contextWindows.map(context => [context.contextWindow, {
+        model: context.model,
+        available: context.available ?? true,
+        ...context.unavailableReason === undefined ? {} : { unavailableReason: context.unavailableReason },
+      }]))] as const]))
+    const modelStates = new Map(advertised.map(model => [model.id, {
+      selectable: model.selectable ?? true,
+      active: model.active ?? false,
+    }] as const))
     const reasoningDefaults = new Map<string, ModelThinkingLevel>(advertised.flatMap(model => model.reasoning?.defaultEffort === undefined
       ? []
       : [[model.id, model.reasoning.defaultEffort as ModelThinkingLevel] as const]))
-    return { ...refreshed, contextRoutes, reasoningDefaults }
+    return { ...refreshed, contextRoutes, modelStates, reasoningDefaults }
   }
 
   const adapter = new PiAiAdapter({

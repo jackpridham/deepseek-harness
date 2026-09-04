@@ -447,6 +447,10 @@ export class ReactLoopAgent implements Agent {
       && persistedConfig.model === route.model
       ? persistedConfig.contextWindow
       : undefined
+    const bestTryContext = persistedConfig?.provider === route.provider
+      && persistedConfig.model === route.model
+      ? persistedConfig.bestTryContext
+      : undefined
     const maxTokens = this.options.maxTokens
     const seedConfig = deepFreeze(structuredClone(
       this.requestHeaderLogged
@@ -456,6 +460,7 @@ export class ReactLoopAgent implements Agent {
           ...route,
           ...reasoningEffort === undefined ? {} : { reasoningEffort },
           ...selectedContextWindow === undefined ? {} : { contextWindow: selectedContextWindow },
+          ...bestTryContext === undefined ? {} : { bestTryContext },
           ...maxTokens === undefined ? {} : { maxTokens },
         },
     ))

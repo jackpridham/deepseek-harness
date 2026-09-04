@@ -132,18 +132,104 @@ function registerTextOnly(ctx: Context): void {
 describe('Web session model selection', () => {
   it('advertises, validates, selects, and preserves an exact context tier', async () => {
     const { ctx, agent, sessionId } = await harness()
+    const saved: unknown[] = []
     ctx.llm.registerAdapter(['context-provider'], new class extends LlmAdapter {
       override listModels(): Promise<readonly LlmModelInfo[]> {
         return Promise.resolve([{
           provider: 'context-provider', id: 'logical', name: 'Logical',
-          contextOptions: { defaultContextWindow: 131_072, contextWindows: [65_536, 131_072] },
+          selectable: true,
+          active: true,
+          contextOptions: {
+            defaultContextWindow: 131_072,
+            contextWindows: [
+              { contextWindow: 65_536, available: true },
+              { contextWindow: 131_072, available: true },
+              { contextWindow: 262_144, available: false, unavailableReason: 'requires best try' },
+            ],
+          },
         }])
       }
       override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
         return Promise.resolve({
           provider, id: model, name: 'Logical', context: { contextWindow: 131_072 },
-          contextOptions: { defaultContextWindow: 131_072, contextWindows: [65_536, 131_072] },
+          selectable: true,
+          active: true,
+          contextOptions: {
+            defaultContextWindow: 131_072,
+            contextWindows: [
+              { contextWindow: 65_536, available: true },
+              { contextWindow: 131_072, available: true },
+              { contextWindow: 262_144, available: false, unavailableReason: 'requires best try' },
+            ],
+          },
         })
+      }
+      override async *stream(): AsyncIterable<StreamChunk> {}
+    }())
+    const api = createApiProxy(ctx, {
+      defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
+      saveDefaultModelSelection: (selection) => { saved.push(selection); return Promise.resolve() },
+      cwd: '/tmp',
+    })
+
+    const catalog = expectValue(await api.sessions.models(request({ sessionId })))
+    expect(catalog.groups.find(group => group.id === 'context-provider')?.models).toEqual([{
+      id: 'logical', name: 'Logical', selectable: true, active: true,
+      context: {
+        defaultContextWindow: 131_072,
+        contextWindows: [
+          { contextWindow: 65_536, available: true },
+          { contextWindow: 131_072, available: true },
+          { contextWindow: 262_144, available: false, unavailableReason: 'requires best try' },
+        ],
+      },
+    }])
+    expect((await api.sessions.selectModel(request({
+      sessionId, provider: 'context-provider', model: 'logical', contextWindow: 32_768,
+    }))).result).toMatchObject({ ok: false, error: { code: 'model-unavailable' } })
+    expect(expectValue(await api.sessions.selectModel(request({
+      sessionId, provider: 'context-provider', model: 'logical', contextWindow: 65_536,
+    }))).selected).toEqual({ provider: 'context-provider', model: 'logical', contextWindow: 65_536 })
+    expect(saved).toEqual([{ provider: 'context-provider', model: 'logical', contextWindow: 65_536 }])
+    expect((await api.sessions.selectModel(request({
+      sessionId, provider: 'context-provider', model: 'logical', contextWindow: 262_144,
+    }))).result).toMatchObject({ ok: false, error: { code: 'model-unavailable', message: 'requires best try' } })
+    expect(saved).toHaveLength(1)
+    expect(expectValue(await api.sessions.selectModel(request({
+      sessionId,
+      provider: 'context-provider',
+      model: 'logical',
+      contextWindow: 262_144,
+      bestTryContext: true,
+    }))).selected).toEqual({
+      provider: 'context-provider',
+      model: 'logical',
+      contextWindow: 262_144,
+      bestTryContext: true,
+    })
+    expect(saved).toHaveLength(1)
+    await ctx.systemPrompt.assemble()
+    const resolved = await agentEvents(ctx, agent).waterfall(
+      'agent/request', { turn: 1, step: 0, signal: new AbortController().signal },
+      () => Promise.resolve({ provider: 'seed', model: 'seed' }),
+    )
+    expect(resolved).toEqual({
+      provider: 'context-provider',
+      model: 'logical',
+      contextWindow: 262_144,
+      bestTryContext: true,
+    })
+    await ctx.fiber.dispose()
+  })
+
+  it('retains non-conversation models in the catalog but refuses direct selection', async () => {
+    const { ctx, sessionId } = await harness()
+    ctx.llm.registerAdapter(['media'], new class extends LlmAdapter {
+      override listModels(): Promise<readonly LlmModelInfo[]> {
+        return Promise.resolve([{ provider: 'media', id: 'image', name: 'Image', selectable: false, active: true }])
+      }
+      override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+        return Promise.resolve({ provider, id: model, name: 'Image', selectable: false, active: true })
       }
       override async *stream(): AsyncIterable<StreamChunk> {}
     }())
@@ -152,23 +238,17 @@ describe('Web session model selection', () => {
       cwd: '/tmp',
     })
 
-    const catalog = expectValue(await api.sessions.models(request({ sessionId })))
-    expect(catalog.groups.find(group => group.id === 'context-provider')?.models).toEqual([{
-      id: 'logical', name: 'Logical',
-      context: { defaultContextWindow: 131_072, contextWindows: [65_536, 131_072] },
-    }])
+    expect(expectValue(await api.sessions.models(request({ sessionId }))).groups)
+      .toContainEqual({ id: 'media', name: 'media', models: [{ id: 'image', name: 'Image', selectable: false, active: true }] })
     expect((await api.sessions.selectModel(request({
-      sessionId, provider: 'context-provider', model: 'logical', contextWindow: 32_768,
-    }))).result).toMatchObject({ ok: false, error: { code: 'model-unavailable' } })
-    expect(expectValue(await api.sessions.selectModel(request({
-      sessionId, provider: 'context-provider', model: 'logical', contextWindow: 65_536,
-    }))).selected).toEqual({ provider: 'context-provider', model: 'logical', contextWindow: 65_536 })
-    await ctx.systemPrompt.assemble()
-    const resolved = await agentEvents(ctx, agent).waterfall(
-      'agent/request', { turn: 1, step: 0, signal: new AbortController().signal },
-      () => Promise.resolve({ provider: 'seed', model: 'seed' }),
-    )
-    expect(resolved).toEqual({ provider: 'context-provider', model: 'logical', contextWindow: 65_536 })
+      sessionId, provider: 'media', model: 'image',
+    }))).result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'model-unavailable',
+        message: 'provider "media" model "image" is advertised for non-conversation use',
+      },
+    })
     await ctx.fiber.dispose()
   })
 
@@ -463,28 +543,41 @@ describe('Web session model selection', () => {
     await ctx.fiber.dispose()
   })
 
-  it('keeps an accepted selection session-local without changing the default', async () => {
+  it('saves an accepted selection as the default and survives a storage failure', async () => {
     const { ctx, sessionId } = await harness()
+    const saved: unknown[] = []
+    let reject = false
     const api = createApiProxy(ctx, {
       defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
+      saveDefaultModelSelection: (selection) => {
+        saved.push(selection)
+        return reject ? Promise.reject(new Error('read-only document')) : Promise.resolve()
+      },
       cwd: '/tmp',
     })
 
-    const accepted = expectValue(await api.sessions.selectModel(request({
+    expectValue(await api.sessions.selectModel(request({
       sessionId, provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'max',
     })))
-    expect(accepted.selected).toEqual({
-      provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'max',
-    })
-    expect(expectValue(await api.sessions.models(request({ sessionId }))).current)
-      .toEqual(accepted.selected)
-    expect(expectValue(await api.host.describe(request({}))))
-      .toMatchObject({ provider: 'deepseek-official', model: 'deepseek-chat' })
+    expect(saved).toEqual([
+      { provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'max' },
+    ])
 
     // A refused selection never becomes anyone's default.
     await api.sessions.selectModel(request({ sessionId, provider: 'missing', model: 'model' }))
-    expect(expectValue(await api.host.describe(request({}))))
-      .toMatchObject({ provider: 'deepseek-official', model: 'deepseek-chat' })
+    expect(saved).toHaveLength(1)
+
+    // Storage failing is not the selection failing: the switch already applies
+    // to this session, so the call still succeeds.
+    reject = true
+    const stillAccepted = expectValue(await api.sessions.selectModel(request({
+      sessionId, provider: 'deepseek-official', model: 'deepseek-chat',
+    })))
+    expect(stillAccepted.selected).toEqual({
+      provider: 'deepseek-official', model: 'deepseek-chat', reasoningEffort: 'high',
+    })
+    expect(expectValue(await api.sessions.models(request({ sessionId }))).current)
+      .toEqual(stillAccepted.selected)
     await ctx.fiber.dispose()
   })
 

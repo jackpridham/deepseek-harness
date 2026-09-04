@@ -404,6 +404,54 @@ describe('subagent catalogs', () => {
     })
   })
 
+  it('permanently removes a durable child from list and in-flight catalog state', async () => {
+    const api = new FakeApiClient()
+    api.onList = () => Promise.resolve(ok({ items: [
+      summary(S1),
+      summary(S2, { parentSessionId: S1, origin: 'subagent' }),
+    ] as never[] }))
+    const catalogValue = {
+      entries: [{
+        kind: 'child' as const, id: S2, mode: 'continuable' as const, label: 'deleted',
+        activity: 'inactive' as const, hasChildren: false,
+      }],
+      parentAvailable: true,
+    }
+    api.onSubagentList = () => Promise.resolve(ok(catalogValue as never))
+    const manager = new SessionManager(api, fakeRemote())
+    await manager.refreshList()
+    await manager.refreshSubagents(S1)
+    manager.selectSubagent({ parentSessionId: S1, childSessionId: S2, mode: 'continuable' })
+    const child = manager.get(S2)
+    const catalog = deferred<Awaited<ReturnType<FakeApiClient['onSubagentList']>>>()
+    api.onSubagentList = () => catalog.promise
+    const refresh = manager.refreshSubagents(S1)
+
+    manager.handleHostEnvelope({
+      rpcId: 'child-deleted' as never,
+      payload: { type: 'host/session-removed', sessionId: S2, deleted: true },
+    })
+    catalog.resolve(ok(catalogValue as never))
+    await refresh
+
+    expect(manager.getListSnapshot().items.find(item => item.sessionId === S2)).toBeUndefined()
+    expect(manager.getListSnapshot().subagentsByParent[S1]?.entries).toEqual([])
+    expect(manager.getListSnapshot().current).toBeUndefined()
+    expect(manager.subagentAddress(S2)).toBeUndefined()
+    expect(child.getSnapshot().removed).toBe(true)
+
+    const deletedOwnerCatalog = deferred<Awaited<ReturnType<FakeApiClient['onSubagentList']>>>()
+    api.onSubagentList = () => deletedOwnerCatalog.promise
+    const ownerRefresh = manager.refreshSubagents(S1)
+    manager.handleHostEnvelope({
+      rpcId: 'owner-deleted' as never,
+      payload: { type: 'host/session-removed', sessionId: S1, deleted: true },
+    })
+    deletedOwnerCatalog.resolve(ok({ entries: [], parentAvailable: true }))
+    await ownerRefresh
+    expect(manager.getListSnapshot().subagentsByParent[S1]).toBeUndefined()
+  })
+
   it('refetches debounced membership only while the parent catalog is open', async () => {
     vi.useFakeTimers()
     try {

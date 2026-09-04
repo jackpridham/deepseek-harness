@@ -60,6 +60,7 @@ interface ListingEntry {
   max_output_tokens?: unknown
   context_windows?: unknown
   reasoning?: unknown
+  selectable?: unknown
   architecture?: { input_modalities?: unknown } | null
 }
 
@@ -95,12 +96,24 @@ function contextWindows(value: unknown): LlmDiscoveredModel['contextWindows'] {
   if (!Array.isArray(value)) return undefined
   const seen = new Set<number>()
   const choices = value.flatMap((raw) => {
-    const entry = raw as { context_window?: unknown; model?: unknown } | null
+    const entry = raw as {
+      context_window?: unknown
+      model?: unknown
+      available?: unknown
+      unavailable_reason?: unknown
+    } | null
     const contextWindow = capacity(entry?.context_window)
     const model = label(entry?.model)
     if (contextWindow === undefined || model === undefined || seen.has(contextWindow)) return []
     seen.add(contextWindow)
-    return [{ contextWindow, model }]
+    const available = entry?.available === undefined || entry.available === true
+    const unavailableReason = label(entry?.unavailable_reason)
+    return [{
+      contextWindow,
+      model,
+      available,
+      ...unavailableReason === undefined ? {} : { unavailableReason },
+    }]
   })
   return choices.length === 0 ? undefined : choices
 }
@@ -136,6 +149,11 @@ function label(...candidates: readonly unknown[]): string | undefined {
  */
 function listingUrl(baseURL: string): string {
   return `${baseURL.replace(/\/+$/, '')}/models`
+}
+
+/** llama-swap exposes runtime state beside its OpenAI-compatible `/v1` surface. */
+function runningUrl(baseURL: string): string {
+  return `${baseURL.replace(/\/v1\/*$/, '').replace(/\/+$/, '')}/running`
 }
 
 /**
@@ -207,6 +225,7 @@ function readListing(body: unknown): LlmDiscoveredModel[] {
     const input = inputModalities(entry?.architecture?.input_modalities)
     models.push({
       id,
+      selectable: entry?.selectable !== false,
       ...name === undefined ? {} : { name },
       ...input === undefined ? {} : { inputModalities: input },
       ...contextWindow === undefined ? {} : { contextWindow },
@@ -245,6 +264,7 @@ function usableProbeKey(raw: string): string {
  *   network. A configuration surface never holds a stored secret — it edits a
  *   redacted descriptor — so without this an already-configured route would be
  *   interrogated unauthenticated and answer 401.
+ * @param options - optional runtime-state discovery controls.
  * @returns the advertised models in endpoint order.
  * @throws LlmError when the protocol has no readable listing, the endpoint
  *   refuses or fails the request, or the reply is not a model listing.
@@ -252,6 +272,7 @@ function usableProbeKey(raw: string): string {
 export async function discoverModels(
   request: LlmModelDiscoveryRequest,
   storedApiKey?: () => Promise<string | undefined>,
+  options: { includeRuntimeState?: boolean } = {},
 ): Promise<readonly LlmDiscoveredModel[]> {
   // A catalog route already has its answer, and a better one: the installed
   // entries carry context windows and output caps no listing endpoint reports.
@@ -286,7 +307,6 @@ export async function discoverModels(
       'DISCOVERY_UNSUPPORTED',
     )
   }
-  const url = listingUrl(request.baseURL)
   // A key typed into the form wins: it is the one the user is testing, and it
   // may be the replacement for exactly the stored key that is failing. The
   // stored one is only asked for here, past the catalog short-circuit and the
@@ -296,46 +316,59 @@ export async function discoverModels(
   // relies on the provider's own ambient discovery is meant to be asked.
   const supplied = request.apiKey ?? await storedApiKey?.()
   const apiKey = supplied === undefined ? undefined : usableProbeKey(supplied)
-  let response: Response
-  try {
-    response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        accept: 'application/json',
-        ...apiKey === undefined ? {} : { authorization: `Bearer ${apiKey}` },
-        ...attributionHeaders(),
-      },
-      ...request.signal === undefined ? {} : { signal: request.signal },
-    })
-  } catch (error: unknown) {
-    if (request.signal?.aborted) {
-      throw new LlmError('model discovery aborted by caller', 'ABORTED', { cause: error })
+  const get = async (url: string): Promise<unknown> => {
+    let response: Response
+    try {
+      response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          accept: 'application/json',
+          ...apiKey === undefined ? {} : { authorization: `Bearer ${apiKey}` },
+          ...attributionHeaders(),
+        },
+        ...request.signal === undefined ? {} : { signal: request.signal },
+      })
+    } catch (error: unknown) {
+      if (request.signal?.aborted) throw new LlmError('model discovery aborted by caller', 'ABORTED', { cause: error })
+      throw new LlmError(`could not reach ${url}`, 'DISCOVERY_FAILED', { cause: error })
     }
-    throw new LlmError(`could not reach ${url}`, 'DISCOVERY_FAILED', { cause: error })
-  }
-  if (!response.ok) {
-    throw new LlmError(
-      `${url} answered ${response.status}${response.status === 401 || response.status === 403 ? '; check the API key' : ''}`,
-      'DISCOVERY_FAILED',
-    )
-  }
-  let text: string
-  try {
-    text = await readBounded(response, url)
-  } catch (error: unknown) {
-    // Cancellation during the body read rejects with the abort reason, which
-    // may be any value; the caller gets the same coded failure it would have
-    // for a cancellation before the request went out.
-    if (request.signal?.aborted) {
-      throw new LlmError('model discovery aborted by caller', 'ABORTED', { cause: error })
+    if (!response.ok) {
+      throw new LlmError(
+        `${url} answered ${response.status}${response.status === 401 || response.status === 403 ? '; check the API key' : ''}`,
+        'DISCOVERY_FAILED',
+      )
     }
-    throw error
+    let text: string
+    try {
+      text = await readBounded(response, url)
+    } catch (error: unknown) {
+      if (request.signal?.aborted) throw new LlmError('model discovery aborted by caller', 'ABORTED', { cause: error })
+      throw error
+    }
+    try {
+      return JSON.parse(text)
+    } catch (error: unknown) {
+      throw new LlmError(`${url} did not answer with JSON`, 'DISCOVERY_FAILED', { cause: error })
+    }
   }
-  let body: unknown
+
+  const models = readListing(await get(listingUrl(request.baseURL)))
+  if (options.includeRuntimeState !== true) return models
+  let running: unknown
   try {
-    body = JSON.parse(text)
+    running = (await get(runningUrl(request.baseURL)) as { running?: unknown } | null)?.running
   } catch (error: unknown) {
-    throw new LlmError(`${url} did not answer with JSON`, 'DISCOVERY_FAILED', { cause: error })
+    if (error instanceof LlmError && error.code === 'ABORTED') throw error
+    return models
   }
-  return readListing(body)
+  if (!Array.isArray(running)) return models
+  const active = new Set(running.flatMap((entry) => {
+    const row = entry as { model?: unknown; state?: unknown } | null
+    const model = label(row?.model)
+    return model === undefined || row?.state !== 'ready' ? [] : [model]
+  }))
+  return models.map(model => ({
+    ...model,
+    active: active.has(model.id) || model.contextWindows?.some(context => active.has(context.model)) === true,
+  }))
 }

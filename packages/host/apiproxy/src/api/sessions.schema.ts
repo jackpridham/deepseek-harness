@@ -150,6 +150,7 @@ export const modelSelectionSchema = z.object({
   provider: z.string().min(1),
   model: z.string().min(1),
   contextWindow: z.number().int().positive().optional(),
+  bestTryContext: z.boolean().optional(),
   reasoningEffort: z.string().min(1).optional(),
 }) satisfies z.ZodType<Wire<ModelSelection>>
 
@@ -166,10 +167,17 @@ export const modelReasoningSchema = z.object({
   defaultEffort: z.string().min(1).optional(),
 }) satisfies z.ZodType<Wire<ModelReasoning>>
 
+/** One selectable or host-constrained context tier. */
+export const modelContextChoiceSchema = z.object({
+  contextWindow: z.number().int().positive(),
+  available: z.boolean(),
+  unavailableReason: z.string().optional(),
+})
+
 /** Exact-model bounded context choices. */
 export const modelContextChoicesSchema = z.object({
   defaultContextWindow: z.number().int().positive(),
-  contextWindows: z.array(z.number().int().positive()).min(1),
+  contextWindows: z.array(modelContextChoiceSchema).min(1),
 }) satisfies z.ZodType<Wire<ModelContextChoices>>
 
 /** One advisory model entry inside a provider group. */
@@ -177,6 +185,8 @@ export const modelCatalogModelSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   description: z.string().optional(),
+  selectable: z.boolean().optional(),
+  active: z.boolean().optional(),
   context: modelContextChoicesSchema.optional(),
   reasoning: modelReasoningSchema.optional(),
 }) satisfies z.ZodType<Wire<ModelCatalogModel>>
@@ -269,6 +279,7 @@ export const sessionSelectModelRequestSchema = z.object({
   provider: z.string().min(1),
   model: z.string().min(1),
   contextWindow: z.number().int().positive().optional(),
+  bestTryContext: z.boolean().optional(),
   reasoningEffort: z.string().min(1).optional(),
 }) satisfies z.ZodType<Wire<RequestPayload<'session.selectModel'>>>
 

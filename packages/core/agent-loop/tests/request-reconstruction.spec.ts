@@ -124,7 +124,9 @@ describe('request stability across the loop', () => {
     const agent = ctx.agentLoop.create(SessionId('effort'), { provider: 'mock', model: 'mock' })
     ctx.on('agent/request', async ({ turn }, next) => {
       const config = await next()
-      return turn === 2 ? { ...config, reasoningEffort: ReasoningEffortId('max') } : config
+      return turn === 2
+        ? { ...config, reasoningEffort: ReasoningEffortId('max'), bestTryContext: true }
+        : config
     })
 
     send(agent, 'first')
@@ -136,11 +138,13 @@ describe('request stability across the loop', () => {
       ReasoningEffortId('high'),
       ReasoningEffortId('max'),
     ])
+    expect(adapter.requests.map(request => request.bestTryContext)).toEqual([undefined, true])
     const headers = agent.session.events.filter(event => event.type === 'request/header')
     expect(headers.map(event => event.data.header.config.reasoningEffort)).toEqual([
       ReasoningEffortId('high'),
       ReasoningEffortId('max'),
     ])
+    expect(headers.map(event => event.data.header.config.bestTryContext)).toEqual([undefined, true])
     expect(headers.map(event => event.data.header.adapterDefaults)).toEqual([
       { reasoningEffort: true },
       undefined,
@@ -163,6 +167,7 @@ describe('request stability across the loop', () => {
 
       expect(resumedAdapter.requests[0]?.model).toBe(model)
       expect(resumedAdapter.requests[0]?.reasoningEffort).toBe(effort)
+      expect(resumedAdapter.requests[0]?.bestTryContext).toBe(model === 'mock' ? true : undefined)
       const resumedHeaders = resumedHandle.agent.session.events.filter(event => event.type === 'request/header')
       expect(resumedHeaders.at(-1)?.data.header.config.reasoningEffort).toBe(effort)
       expect(resumedHeaders.at(-1)?.data.reason).toBe('resume')

@@ -75,7 +75,7 @@ function mount(overrides: Partial<WorkspaceBrowserProps> = {}) {
     forkSession: vi.fn(),
     renameWorkspace: vi.fn(async () => {}),
     deleteWorkspace: vi.fn(async () => {}),
-    archiveSession: vi.fn(async () => {}),
+    deleteSession: vi.fn(async () => {}),
     insertWorkspaceBefore: vi.fn(async () => {}),
     insertSessionBefore: vi.fn(async () => {}),
     createWorkspace: vi.fn(async () => workspace('created', [])),
@@ -336,43 +336,35 @@ describe('WorkspaceBrowser', () => {
     expect(screen.getAllByRole('treeitem').slice(1)[0]?.textContent).toContain('two')
   })
 
-  it('archives a session from the row menu and hides archived rows in both modes', async () => {
-    const archiveSession = vi.fn(async () => {})
-    const b = mount({
+  it('deletes a session from the row menu', async () => {
+    const deleteSession = vi.fn(async () => {})
+    mount({
       useSessions: hook(sessionState([summary('kept-s', 2), summary('gone-s', 1)])),
       useWorkspaces: hook(workspaceState([workspace('alpha', ['kept-s', 'gone-s'])])),
-      archiveSession,
+      deleteSession,
     })
     fireEvent.click(screen.getByText('alpha'))
     fireEvent.click(screen.getByRole('button', { name: '会话“gone-s”的操作' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: '归档会话' }))
-    expect(archiveSession).toHaveBeenCalledWith(sid('gone-s'))
-
-    // The archive-set echo hides the row in grouped and flat modes.
-    rerender(b, { useWorkspaces: hook(workspaceState([workspace('alpha', ['kept-s', 'gone-s'])], [sid('gone-s')])) })
-    expect(screen.queryByText('gone-s')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: '单列表' }))
-    expect(screen.getByText('kept-s')).toBeTruthy()
-    expect(screen.queryByText('gone-s')).toBeNull()
+    fireEvent.click(screen.getByRole('menuitem', { name: '删除会话' }))
+    expect(deleteSession).toHaveBeenCalledWith(sid('gone-s'))
   })
 
-  it('logs and keeps the tree when the archive call rejects', async () => {
-    const rejection = new Error('archive exploded')
-    const archiveSession = vi.fn(async () => { throw rejection })
+  it('logs and keeps the tree when session deletion rejects', async () => {
+    const rejection = new Error('delete exploded')
+    const deleteSession = vi.fn(async () => { throw rejection })
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       mount({
         useSessions: hook(sessionState([summary('alpha-s', 1)])),
         useWorkspaces: hook(workspaceState([workspace('alpha', ['alpha-s'])])),
-        archiveSession,
+        deleteSession,
       })
       fireEvent.click(screen.getByText('alpha'))
       fireEvent.click(screen.getByRole('button', { name: '会话“alpha-s”的操作' }))
-      fireEvent.click(screen.getByRole('menuitem', { name: '归档会话' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: '删除会话' }))
       await Promise.resolve()
       await Promise.resolve()
-      expect(warn).toHaveBeenCalledWith('session archive rejected:', rejection)
+      expect(warn).toHaveBeenCalledWith('session delete rejected:', rejection)
       expect(screen.getByText('alpha-s')).toBeTruthy()
     } finally {
       warn.mockRestore()
@@ -1092,77 +1084,37 @@ describe('WorkspaceBrowser', () => {
     await waitFor(() => { expect(screen.getByRole('alert').textContent).toBe('denied') })
   })
 
-  it('confirms permanent Workspace deletion and blocks duplicate submission', async () => {
-    let resolveDelete!: () => void
-    const deleteWorkspace = vi.fn(() => new Promise<void>((resolve) => { resolveDelete = resolve }))
-    const browser = mount({
+  it('deletes a Workspace directly from its row menu without a confirmation', () => {
+    const deleteWorkspace = vi.fn(async () => {})
+    mount({
       useWorkspaces: hook(workspaceState([workspace('alpha', ['session'], 'Alpha')])),
       deleteWorkspace,
     })
     fireEvent.click(screen.getByRole('button', { name: '工作区“Alpha”的操作' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '删除工作区' }))
-    const dialog = screen.getByRole('dialog', { name: '删除工作区' })
-    expect(dialog.textContent).toContain('永久删除“Alpha”的文件夹')
-    expect(dialog.textContent).toContain('所有会话、记录、转录、备份、生成文件')
-    expect(dialog.textContent).toContain('此操作无法撤销')
-
-    const confirm = screen.getByRole<HTMLButtonElement>('button', { name: '删除工作区' })
-    fireEvent.click(confirm)
-    fireEvent.click(confirm)
     expect(deleteWorkspace).toHaveBeenCalledOnce()
     expect(deleteWorkspace).toHaveBeenCalledWith(wid('alpha'))
-    expect(confirm.disabled).toBe(true)
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: '取消' }).disabled).toBe(true)
-    expect(screen.getByRole('status').textContent).toBe('正在删除工作区…')
-    fireEvent.keyDown(document, { key: 'Escape' })
-    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
-    expect(screen.getByRole('dialog', { name: '删除工作区' })).toBeTruthy()
-    await act(async () => { resolveDelete() })
-    // RPC success alone does not close: the component waits until its
-    // useWorkspaces projection has committed the removal, preventing a stale
-    // Workspace frame from leaking into the next gesture.
-    expect(screen.getByRole('dialog', { name: '删除工作区' })).toBeTruthy()
-    rerender(browser, { useWorkspaces: hook(workspaceState([])) })
     expect(screen.queryByRole('dialog', { name: '删除工作区' })).toBeNull()
   })
 
-  it('keeps the delete dialog open on failure and allows retry or cancellation', async () => {
-    const deleteWorkspace = vi.fn()
-      .mockRejectedValueOnce(new Error('storage unavailable'))
-      .mockRejectedValueOnce('denied')
-    mount({
-      useWorkspaces: hook(workspaceState([workspace('alpha', [], 'Alpha')])),
-      deleteWorkspace,
-    })
-    fireEvent.click(screen.getByRole('button', { name: '工作区“Alpha”的操作' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: '删除工作区' }))
-    fireEvent.click(screen.getByRole('button', { name: '删除工作区' }))
-    await waitFor(() => { expect(screen.getByRole('alert').textContent).toBe('storage unavailable') })
-    expect(screen.getByRole('dialog', { name: '删除工作区' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '删除工作区' }))
-    await waitFor(() => { expect(screen.getByRole('alert').textContent).toBe('denied') })
-    fireEvent.click(screen.getByRole('button', { name: '取消' }))
-    expect(screen.queryByRole('dialog', { name: '删除工作区' })).toBeNull()
-  })
-
-  it('Cancel, Escape, and Close dismiss deletion without calling the action', () => {
-    const deleteWorkspace = vi.fn(async () => {})
-    mount({
-      useWorkspaces: hook(workspaceState([workspace('alpha', [], 'Alpha')])),
-      deleteWorkspace,
-    })
-    const open = () => {
+  it('logs a rejected Workspace deletion and leaves the projection intact', async () => {
+    const rejection = new Error('storage unavailable')
+    const deleteWorkspace = vi.fn(async () => { throw rejection })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      mount({
+        useWorkspaces: hook(workspaceState([workspace('alpha', [], 'Alpha')])),
+        deleteWorkspace,
+      })
       fireEvent.click(screen.getByRole('button', { name: '工作区“Alpha”的操作' }))
       fireEvent.click(screen.getByRole('menuitem', { name: '删除工作区' }))
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(warn).toHaveBeenCalledWith('workspace delete rejected:', rejection)
+      expect(screen.getByText('Alpha')).toBeTruthy()
+    } finally {
+      warn.mockRestore()
     }
-    open()
-    fireEvent.click(screen.getByRole('button', { name: '取消' }))
-    open()
-    fireEvent.keyDown(document, { key: 'Escape' })
-    open()
-    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
-    expect(deleteWorkspace).not.toHaveBeenCalled()
-    expect(screen.queryByRole('dialog', { name: '删除工作区' })).toBeNull()
   })
 
   it('search hides drag affordances (rows are not draggable during search)', () => {

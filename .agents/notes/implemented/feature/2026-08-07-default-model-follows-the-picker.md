@@ -8,15 +8,15 @@ English | [中文](2026-08-07-default-model-follows-the-picker.zh.md)
 
 A session model picker and a deployment default are two layers of the same preference. If the picker affects only its addressed session, the next blank session can select a different model with no user-facing way to align the default. If the default lives inside a Host gateway, direct Agent entry points cannot share it without depending on Host or duplicating state.
 
-Reasoning effort makes the persistence shape significant: a model selection without an effort must clear a stored effort, or the next Agent may apply an effort that its selected model does not accept.
+Context and reasoning effort make the persistence shape significant: a complete model selection must carry both when chosen, and omitting either must clear its stored value so the next Agent cannot inherit an option its selected model does not accept.
 
 ## Decision
 
-`AgentDefaultModelConfig` provides `ctx.agentDefaultModel` and registers `{provider, model, reasoningEffort?}` as the `agent-default-model` Settings section. Its `{provider, model}` composition entry is the base layer and `settings.yaml` supplies the user layer. The service is entry-point-neutral, so direct creation and ApiProxy-backed creation share one default ([headless direct core entry point](../architecture/2026-08-09-headless-direct-core-entry-point.md)).
+`AgentDefaultModelConfig` provides `ctx.agentDefaultModel` and registers `{provider, model, contextWindow?, reasoningEffort?}` as the `agent-default-model` Settings section. Its `{provider, model}` composition entry is the base layer and `settings.yaml` supplies the user layer. The service is entry-point-neutral, so direct creation and ApiProxy-backed creation share one default ([headless direct core entry point](../architecture/2026-08-09-headless-direct-core-entry-point.md)).
 
-`reasoningEffort` belongs to the Settings section but not to the plugin config. Settings layers merge by field, so a configured effort would survive a user selection that omits it. `saveSelection()` instead writes the complete user section; absence therefore clears a stored effort. A deployment-wide effort default belongs to the adapter profile, which resolves it per model.
+`contextWindow` and `reasoningEffort` belong to the Settings section but not to the plugin config. Settings layers merge by field, so either configured option would survive a user selection that omits it. `saveSelection()` instead writes the complete user section; absence therefore clears the stored option. Deployment-wide defaults belong to the adapter profile, which resolves them per model.
 
-`session.selectModel` applies an accepted `ModelSelection` to its session and calls `saveDefaultModelSelection()` for the shared Agent default. A storage failure is logged without undoing the session selection. A deployment with no settings provider retains the composition entry and keeps the accepted selection only in that session.
+`session.selectModel` applies an accepted ordinary `ModelSelection` to its session and calls `saveDefaultModelSelection()` for the shared Agent default. A storage failure is logged without undoing the session selection. A deployment with no settings provider retains the composition entry and keeps the accepted selection only in that session. An API-only `bestTryContext: true` selection remains session-local because a host-constrained override must not become the browser default.
 
 `ApiProxyDefaults` carries `defaultModelSelection()` and `saveDefaultModelSelection()` closures, so `createApiProxy` has no dependency on the Settings seam. `ApiProxyService` wires them to `ctx.agentDefaultModel.currentSelection()` and `ctx.agentDefaultModel.saveSelection()`.
 
@@ -26,7 +26,7 @@ The stored selection does not require catalog membership. A provider route may s
 
 ## Consequences
 
-`host.describe` reports the live Agent default. A successful model switch stores an `agent-default-model:` section in `settings.yaml`. The gateway does not expose that namespace through its Settings-page allowlist; the model picker is its editor.
+`host.describe` reports the live Agent default. A successful ordinary model switch stores the full model, context, and effort selection in the `agent-default-model:` section of `settings.yaml`; a later new or blank session inherits it. Existing sessions whose request logs already name a selection keep their own persisted model, context, and effort. The gateway does not expose that namespace through its Settings-page allowlist; the model picker is its editor.
 
 ## A session that cannot send
 

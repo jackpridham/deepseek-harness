@@ -212,4 +212,10 @@ export class TestWorkspaces implements IWorkspaces {
       draft.archivedSessionIds = [...draft.archivedSessionIds, sessionId]
     })
   }
+
+  /** Permanently delete a session (recorded; default no-op). */
+  async deleteSession(sessionId: SessionId): Promise<void> {
+    this.calls.push({ method: 'deleteSession', args: [sessionId] })
+    await (this.stubs.get('deleteSession')?.(sessionId) as Promise<void> | undefined)
+  }
 }

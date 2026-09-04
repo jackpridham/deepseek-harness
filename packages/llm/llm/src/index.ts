@@ -557,6 +557,8 @@ export class LlmRuntime extends Service {
         ...model.contextWindows === undefined
           ? {}
           : { contextWindows: model.contextWindows.map(context => ({ ...context })) },
+        ...model.selectable === undefined ? {} : { selectable: model.selectable },
+        ...model.active === undefined ? {} : { active: model.active },
         ...model.reasoning === undefined ? {} : {
           reasoning: {
             format: model.reasoning.format,
@@ -605,6 +607,8 @@ export class LlmRuntime extends Service {
         || typeof model.name !== 'string'
         || model.name.length === 0
         || (model.description !== undefined && typeof model.description !== 'string')
+        || (model.selectable !== undefined && typeof model.selectable !== 'boolean')
+        || (model.active !== undefined && typeof model.active !== 'boolean')
         || seen.has(model.id)
       ) {
         throw new LlmError(`adapter returned invalid or duplicate model metadata for provider "${provider}"`, 'INVALID_CATALOG')
@@ -618,10 +622,12 @@ export class LlmRuntime extends Service {
         name: model.name,
         ...model.description === undefined ? {} : { description: model.description },
         ...inputModalities === undefined ? {} : { inputModalities },
+        ...model.selectable === undefined ? {} : { selectable: model.selectable },
+        ...model.active === undefined ? {} : { active: model.active },
         ...contextOptions === undefined ? {} : {
           contextOptions: {
             defaultContextWindow: contextOptions.defaultContextWindow,
-            contextWindows: [...contextOptions.contextWindows],
+            contextWindows: contextOptions.contextWindows.map(choice => ({ ...choice })),
           },
         },
       }
@@ -660,6 +666,8 @@ export class LlmRuntime extends Service {
       || typeof resolved.name !== 'string'
       || resolved.name.length === 0
       || (resolved.description !== undefined && typeof resolved.description !== 'string')
+      || (resolved.selectable !== undefined && typeof resolved.selectable !== 'boolean')
+      || (resolved.active !== undefined && typeof resolved.active !== 'boolean')
     ) {
       throw new LlmError(
         `adapter returned invalid exact model metadata for provider "${provider}" model "${model}"`,
@@ -679,9 +687,12 @@ export class LlmRuntime extends Service {
       if (!Number.isSafeInteger(contextOptions.defaultContextWindow)
         || contextOptions.defaultContextWindow <= 0
         || choices.length === 0
-        || choices.some(choice => !Number.isSafeInteger(choice) || choice <= 0)
-        || new Set(choices).size !== choices.length
-        || !choices.includes(contextOptions.defaultContextWindow)) {
+        || choices.some(choice => !Number.isSafeInteger(choice.contextWindow)
+          || choice.contextWindow <= 0
+          || typeof choice.available !== 'boolean'
+          || (choice.unavailableReason !== undefined && typeof choice.unavailableReason !== 'string'))
+        || new Set(choices.map(choice => choice.contextWindow)).size !== choices.length
+        || !choices.some(choice => choice.contextWindow === contextOptions.defaultContextWindow && choice.available)) {
         throw new LlmError(
           `adapter returned invalid context choices for provider "${provider}" model "${model}"`,
           'INVALID_MODEL_CONTEXT',
@@ -705,10 +716,12 @@ export class LlmRuntime extends Service {
       name: resolved.name,
       ...resolved.description === undefined ? {} : { description: resolved.description },
       ...inputModalities === undefined ? {} : { inputModalities },
+      ...resolved.selectable === undefined ? {} : { selectable: resolved.selectable },
+      ...resolved.active === undefined ? {} : { active: resolved.active },
       ...contextOptions === undefined ? {} : {
         contextOptions: {
           defaultContextWindow: contextOptions.defaultContextWindow,
-          contextWindows: [...contextOptions.contextWindows],
+          contextWindows: contextOptions.contextWindows.map(choice => ({ ...choice })),
         },
       },
       ...context === undefined ? {} : { context: { contextWindow: context.contextWindow } },
@@ -779,6 +792,12 @@ export class LlmRuntime extends Service {
     signal?: AbortSignal,
   ): Promise<{ config: LlmCallConfig; context?: LlmModelContext }> {
     const info = await this.resolveModelInfoFor(registration, config.model, signal)
+    if (info.selectable === false) {
+      throw new LlmError(
+        `provider "${config.provider}" model "${config.model}" is advertised for non-conversation use`,
+        'MODEL_NOT_SELECTABLE',
+      )
+    }
     const defaulted = config.maxTokens === undefined && info.defaultMaxTokens !== undefined
       ? { ...config, maxTokens: info.defaultMaxTokens }
       : config
@@ -788,10 +807,18 @@ export class LlmRuntime extends Service {
     const contextOptions = info.contextOptions
     if (contextOptions !== undefined) {
       const effectiveContext = resolvedConfig.contextWindow ?? contextOptions.defaultContextWindow
-      if (!contextOptions.contextWindows.includes(effectiveContext)) {
+      const contextChoice = contextOptions.contextWindows.find(choice => choice.contextWindow === effectiveContext)
+      if (contextChoice === undefined) {
         throw new LlmError(
           `provider "${config.provider}" model "${config.model}" does not support context window ${effectiveContext}`,
           'UNSUPPORTED_CONTEXT_WINDOW',
+        )
+      }
+      if (!contextChoice.available && resolvedConfig.bestTryContext !== true) {
+        throw new LlmError(
+          contextChoice.unavailableReason
+            ?? `provider "${config.provider}" model "${config.model}" context window ${effectiveContext} is unavailable`,
+          'UNAVAILABLE_CONTEXT_WINDOW',
         )
       }
       if (resolvedConfig.contextWindow !== effectiveContext) {

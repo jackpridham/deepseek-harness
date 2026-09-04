@@ -15,16 +15,17 @@ const AGENT_LOOP_REQUESTS = new WeakSet<GenerateOptions>()
 // TODO(call-config-shape): Revisit which fields are epoch-level for cache reuse
 // and where provider-specific request options belong.
 /**
- * Provider, model, reasoning effort, and sampling scalars of one conversation's
- * requests. Every field maps 1:1 onto the same-named `GenerateOptions` field;
- * the loop builds requests from the logged header rather than accepting these
- * per call.
+ * Provider, model, context/reasoning selection, and sampling scalars of one
+ * conversation's requests. Every field maps 1:1 onto the same-named
+ * `GenerateOptions` field; the loop builds requests from the logged header
+ * rather than accepting these per call.
  */
 export interface LlmCallConfig {
   provider: string
   model: string
   reasoningEffort?: ReasoningEffortId
   contextWindow?: number
+  bestTryContext?: boolean
   temperature?: number
   maxTokens?: number
   stop?: string[]
@@ -53,6 +54,7 @@ export function callConfigEquals(a: LlmCallConfig, b: LlmCallConfig): boolean {
     || a.model !== b.model
     || a.reasoningEffort !== b.reasoningEffort
     || a.contextWindow !== b.contextWindow
+    || a.bestTryContext !== b.bestTryContext
     || a.temperature !== b.temperature
     || a.maxTokens !== b.maxTokens
   ) return false

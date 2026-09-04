@@ -23,6 +23,7 @@ import {
   workspaceArchiveSessionRequestSchema, workspaceArchiveSessionValueSchema,
   workspaceCreateRequestSchema, workspaceCreateValueSchema, workspaceIdSchema,
   workspaceDeleteRequestSchema, workspaceDeleteValueSchema,
+  workspaceDeleteSessionRequestSchema, workspaceDeleteSessionValueSchema,
   workspaceInsertBeforeRequestSchema, workspaceInsertBeforeValueSchema,
   workspaceInsertSessionBeforeRequestSchema, workspaceInsertSessionBeforeValueSchema,
   workspaceListRequestSchema, workspaceListValueSchema,
@@ -205,7 +206,13 @@ describe('sessions domain schemas', () => {
     }).hasMore).toBe(false)
     expect(sessionModelsRequestSchema.parse({ sessionId: 's1' }).sessionId).toBe('s1')
     expect(sessionModelsValueSchema.parse({
-      current: { provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'max' },
+      current: {
+        provider: 'deepseek-official',
+        model: 'deepseek-v4-flash',
+        contextWindow: 262_144,
+        bestTryContext: true,
+        reasoningEffort: 'max',
+      },
       routable: true,
       groups: [{
         id: 'deepseek-official',
@@ -214,6 +221,15 @@ describe('sessions domain schemas', () => {
           id: 'deepseek-v4-flash',
           name: 'DeepSeek V4 Flash',
           description: 'fast',
+          selectable: true,
+          active: true,
+          context: {
+            defaultContextWindow: 32_768,
+            contextWindows: [
+              { contextWindow: 32_768, available: true },
+              { contextWindow: 262_144, available: false, unavailableReason: 'best try' },
+            ],
+          },
           reasoning: {
             efforts: [
               { id: 'off', name: 'Off' },
@@ -229,8 +245,9 @@ describe('sessions domain schemas', () => {
       sessionId: 's1',
       provider: 'deepseek-official',
       model: 'deepseek-v4-pro',
+      bestTryContext: true,
       reasoningEffort: 'max',
-    }).reasoningEffort).toBe('max')
+    }).bestTryContext).toBe(true)
     expect(sessionSelectModelValueSchema.parse({
       selected: { provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' },
     }).selected.reasoningEffort).toBe('max')
@@ -369,6 +386,17 @@ describe('workspace domain schemas', () => {
     expect(workspaceArchiveSessionValueSchema.parse({ archivedSessionIds: ['s1', 's2'] }).archivedSessionIds)
       .toEqual(['s1', 's2'])
     expect(() => workspaceArchiveSessionValueSchema.parse({ archivedSessionIds: 's1' })).toThrow()
+  })
+
+  it('deleteSession request/value carry one id and a destructive success', () => {
+    expect(workspaceDeleteSessionRequestSchema.parse({ sessionId: 's1' })).toEqual({ sessionId: 's1' })
+    expect(() => workspaceDeleteSessionRequestSchema.parse({})).toThrow()
+    expect(workspaceDeleteSessionValueSchema.parse({
+      deleted: true,
+      deletedSessionIds: ['s1', 's2'],
+    })).toEqual({ deleted: true, deletedSessionIds: ['s1', 's2'] })
+    expect(() => workspaceDeleteSessionValueSchema.parse({ deleted: true })).toThrow()
+    expect(() => workspaceDeleteSessionValueSchema.parse({ deleted: false })).toThrow()
   })
 
   it('insertSessionBefore accepts an anchored and an anchorless move', () => {
@@ -518,6 +546,7 @@ describe('events frame schemas', () => {
       { type: 'host/session-added', sessionId: 's', blank: true, parentSessionId: 'p' },
       { type: 'host/session-added', sessionId: 's', blank: true },
       { type: 'host/session-removed', sessionId: 's' },
+      { type: 'host/session-removed', sessionId: 's', deleted: true },
       { type: 'host/session-status', sessionId: 's', running: true },
       { type: 'host/agent-error', sessionId: 's', message: 'boom' },
       { type: 'host/workspace-changed', workspace: {

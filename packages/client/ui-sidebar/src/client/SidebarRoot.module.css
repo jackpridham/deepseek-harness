@@ -124,23 +124,6 @@
   cursor: pointer;
 }
 
-/* Mark and name are independent slots; the shell owns their shared baseline,
-   spacing, and height so either occupant can vary in width. */
-.brandIdentity {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 24px;
-  min-width: 0;
-}
-
-.brandMark {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
 .brandName {
   display: inline-flex;
   align-items: center;
@@ -181,27 +164,6 @@
 .collapsed .iconButton {
   width: 36px;
   height: 36px;
-}
-
-/* Rail logo swap: collapsed, the toggle rests as the whale mark (brand ink,
-   no hover circle) and hovering reveals the panel icon — the expand
-   affordance (figma sidebar-hover flow). Expanded it is a plain panel icon. */
-.collapsed .toggle .panelIcon {
-  display: none;
-}
-
-.collapsed .toggle:hover .panelIcon {
-  display: inline;
-}
-
-.collapsed .toggle:hover .railMark {
-  display: none;
-}
-
-.railMark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
 }
 
 /* Rail icons ride the primary ink (figma rail spec); expanded keeps the
