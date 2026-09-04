@@ -8,9 +8,7 @@ The API gateway shared by every client consists of the TypeScript API contract (
 
 `ApiProxyService` consumes `ctx.agentDefaultModel`; it does not own a provider/model config or settings section. The shared service registers `{provider, model, contextWindow?, reasoningEffort?}` under `agent-default-model`: the base bundle's composition entry is the lower layer and `settings.yaml` layers the user's choice over it.
 
-A session resolves its model selection from three tiers on every access: a selection made in this process, otherwise the session's latest logged `request/header`, otherwise this default. A session that has run a turn derives its selection from its log, while a blank session observes a default saved after it was created.
-
-`session.selectModel` saves an accepted switch as the deployment default; there is no separate gesture. It stores the resolved `ModelSelection`, including adapter-materialized default context and effort. The complete-section write clears a stored optional value when the selected model has none. A storage failure is logged without undoing the session selection. A deployment with no settings provider keeps the composition entry and the switch remains session-local.
+A session resolves its model selection from three tiers on every access: a selection made in this process, otherwise the session's latest logged `request/header`, otherwise this default. A session that has run a turn derives its selection from its log. `session.selectModel` changes only the addressed session; the deployment default remains independently managed through settings, so one conversation cannot change the starting model for another.
 
 The section's `reasoningEffort` has no counterpart in the agent-default-model plugin config, deliberately: the seam merges the user layer over the composition entry per field, so an absent key cannot override a present one and a composition-set effort would survive every later switch to a model without one. A deployment default for effort belongs on the adapter profile, which resolves per model.
 
