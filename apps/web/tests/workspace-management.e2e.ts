@@ -242,7 +242,7 @@ describe('web e2e: workspace management (create / rename / flat view / hover aff
     await seededRow.click()
     await expect.poll(() => seededRow.getAttribute('aria-selected'), { timeout: 10_000 }).toBe('true')
 
-    await clickHoverAction(groupRow, `Workspace actions for ${workspace.title}`)
+    await groupRow.click({ button: 'right' })
     await page.getByRole('menuitem', { name: 'Delete workspace' }).click()
     expect(await page.getByRole('dialog', { name: 'Delete workspace' }).count()).toBe(0)
 
@@ -460,7 +460,7 @@ describe('web e2e: workspace management (create / rename / flat view / hover aff
     expect(await copied.isVisible()).toBe(true)
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(rowTitle)
     // Leaving anchor and card together closes it after the grace.
-    await page.getByRole('button', { name: 'Settings' }).hover()
+    await page.getByRole('button', { name: 'Settings', exact: true }).hover()
     await expect.poll(() => card.count(), { timeout: 5_000 }).toBe(0)
     expect(tripwire.pageErrors).toEqual([])
   }, 60_000)
@@ -490,7 +490,7 @@ describe('web e2e: workspace management (create / rename / flat view / hover aff
     await page.waitForTimeout(POINTER_HOLD_MS)
     expect(await page.getByRole('menuitem', { name: 'Rename' }).count()).toBe(1)
     // Pointer-leave dismissal still applies once the pointer genuinely leaves.
-    await page.getByRole('button', { name: 'Settings' }).hover()
+    await page.getByRole('button', { name: 'Settings', exact: true }).hover()
     await expect.poll(() => page.getByRole('menuitem', { name: 'Rename' }).count(), { timeout: 5_000 }).toBe(0)
     expect(tripwire.pageErrors).toEqual([])
   }, 60_000)
@@ -518,10 +518,10 @@ describe('web e2e: workspace management (create / rename / flat view / hover aff
     await expect.poll(() => sessionRows.count(), { timeout: 10_000 }).toBe(1)
     const sessionRow = sessionRows.first()
     const rowTitle = await sessionRow.locator('[class*="title"]').innerText()
-    // Row menu: hover reveals the actions button; Delete session commits
-    // without another confirmation step.
-    await clickHoverAction(sessionRow, `Session actions for ${rowTitle}`)
+    // The row context menu exposes the same permanent action as its ellipsis.
+    await sessionRow.click({ button: 'right' })
     await page.getByRole('menuitem', { name: 'Delete session' }).click()
+    expect(await page.getByRole('dialog', { name: 'Delete session' }).count()).toBe(0)
     // The row disappears on the session removal echo; with no other visible
     // stray, the whole Ungrouped bucket withdraws.
     await expect.poll(() => page.getByText(rowTitle, { exact: true }).count(), { timeout: 10_000 }).toBe(0)

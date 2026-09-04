@@ -249,7 +249,7 @@ describe('workspace browser rows', () => {
     expect(screen.getByRole('treeitem').querySelector('[data-state="done"]')).not.toBeNull()
   })
 
-  it('workspace row menu opens on the ellipsis, renames, and shows the danger delete row', () => {
+  it('workspace row menu opens on right-click or the ellipsis with the same actions', () => {
     const onRename = vi.fn()
     const onDelete = vi.fn()
     const onToggle = vi.fn()
@@ -261,8 +261,23 @@ describe('workspace browser rows', () => {
       group={group} onToggle={onToggle} onCreate={vi.fn()}
       actions={{ rename: onRename, delete: onDelete }} t={t}
     />)
+    const contextMenu = createEvent.contextMenu(screen.getByRole('treeitem'), { clientX: 72, clientY: 44 })
+    fireEvent(screen.getByRole('treeitem'), contextMenu)
+    expect(contextMenu.defaultPrevented).toBe(true)
+    expect(screen.getByRole('menu').style.left).toBe('72px')
+    expect(screen.getByRole('menu').style.top).toBe('48px')
+    const menuItemContext = createEvent.contextMenu(screen.getByRole('menuitem', { name: '重命名' }), {
+      clientX: 8,
+      clientY: 8,
+    })
+    fireEvent(screen.getByRole('menuitem', { name: '重命名' }), menuItemContext)
+    expect(menuItemContext.defaultPrevented).toBe(true)
+    expect(screen.getByRole('menu').style.left).toBe('72px')
+    expect(screen.getByRole('menu').style.top).toBe('48px')
     fireEvent.click(screen.getByRole('button', { name: '工作区“Project”的操作' }))
-    // Opening the menu neither toggles the group nor renames yet.
+    expect(screen.queryByRole('menu')).toBeNull()
+    fireEvent(screen.getByRole('treeitem'), contextMenu)
+    // Opening either trigger neither toggles the group nor renames yet.
     expect(onToggle).not.toHaveBeenCalled()
     expect(screen.getByRole('menuitem', { name: '删除工作区' }).className).toMatch(/danger/)
     fireEvent.click(screen.getByRole('menuitem', { name: '重命名' }))
@@ -394,7 +409,7 @@ describe('workspace browser rows', () => {
     }
   })
 
-  it('session row menu opens without opening the session and dispatches rename, fork, and delete', () => {
+  it('session row menu opens on right-click or the ellipsis without opening the session', () => {
     const onOpen = vi.fn()
     const onRename = vi.fn()
     const onFork = vi.fn()
@@ -405,7 +420,22 @@ describe('workspace browser rows', () => {
     }
     render(<SessionNodeItem node={node} currentId={undefined} now={0} onOpen={onOpen}
       onRename={onRename} onFork={onFork} onDelete={onDelete} t={t} />)
+    const contextMenu = createEvent.contextMenu(screen.getByRole('treeitem'), { clientX: 64, clientY: 32 })
+    fireEvent(screen.getByRole('treeitem'), contextMenu)
+    expect(contextMenu.defaultPrevented).toBe(true)
+    expect(screen.getByRole('menu').style.left).toBe('64px')
+    expect(screen.getByRole('menu').style.top).toBe('36px')
+    const menuItemContext = createEvent.contextMenu(screen.getByRole('menuitem', { name: '重命名' }), {
+      clientX: 8,
+      clientY: 8,
+    })
+    fireEvent(screen.getByRole('menuitem', { name: '重命名' }), menuItemContext)
+    expect(menuItemContext.defaultPrevented).toBe(true)
+    expect(screen.getByRole('menu').style.left).toBe('64px')
+    expect(screen.getByRole('menu').style.top).toBe('36px')
     fireEvent.click(screen.getByRole('button', { name: '会话“One”的操作' }))
+    expect(screen.queryByRole('menu')).toBeNull()
+    fireEvent(screen.getByRole('treeitem'), contextMenu)
     expect(onOpen).not.toHaveBeenCalled()
     expect(screen.getByRole('menuitem', { name: '删除会话' }).className).toMatch(/danger/)
     // Rename dispatches with the current display title (dialog prefill).
