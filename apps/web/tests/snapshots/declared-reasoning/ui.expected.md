@@ -3,5 +3,9 @@
     - text: Default
     - img
   - menuitemradio "Off"
+  - menuitemradio "Minimal"
+  - menuitemradio "Low"
+  - menuitemradio "Medium"
   - menuitemradio "High"
+  - menuitemradio "Xhigh"
   - menuitemradio "Max"

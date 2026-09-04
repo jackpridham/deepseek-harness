@@ -102,6 +102,9 @@ export class ModelDirectory {
       ...selection.contextWindow === undefined
         ? {}
         : { contextWindow: selection.contextWindow },
+      ...selection.bestTryContext === undefined
+        ? {}
+        : { bestTryContext: selection.bestTryContext },
       ...selection.reasoningEffort === undefined
         ? {}
         : { reasoningEffort: selection.reasoningEffort },

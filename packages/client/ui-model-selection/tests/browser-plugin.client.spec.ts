@@ -65,11 +65,23 @@ async function bench() {
         result: { ok: true as const, value: { current, routable, groups: GROUPS, failures: [] } },
       })
     },
-    selectModel: (payload: { provider: string; model: string; reasoningEffort?: string }) => {
+    selectModel: (payload: {
+      provider: string
+      model: string
+      contextWindow?: number
+      bestTryContext?: boolean
+      reasoningEffort?: string
+    }) => {
       calls.select += 1
       current = {
         provider: payload.provider,
         model: payload.model,
+        ...payload.contextWindow === undefined
+          ? {}
+          : { contextWindow: payload.contextWindow },
+        ...payload.bestTryContext === undefined
+          ? {}
+          : { bestTryContext: payload.bestTryContext },
         ...payload.reasoningEffort === undefined
           ? {}
           : { reasoningEffort: payload.reasoningEffort },
@@ -183,6 +195,24 @@ describe('ui-model-selection dual entry', () => {
     // The POPUP's next options pass reflects it without a seat-side reload.
     const options = await b.contribution().ui.options(projection('s1'), new AbortController().signal)
     expect(options.find((o: SelectOption) => o.label === 'DeepSeek-V4-Pro')).toMatchObject({ active: true })
+  })
+
+  it('forwards an explicit best-try context through the shared session RPC', async () => {
+    const b = await bench()
+    b.mint('s1')
+    const seatFace = b.seat().inject!(sid('s1'))
+    expect(await seatFace.select({
+      provider: 'deepseek-official',
+      model: 'deepseek-v4-flash',
+      contextWindow: 131_072,
+      bestTryContext: true,
+    })).toBe(true)
+    expect(b.hostCurrent()).toEqual({
+      provider: 'deepseek-official',
+      model: 'deepseek-v4-flash',
+      contextWindow: 131_072,
+      bestTryContext: true,
+    })
   })
 
   it('a popup selection lands on the seat store — the reverse direction of the same state', async () => {

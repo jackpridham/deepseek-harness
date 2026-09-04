@@ -1,8 +1,9 @@
 /**
  * ModelSelect: the composer's named model seat (`conversation.input.model`).
  * Three sibling one-click selectors expose model, context, and effort.
- * Each trigger opens its own list directly; the context list is the union of
- * endpoint-advertised tiers and mutes tiers unavailable for the selected model.
+ * Each trigger opens its own list directly; context and effort choices come
+ * only from the selected model's endpoint metadata. Host-constrained context
+ * tiers remain selectable as explicit best-try choices with a warning.
  * Data and submission ride the SAME per-session ModelDirectory as the
  * /model popup; exact-model reasoning metadata and the selected effort come
  * from the Host rather than a client-owned vocabulary. A rejected selection
@@ -16,7 +17,7 @@ import {
 import clsx from 'clsx'
 import type { ModelReasoningEffort, ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
 import {
-  IconCheckOutline16, IconChevronDownOutline14, IconWarningOutline16, StateDot, Toast,
+  IconCheckOutline16, IconChevronDownOutline14, IconWarningOutline16, StateDot, Toast, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ModelSelectInjected } from './slots.ts'
@@ -86,30 +87,20 @@ export function ModelSelect(
   const currentChoice = choices[selectedIndex]
   const reasoning = currentChoice?.model.reasoning
   const context = currentChoice?.model.context
-  const contextChoices = useMemo(() => {
-    const options = new Map<number, { contextWindow: number; available: boolean; unavailableReason?: string }>()
-    for (const group of state.groups) {
-      for (const model of group.models) {
-        for (const option of model.context?.contextWindows ?? []) {
-          if (!options.has(option.contextWindow)) {
-            options.set(option.contextWindow, { ...option, available: false })
-          }
-        }
-      }
-    }
-    for (const option of context?.contextWindows ?? []) options.set(option.contextWindow, option)
-    return [...options.values()]
-  }, [context, state.groups])
+  const contextChoices = context?.contextWindows ?? []
   const effectiveContext = state.current?.contextWindow ?? context?.defaultContextWindow
-  const contextLabel = effectiveContext === undefined
+  const contextLabel = context === undefined || effectiveContext === undefined
     ? undefined
     : effectiveContext % 1024 === 0 ? `${effectiveContext / 1024}K` : effectiveContext.toLocaleString()
-  const effectiveEffort = state.current?.reasoningEffort ?? reasoning?.defaultEffort
-  const effortLabel = reasoning === undefined
+  const effectiveEffort = reasoning === undefined
+    ? undefined
+    : state.current?.reasoningEffort ?? reasoning.defaultEffort
+  const currentEffortLabel = reasoning === undefined
     ? undefined
     : effectiveEffort === undefined
       ? t('effort.providerDefault')
       : reasoning.efforts.find(level => level.id === effectiveEffort)?.name ?? effectiveEffort
+  const effortLabel = currentEffortLabel ?? t('menu.effort')
   const effortChoices = useMemo<readonly EffortChoice[]>(() => reasoning === undefined
     ? []
     : [
@@ -246,15 +237,16 @@ export function ModelSelect(
       provider: state.current.provider,
       model: state.current.model,
       ...effectiveContext === undefined ? {} : { contextWindow: effectiveContext },
+      ...state.current.bestTryContext === true ? { bestTryContext: true } : {},
       ...effort === undefined ? {} : { reasoningEffort: effort },
     }
     lastActionRef.current = 'select'
     void select(selection).then(settleSelection)
   }
 
-  const chooseContext = (contextWindow: number): void => {
+  const chooseContext = (contextWindow: number, bestTryContext: boolean): void => {
     if (state.current === null) return
-    if (effectiveContext === contextWindow) {
+    if (effectiveContext === contextWindow && state.current.bestTryContext === (bestTryContext || undefined)) {
       close(true)
       return
     }
@@ -262,6 +254,7 @@ export function ModelSelect(
       provider: state.current.provider,
       model: state.current.model,
       contextWindow,
+      ...bestTryContext ? { bestTryContext: true } : {},
       ...effectiveEffort === undefined ? {} : { reasoningEffort: effectiveEffort },
     }
     lastActionRef.current = 'select'
@@ -271,13 +264,13 @@ export function ModelSelect(
   const modelLabel = currentChoice?.model.name ?? t('trigger.fallback')
   const triggerAria = currentChoice === undefined
     ? t('trigger.selectAria')
-    : contextLabel === undefined && effortLabel === undefined
+    : contextLabel === undefined && currentEffortLabel === undefined
       ? t('trigger.aria', { model: modelLabel })
       : contextLabel === undefined
-        ? t('trigger.ariaEffort', { model: modelLabel, effort: effortLabel })
-        : effortLabel === undefined
+        ? t('trigger.ariaEffort', { model: modelLabel, effort: currentEffortLabel })
+        : currentEffortLabel === undefined
           ? t('trigger.ariaContext', { model: modelLabel, context: contextLabel })
-          : t('trigger.ariaDetails', { model: modelLabel, context: contextLabel, effort: effortLabel })
+          : t('trigger.ariaDetails', { model: modelLabel, context: contextLabel, effort: currentEffortLabel })
   itemRefs.current = []
   let itemIndex = 0
   const itemRef = () => {
@@ -318,20 +311,29 @@ export function ModelSelect(
         </button>
       )}
 
-      {reasoning !== undefined && (
-        <button
-          type="button"
-          className={css.trigger}
-          aria-label={t('trigger.effortAria', { effort: effortLabel })}
-          aria-haspopup="menu"
-          aria-expanded={open && pane === 'effort'}
-          aria-controls={open ? `${id}-menu` : undefined}
-          disabled={locked}
-          onClick={(event) => { show('effort', event.currentTarget) }}
+      {currentChoice !== undefined && (
+        <Tooltip
+          label={t('effort.unsupportedTooltip')}
+          side="top"
+          disabled={reasoning !== undefined}
         >
-          <span className={css.triggerLabel}>{effortLabel}</span>
-          <IconChevronDownOutline14 className={clsx(css.chevron, open && pane === 'effort' && css.chevronOpen)} />
-        </button>
+          <button
+            type="button"
+            className={css.trigger}
+            aria-label={reasoning === undefined
+              ? t('trigger.effortUnsupported')
+              : t('trigger.effortAria', { effort: effortLabel })}
+            aria-haspopup={reasoning === undefined ? undefined : 'menu'}
+            aria-expanded={reasoning === undefined ? undefined : open && pane === 'effort'}
+            aria-controls={reasoning === undefined || !open ? undefined : `${id}-menu`}
+            aria-disabled={reasoning === undefined ? true : undefined}
+            disabled={locked}
+            onClick={(event) => { if (reasoning !== undefined) show('effort', event.currentTarget) }}
+          >
+            <span className={css.triggerLabel}>{effortLabel}</span>
+            <IconChevronDownOutline14 className={clsx(css.chevron, open && pane === 'effort' && css.chevronOpen)} />
+          </button>
+        </Tooltip>
       )}
 
       {open && (
@@ -412,38 +414,57 @@ export function ModelSelect(
           )}
 
           {pane === 'context' && (
-            <>
+            <div className={clsx(css.groups, 'scrollable')}>
               {contextChoices.length === 0
                 ? <div className={css.empty}>{t('empty.contexts')}</div>
                 : contextChoices.map((option) => {
                   const value = option.contextWindow
                   const label = value % 1024 === 0 ? `${value / 1024}K` : value.toLocaleString()
+                  const warning = option.available
+                    ? undefined
+                    : option.unavailableReason ?? t('context.warning')
                   return (
-                    <button
-                      ref={itemRef()}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={effectiveContext === value}
-                      className={clsx(css.option, effectiveContext === value && css.selected)}
+                    <Tooltip
+                      label={warning ?? ''}
+                      side="top"
+                      disabled={warning === undefined}
                       key={value}
-                      disabled={busy || !option.available}
-                      onClick={() => { chooseContext(value) }}
                     >
-                      <span className={css.optionCopy}>
-                        <span className={css.modelName}>{label}</span>
-                        {option.unavailableReason !== undefined
-                          ? <span className={css.description}>{option.unavailableReason}</span>
-                          : value === context?.defaultContextWindow && (
-                            <span className={css.description}>{t('context.default')}</span>
-                          )}
-                      </span>
-                      <span className={css.check}>
-                        {effectiveContext === value ? <IconCheckOutline16 /> : null}
-                      </span>
-                    </button>
+                      <button
+                        ref={itemRef()}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={effectiveContext === value}
+                        aria-label={warning === undefined ? undefined : `${label}. ${warning}`}
+                        className={clsx(
+                          css.option,
+                          effectiveContext === value && css.selected,
+                          warning !== undefined && css.constrained,
+                        )}
+                        disabled={busy}
+                        onClick={() => { chooseContext(value, !option.available) }}
+                      >
+                        <span className={css.optionCopy}>
+                          <span className={css.modelName}>
+                            {label}
+                            {warning !== undefined && (
+                              <span className={css.warningIcon} aria-hidden="true">⚠︎</span>
+                            )}
+                          </span>
+                          {warning !== undefined
+                            ? <span className={css.description}>{warning}</span>
+                            : value === context?.defaultContextWindow && (
+                              <span className={css.description}>{t('context.default')}</span>
+                            )}
+                        </span>
+                        <span className={css.check}>
+                          {effectiveContext === value ? <IconCheckOutline16 /> : null}
+                        </span>
+                      </button>
+                    </Tooltip>
                   )
                 })}
-            </>
+            </div>
           )}
 
           {pane === 'effort' && (
@@ -454,30 +475,32 @@ export function ModelSelect(
                   <button type="button" className={css.retry} onClick={reload}>{t('action.reload')}</button>
                 </div>
               )}
-              {effortChoices.length === 0
-                ? <div className={css.empty}>{t('empty.efforts')}</div>
-                : effortChoices.map(level => (
-                  <button
-                    ref={itemRef()}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={effectiveEffort === level.effort}
-                    className={clsx(css.option, effectiveEffort === level.effort && css.selected)}
-                    key={level.key}
-                    disabled={busy}
-                    onClick={() => { chooseEffort(level.effort) }}
-                  >
-                    <span className={css.optionCopy}>
-                      <span className={css.modelName}>{level.label}</span>
-                      {level.description !== undefined && (
-                        <span className={css.description}>{level.description}</span>
-                      )}
-                    </span>
-                    <span className={css.check}>
-                      {effectiveEffort === level.effort ? <IconCheckOutline16 /> : null}
-                    </span>
-                  </button>
-                ))}
+              <div className={clsx(css.groups, 'scrollable')}>
+                {effortChoices.length === 0
+                  ? <div className={css.empty}>{t('empty.efforts')}</div>
+                  : effortChoices.map(level => (
+                    <button
+                      ref={itemRef()}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={effectiveEffort === level.effort}
+                      className={clsx(css.option, effectiveEffort === level.effort && css.selected)}
+                      key={level.key}
+                      disabled={busy}
+                      onClick={() => { chooseEffort(level.effort) }}
+                    >
+                      <span className={css.optionCopy}>
+                        <span className={css.modelName}>{level.label}</span>
+                        {level.description !== undefined && (
+                          <span className={css.description}>{level.description}</span>
+                        )}
+                      </span>
+                      <span className={css.check}>
+                        {effectiveEffort === level.effort ? <IconCheckOutline16 /> : null}
+                      </span>
+                    </button>
+                  ))}
+              </div>
             </>
           )}
         </div>

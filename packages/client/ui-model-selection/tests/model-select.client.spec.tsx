@@ -60,7 +60,17 @@ describe('ModelSelect reasoning effort', () => {
       groups: [{
         id: 'deepseek-official',
         name: 'DeepSeek',
-        models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', context, reasoning }],
+        models: [
+          { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', context, reasoning },
+          {
+            id: 'other',
+            name: 'Other',
+            reasoning: {
+              efforts: [{ id: 'foreign', name: 'Foreign' }],
+              defaultEffort: 'foreign',
+            },
+          },
+        ],
       }],
     }))
     const select = vi.fn(async (selection: ModelSelection) => {
@@ -82,7 +92,7 @@ describe('ModelSelect reasoning effort', () => {
     fireEvent.click(trigger)
     expect(screen.getAllByRole('menuitemradio').map(item => item.textContent))
       .toEqual(['64K', '128K默认'])
-    fireEvent.click(screen.getByRole('menuitemradio', { name: '64K' }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /^64K/ }))
 
     await waitFor(() => {
       expect(select).toHaveBeenCalledWith({
@@ -97,11 +107,16 @@ describe('ModelSelect reasoning effort', () => {
 
   it('renders adapter metadata and submits the effort as part of the session selection', async () => {
     const context = {
-      defaultContextWindow: 131_072,
-      contextWindows: [65_536, 131_072].map(contextWindow => ({ contextWindow, available: true })),
+      defaultContextWindow: 65_536,
+      contextWindows: [
+        { contextWindow: 65_536, available: true },
+        { contextWindow: 131_072, available: false },
+      ],
     }
     const directory = createSnapshotStore<ModelDirectoryState>(state({
-      current: { provider: 'deepseek-official', model: 'deepseek-v4-flash', contextWindow: 65_536 },
+      current: {
+        provider: 'deepseek-official', model: 'deepseek-v4-flash', contextWindow: 131_072, bestTryContext: true,
+      },
       groups: [{
         id: 'deepseek-official',
         name: 'DeepSeek',
@@ -125,20 +140,120 @@ describe('ModelSelect reasoning effort', () => {
     fireEvent.click(trigger)
     expect(screen.getAllByRole('menuitemradio').map(item => item.textContent))
       .toEqual(['Off', 'High', 'MaxLargest budget'])
+    expect(screen.queryByRole('menuitemradio', { name: 'Foreign' })).toBeNull()
 
     fireEvent.click(screen.getByRole('menuitemradio', { name: /Max/ }))
     await waitFor(() => {
       expect(select).toHaveBeenCalledWith({
         provider: 'deepseek-official',
         model: 'deepseek-v4-flash',
-        contextWindow: 65_536,
+        contextWindow: 131_072,
+        bestTryContext: true,
         reasoningEffort: 'max',
       })
       expect(trigger.getAttribute('aria-label')).toBe('选择推理等级，当前 Max')
     })
   })
 
-  it('shows the global context tier union and mutes tiers unavailable for the selected model', () => {
+  it('keeps each supported model context and effort vocabulary exact across A to B to A switches', async () => {
+    const modelA = {
+      id: 'a',
+      name: 'Model A',
+      context: {
+        defaultContextWindow: 65_536,
+        contextWindows: [
+          { contextWindow: 65_536, available: true },
+          { contextWindow: 131_072, available: true },
+        ],
+      },
+      reasoning: {
+        efforts: [{ id: 'off', name: 'A Off' }, { id: 'high', name: 'A High' }],
+        defaultEffort: 'high',
+      },
+    }
+    const modelB = {
+      id: 'b',
+      name: 'Model B',
+      context: {
+        defaultContextWindow: 32_768,
+        contextWindows: [{ contextWindow: 32_768, available: true }],
+      },
+      reasoning: {
+        efforts: [{ id: 'minimal', name: 'B Minimal' }],
+        defaultEffort: 'minimal',
+      },
+    }
+    const directory = createSnapshotStore<ModelDirectoryState>(state({
+      current: {
+        provider: 'provider', model: 'a', contextWindow: 65_536, reasoningEffort: 'high',
+      },
+      groups: [{ id: 'provider', name: 'Provider', models: [modelA, modelB] }],
+    }))
+    const select = vi.fn(async (selection: ModelSelection) => {
+      directory.update((s) => { s.current = selection })
+      return true
+    })
+    render(<ModelSelect
+      locked={false}
+      available
+      directory={directory}
+      load={vi.fn()}
+      select={select}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: /^选择模型/ }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Model B' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '选择上下文，当前 32K' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: '选择推理等级，当前 B Minimal' })).toBeTruthy()
+    })
+    fireEvent.click(screen.getByRole('button', { name: '选择上下文，当前 32K' }))
+    expect(screen.getAllByRole('menuitemradio').map(item => item.textContent)).toEqual(['32K默认'])
+    fireEvent.click(screen.getByRole('button', { name: '选择上下文，当前 32K' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择推理等级，当前 B Minimal' }))
+    expect(screen.getAllByRole('menuitemradio').map(item => item.textContent)).toEqual(['B Minimal'])
+    fireEvent.click(screen.getByRole('button', { name: '选择推理等级，当前 B Minimal' }))
+
+    fireEvent.click(screen.getByRole('button', { name: /^选择模型/ }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Model A' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '选择上下文，当前 64K' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: '选择推理等级，当前 A High' })).toBeTruthy()
+    })
+    fireEvent.click(screen.getByRole('button', { name: '选择上下文，当前 64K' }))
+    expect(screen.getAllByRole('menuitemradio').map(item => item.textContent))
+      .toEqual(['64K默认', '128K'])
+    fireEvent.click(screen.getByRole('button', { name: '选择上下文，当前 64K' }))
+    fireEvent.click(screen.getByRole('button', { name: '选择推理等级，当前 A High' }))
+    expect(screen.getAllByRole('menuitemradio').map(item => item.textContent))
+      .toEqual(['A Off', 'A High'])
+  })
+
+  it('preserves a persisted same-model effort that is no longer advertised', () => {
+    const directory = createSnapshotStore<ModelDirectoryState>(state({
+      current: {
+        provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'legacy',
+      },
+    }))
+    render(<ModelSelect
+      locked={false}
+      available
+      directory={directory}
+      load={vi.fn()}
+      select={vi.fn().mockResolvedValue(true)}
+      t={t}
+    />)
+
+    const effort = screen.getByRole('button', { name: '选择推理等级，当前 legacy' })
+    fireEvent.click(effort)
+    expect(screen.getAllByRole('menuitemradio').map(item => item.textContent))
+      .toEqual(['Off', 'High', 'MaxLargest budget'])
+    expect(screen.getAllByRole('menuitemradio').every(item => item.getAttribute('aria-checked') === 'false'))
+      .toBe(true)
+  })
+
+  it('shows only the selected model contexts and submits warning tiers as explicit best-try', async () => {
     const directory = createSnapshotStore<ModelDirectoryState>(state({
       current: { provider: 'inf01', model: 'chat', contextWindow: 65_536 },
       groups: [{
@@ -152,7 +267,11 @@ describe('ModelSelect reasoning effort', () => {
               defaultContextWindow: 65_536,
               contextWindows: [
                 { contextWindow: 65_536, available: true },
-                { contextWindow: 131_072, available: false, unavailableReason: 'Requires best-try mode' },
+                {
+                  contextWindow: 131_072,
+                  available: false,
+                  unavailableReason: 'Requires best-try mode; loading may fail or crash the model process.',
+                },
               ],
             },
           },
@@ -167,23 +286,98 @@ describe('ModelSelect reasoning effort', () => {
         ],
       }],
     }))
+    const select = vi.fn(async (selection: ModelSelection) => {
+      directory.update((s) => { s.current = selection })
+      return true
+    })
     render(<ModelSelect
       locked={false}
       available
       directory={directory}
       load={vi.fn()}
-      select={vi.fn().mockResolvedValue(true)}
+      select={select}
       t={t}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: '选择上下文，当前 64K' }))
+    const trigger = screen.getByRole('button', { name: '选择上下文，当前 64K' })
+    fireEvent.click(trigger)
     const rows = screen.getAllByRole('menuitemradio') as HTMLButtonElement[]
     expect(rows.map(row => row.textContent)).toEqual([
       '64K默认',
-      '128KRequires best-try mode',
-      '256K',
+      '128K⚠︎Requires best-try mode; loading may fail or crash the model process.',
     ])
-    expect(rows.map(row => row.disabled)).toEqual([false, true, true])
+    expect(rows.map(row => row.disabled)).toEqual([false, false])
+    expect(screen.queryByText('256K')).toBeNull()
+
+    const warning = screen.getByRole('menuitemradio', { name: /128K/ })
+    fireEvent.mouseEnter(warning)
+    expect(screen.getByRole('tooltip').textContent)
+      .toBe('Requires best-try mode; loading may fail or crash the model process.')
+    fireEvent.click(warning)
+    await waitFor(() => {
+      expect(select).toHaveBeenLastCalledWith({
+        provider: 'inf01',
+        model: 'chat',
+        contextWindow: 131_072,
+        bestTryContext: true,
+      })
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '选择上下文，当前 128K' }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /^64K/ }))
+    await waitFor(() => {
+      expect(select).toHaveBeenLastCalledWith({
+        provider: 'inf01',
+        model: 'chat',
+        contextWindow: 65_536,
+      })
+    })
+  })
+
+  it('always shows a disabled explained effort control when the selected model has no reasoning metadata', () => {
+    const directory = createSnapshotStore<ModelDirectoryState>(state({
+      current: {
+        provider: 'inf01', model: 'chat', contextWindow: 65_536, reasoningEffort: 'foreign',
+      },
+      groups: [{
+        id: 'inf01',
+        name: 'inf01',
+        models: [
+          {
+            id: 'chat',
+            name: 'Chat',
+            context: {
+              defaultContextWindow: 65_536,
+              contextWindows: [{ contextWindow: 65_536, available: true }],
+            },
+          },
+          {
+            id: 'think',
+            name: 'Think',
+            reasoning: { efforts: [{ id: 'foreign', name: 'Foreign' }] },
+          },
+        ],
+      }],
+    }))
+    const select = vi.fn().mockResolvedValue(true)
+    render(<ModelSelect
+      locked={false}
+      available
+      directory={directory}
+      load={vi.fn()}
+      select={select}
+      t={t}
+    />)
+
+    const effort = screen.getByRole('button', { name: /当前模型不支持推理设置/ })
+    expect(effort.textContent).toBe('推理等级')
+    expect(effort.getAttribute('aria-disabled')).toBe('true')
+    expect(effort.getAttribute('aria-haspopup')).toBeNull()
+    fireEvent.focus(effort)
+    expect(screen.getByRole('tooltip').textContent).toBe('此模型不支持推理等级设置。')
+    fireEvent.click(effort)
+    expect(select).not.toHaveBeenCalled()
+    expect(screen.queryByText('Foreign')).toBeNull()
   })
 
   it('keeps unselectable media models visible and marks host-reported active rows', () => {

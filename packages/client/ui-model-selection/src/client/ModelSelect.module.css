@@ -32,7 +32,7 @@
   cursor: pointer;
 }
 
-.trigger:hover:not(:disabled) {
+.trigger:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
@@ -41,6 +41,11 @@
 }
 
 .trigger:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
+}
+
+.trigger[aria-disabled='true'] {
   color: var(--dsw-alias-label-dimmed);
   cursor: default;
 }
@@ -216,6 +221,15 @@
 
 .activity {
   flex: 0 0 auto;
+}
+
+.constrained {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.warningIcon {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-state-warn-label);
 }
 
 .description {
