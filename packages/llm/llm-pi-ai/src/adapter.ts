@@ -277,13 +277,22 @@ export class PiAiAdapter extends LlmAdapter {
 
   override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     const snapshot = await this.refreshed(provider, true)
-    this.profileOf(snapshot, provider)
-    return snapshot.models.getModels(provider).map(model => ({
-      provider,
-      id: model.id,
-      name: model.name,
-      inputModalities: [...model.input],
-    }))
+    const profile = this.profileOf(snapshot, provider)
+    return snapshot.models.getModels(provider).map((model) => {
+      const contextRoutes = profile.contextRoutes.get(model.id)
+      return {
+        provider,
+        id: model.id,
+        name: model.name,
+        inputModalities: [...model.input],
+        ...contextRoutes === undefined ? {} : {
+          contextOptions: {
+            defaultContextWindow: model.contextWindow,
+            contextWindows: [...contextRoutes.keys()],
+          },
+        },
+      }
+    })
   }
 
   override resolveModel(
@@ -294,16 +303,26 @@ export class PiAiAdapter extends LlmAdapter {
     return this.refreshed(provider, false, model, _signal).then((snapshot) => {
       const profile = this.profileOf(snapshot, provider)
       const resolvedModel = this.modelOf(snapshot, provider, model)
-      const defaultLevel = describableReasoningLevel(resolvedModel, profile.reasoning)
+      const defaultLevel = describableReasoningLevel(
+        resolvedModel,
+        profile.reasoningDefaults.get(model) ?? profile.reasoning,
+      )
       // Only a cap the deployment configured is a request default; the
       // catalog's `maxTokens` sizes the model and stops there.
       const configuredMaxTokens = profile.configuredMaxTokens.get(model)
+      const contextRoutes = profile.contextRoutes.get(model)
       return {
         provider,
         id: model,
         name: resolvedModel.name,
         inputModalities: [...resolvedModel.input],
         context: { contextWindow: resolvedModel.contextWindow },
+        ...contextRoutes === undefined ? {} : {
+          contextOptions: {
+            defaultContextWindow: resolvedModel.contextWindow,
+            contextWindows: [...contextRoutes.keys()],
+          },
+        },
         ...configuredMaxTokens === undefined ? {} : { defaultMaxTokens: configuredMaxTokens },
         ...reasoningInfo(resolvedModel, defaultLevel),
       }
@@ -322,9 +341,20 @@ export class PiAiAdapter extends LlmAdapter {
     const snapshot = await this.refreshed(options.provider, false, options.model, options.signal)
     const profile = this.profileOf(snapshot, options.provider)
     const model = this.modelOf(snapshot, options.provider, options.model)
+    const contextWindow = options.contextWindow ?? model.contextWindow
+    const contextRoute = profile.contextRoutes.get(options.model)?.get(contextWindow)
+    if (profile.contextRoutes.has(options.model) && contextRoute === undefined) {
+      throw new LlmError(
+        `pi-ai provider "${options.provider}" model "${options.model}" does not support context window ${contextWindow}`,
+        'UNSUPPORTED_CONTEXT_WINDOW',
+      )
+    }
+    const runtimeModel = contextRoute === undefined || contextRoute === model.id
+      ? model
+      : { ...model, id: contextRoute }
     const reasoning = resolveReasoningLevel(
       model,
-      options.reasoningEffort ?? profile.reasoning,
+      options.reasoningEffort ?? profile.reasoningDefaults.get(options.model) ?? profile.reasoning,
     )
     const apiKey = await this.config.resolveApiKey(options.provider, profile)
 
@@ -350,7 +380,7 @@ export class PiAiAdapter extends LlmAdapter {
       const context = attachments === undefined
         ? toPiContext(options, undefined, onReplayDegrade)
         : await toPiContext(options, attachments, onReplayDegrade, profile.maxRequestImageBytes)
-      const events = snapshot.models.streamSimple(model, context, {
+      const events = snapshot.models.streamSimple(runtimeModel, context, {
         ...profileOptions(profile, reasoning, apiKey),
         ...options.temperature === undefined ? {} : { temperature: options.temperature },
         ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
@@ -360,7 +390,7 @@ export class PiAiAdapter extends LlmAdapter {
         // Harness-owned and therefore win collisions.
         headers: requestHeaders(profile.headers),
       })
-      const iterator = toStreamChunks(events, model.contextWindow)[Symbol.asyncIterator]()
+      const iterator = toStreamChunks(events, contextWindow)[Symbol.asyncIterator]()
       let exhausted = false
       try {
         while (true) {

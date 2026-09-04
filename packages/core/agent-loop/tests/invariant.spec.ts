@@ -75,6 +75,20 @@ describe('request-reconstruction invariant', () => {
       .toThrow(/diverges from the folded request header/)
   })
 
+  it('rejects a context tier that diverges from the durable header', async () => {
+    const { ctx, session, boundary } = await requestSetup()
+    session.append('request/header', {
+      header: { config: { provider: 'mock', model: 'm', contextWindow: 65_536 } },
+      reason: 'change',
+    })
+    expect(() => { dispatch(ctx, loopRequest({
+      model: 'm', contextWindow: 65_536, messages: Object.freeze(boundary), sessionId: session.id,
+    })) }).not.toThrow()
+    expect(() => { dispatch(ctx, loopRequest({
+      model: 'm', contextWindow: 32_768, messages: Object.freeze(boundary), sessionId: session.id,
+    })) }).toThrow(/diverges from the folded request header/)
+  })
+
   it('rejects loop requests with no boundary or header', async () => {
     const ctx = await setup()
     const session = ctx.sessions.create(SessionId('req-bare'))

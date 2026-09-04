@@ -1,4 +1,4 @@
-- menu "模型与推理等级":
+- menu "模型、上下文与推理等级":
   - menuitemradio "Default" [checked]:
     - text: Default
     - img

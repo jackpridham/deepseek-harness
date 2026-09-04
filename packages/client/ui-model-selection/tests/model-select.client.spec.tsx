@@ -48,10 +48,20 @@ function state(overrides: Partial<ModelDirectoryState> = {}): ModelDirectoryStat
 afterEach(cleanup)
 
 describe('ModelSelect reasoning effort', () => {
-  it('renders adapter metadata and submits the effort as part of the session selection', async () => {
-    const directory = createSnapshotStore<ModelDirectoryState>(state())
+  it('renders endpoint-owned context choices and submits the chosen tier with the model', async () => {
+    const context = { defaultContextWindow: 131_072, contextWindows: [65_536, 131_072] }
+    const directory = createSnapshotStore<ModelDirectoryState>(state({
+      current: {
+        provider: 'deepseek-official', model: 'deepseek-v4-flash', contextWindow: 131_072, reasoningEffort: 'high',
+      },
+      groups: [{
+        id: 'deepseek-official',
+        name: 'DeepSeek',
+        models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', context, reasoning }],
+      }],
+    }))
     const select = vi.fn(async (selection: ModelSelection) => {
-      directory.set(state({ current: selection }))
+      directory.update((s) => { s.current = selection })
       return true
     })
     render(<ModelSelect
@@ -64,7 +74,50 @@ describe('ModelSelect reasoning effort', () => {
     />)
 
     const trigger = screen.getByRole('button', {
-      name: '选择模型，当前 DeepSeek-V4-Flash，推理等级 High',
+      name: '选择模型，当前 DeepSeek-V4-Flash，上下文 128K，推理等级 High',
+    })
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: /上下文/ }))
+    expect(screen.getAllByRole('menuitemradio').map(item => item.textContent))
+      .toEqual(['64K', '128K默认'])
+    fireEvent.click(screen.getByRole('menuitemradio', { name: '64K' }))
+
+    await waitFor(() => {
+      expect(select).toHaveBeenCalledWith({
+        provider: 'deepseek-official',
+        model: 'deepseek-v4-flash',
+        contextWindow: 65_536,
+        reasoningEffort: 'high',
+      })
+      expect(trigger.getAttribute('aria-label')).toBe('选择模型，当前 DeepSeek-V4-Flash，上下文 64K，推理等级 High')
+    })
+  })
+
+  it('renders adapter metadata and submits the effort as part of the session selection', async () => {
+    const context = { defaultContextWindow: 131_072, contextWindows: [65_536, 131_072] }
+    const directory = createSnapshotStore<ModelDirectoryState>(state({
+      current: { provider: 'deepseek-official', model: 'deepseek-v4-flash', contextWindow: 65_536 },
+      groups: [{
+        id: 'deepseek-official',
+        name: 'DeepSeek',
+        models: [{ id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', context, reasoning }],
+      }],
+    }))
+    const select = vi.fn(async (selection: ModelSelection) => {
+      directory.update((s) => { s.current = selection })
+      return true
+    })
+    render(<ModelSelect
+      locked={false}
+      available
+      directory={directory}
+      load={vi.fn()}
+      select={select}
+      t={t}
+    />)
+
+    const trigger = screen.getByRole('button', {
+      name: '选择模型，当前 DeepSeek-V4-Flash，上下文 64K，推理等级 High',
     })
     fireEvent.click(trigger)
     fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
@@ -76,9 +129,10 @@ describe('ModelSelect reasoning effort', () => {
       expect(select).toHaveBeenCalledWith({
         provider: 'deepseek-official',
         model: 'deepseek-v4-flash',
+        contextWindow: 65_536,
         reasoningEffort: 'max',
       })
-      expect(trigger.getAttribute('aria-label')).toBe('选择模型，当前 DeepSeek-V4-Flash，推理等级 Max')
+      expect(trigger.getAttribute('aria-label')).toBe('选择模型，当前 DeepSeek-V4-Flash，上下文 64K，推理等级 Max')
     })
   })
 

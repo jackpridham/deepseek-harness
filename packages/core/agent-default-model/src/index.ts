@@ -26,6 +26,8 @@ export interface AgentDefaultModelSettings {
   provider: string
   /** Provider-owned model id. */
   model: string
+  /** Adapter-advertised context tier, or the model default when absent. */
+  contextWindow?: number
   /** Adapter-owned reasoning effort, or provider/default behavior when absent. */
   reasoningEffort?: string
 }
@@ -34,6 +36,7 @@ export interface AgentDefaultModelSettings {
 export const AGENT_DEFAULT_MODEL_SETTINGS_SCHEMA: z<AgentDefaultModelSettings> = z.object({
   provider: z.string().required(),
   model: z.string().required(),
+  contextWindow: z.number().step(1).min(1),
   reasoningEffort: z.string(),
 })
 
@@ -50,6 +53,7 @@ function selection(settings: AgentDefaultModelSettings): ModelSelection {
   return {
     provider: settings.provider,
     model: settings.model,
+    ...settings.contextWindow === undefined ? {} : { contextWindow: settings.contextWindow },
     ...settings.reasoningEffort === undefined
       ? {}
       : { reasoningEffort: ReasoningEffortId(settings.reasoningEffort) },
@@ -99,6 +103,7 @@ export class AgentDefaultModelConfig extends Service {
     await this.ctx.get('settings')?.replace(AGENT_DEFAULT_MODEL_SETTINGS_NAMESPACE, {
       provider: next.provider,
       model: next.model,
+      ...next.contextWindow === undefined ? {} : { contextWindow: next.contextWindow },
       ...next.reasoningEffort === undefined ? {} : { reasoningEffort: String(next.reasoningEffort) },
     })
   }

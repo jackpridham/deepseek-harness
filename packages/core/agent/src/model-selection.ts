@@ -6,12 +6,14 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { LlmCallConfig, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 
-/** Complete provider, model, and optional reasoning effort selected for one live Agent. */
+/** Complete provider, model, and optional context/reasoning selection for one live Agent. */
 export interface ModelSelection {
   /** Registered provider route. */
   provider: string
   /** Provider-owned model id. */
   model: string
+  /** Adapter-advertised context tier, or the model default when absent. */
+  contextWindow?: number
   /** Adapter-owned reasoning effort, or provider/default behavior when absent. */
   reasoningEffort?: ReasoningEffortId
 }
@@ -57,11 +59,18 @@ export function installModelSelection(agentCtx: Context, selection: ModelSelecti
       const resolved = await next()
       const selected = selection.assembled
       if (selected === undefined) return resolved
-      const { reasoningEffort: _inheritedEffort, ...withoutInheritedEffort } = resolved
+      const {
+        reasoningEffort: _inheritedEffort,
+        contextWindow: _inheritedContextWindow,
+        ...withoutInheritedSelection
+      } = resolved
       return {
-        ...withoutInheritedEffort,
+        ...withoutInheritedSelection,
         provider: selected.provider,
         model: selected.model,
+        ...selected.contextWindow === undefined
+          ? {}
+          : { contextWindow: selected.contextWindow },
         ...selected.reasoningEffort === undefined
           ? {}
           : { reasoningEffort: selected.reasoningEffort },

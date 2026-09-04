@@ -130,6 +130,48 @@ function registerTextOnly(ctx: Context): void {
 }
 
 describe('Web session model selection', () => {
+  it('advertises, validates, selects, and preserves an exact context tier', async () => {
+    const { ctx, agent, sessionId } = await harness()
+    ctx.llm.registerAdapter(['context-provider'], new class extends LlmAdapter {
+      override listModels(): Promise<readonly LlmModelInfo[]> {
+        return Promise.resolve([{
+          provider: 'context-provider', id: 'logical', name: 'Logical',
+          contextOptions: { defaultContextWindow: 131_072, contextWindows: [65_536, 131_072] },
+        }])
+      }
+      override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+        return Promise.resolve({
+          provider, id: model, name: 'Logical', context: { contextWindow: 131_072 },
+          contextOptions: { defaultContextWindow: 131_072, contextWindows: [65_536, 131_072] },
+        })
+      }
+      override async *stream(): AsyncIterable<StreamChunk> {}
+    }())
+    const api = createApiProxy(ctx, {
+      defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
+      cwd: '/tmp',
+    })
+
+    const catalog = expectValue(await api.sessions.models(request({ sessionId })))
+    expect(catalog.groups.find(group => group.id === 'context-provider')?.models).toEqual([{
+      id: 'logical', name: 'Logical',
+      context: { defaultContextWindow: 131_072, contextWindows: [65_536, 131_072] },
+    }])
+    expect((await api.sessions.selectModel(request({
+      sessionId, provider: 'context-provider', model: 'logical', contextWindow: 32_768,
+    }))).result).toMatchObject({ ok: false, error: { code: 'model-unavailable' } })
+    expect(expectValue(await api.sessions.selectModel(request({
+      sessionId, provider: 'context-provider', model: 'logical', contextWindow: 65_536,
+    }))).selected).toEqual({ provider: 'context-provider', model: 'logical', contextWindow: 65_536 })
+    await ctx.systemPrompt.assemble()
+    const resolved = await agentEvents(ctx, agent).waterfall(
+      'agent/request', { turn: 1, step: 0, signal: new AbortController().signal },
+      () => Promise.resolve({ provider: 'seed', model: 'seed' }),
+    )
+    expect(resolved).toEqual({ provider: 'context-provider', model: 'logical', contextWindow: 65_536 })
+    await ctx.fiber.dispose()
+  })
+
   it('validates an ordered image batch before persisting any member', async () => {
     const { ctx, agent, sessionId } = await harness()
     const validateImage = vi.fn((_input: { data: Uint8Array }) => Promise.resolve())

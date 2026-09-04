@@ -227,8 +227,40 @@ export interface LlmDiscoveredModel {
   inputModalities?: readonly ModelModality[]
   /** Maximum combined request and response context, when disclosed. */
   contextWindow?: number
+  /** Bounded context choices and the endpoint model id that activates each one. */
+  contextWindows?: readonly LlmDiscoveredContextWindow[]
+  /** Bounded reasoning choices and transport advertised by the endpoint. */
+  reasoning?: LlmDiscoveredReasoningInfo
   /** Maximum output tokens, when disclosed. */
   maxTokens?: number
+}
+
+/** Endpoint-advertised reasoning choices for one logical model. */
+export interface LlmDiscoveredReasoningInfo {
+  /** Adapter transport profile used to apply a selected effort. */
+  format: string
+  /** Default effort when the caller does not choose one. */
+  defaultEffort?: ReasoningEffortId
+  /** Exact bounded effort choices in display order. */
+  efforts: readonly LlmDiscoveredReasoningEffort[]
+}
+
+/** One endpoint-advertised reasoning choice and its provider wire spelling. */
+export interface LlmDiscoveredReasoningEffort {
+  /** Stable selector value. */
+  id: ReasoningEffortId
+  /** Human-readable selector label. */
+  name: string
+  /** Provider spelling; null means the explicit non-reasoning mode. */
+  wireValue: string | null
+}
+
+/** One endpoint-advertised context tier and its exact runtime route. */
+export interface LlmDiscoveredContextWindow {
+  /** Effective combined request and response context in tokens. */
+  contextWindow: number
+  /** Endpoint model id to send when this tier is selected. */
+  model: string
 }
 
 /** One adapter-discovered model; catalog membership is advisory, not request validation. */
@@ -243,6 +275,16 @@ export interface LlmModelInfo {
   description?: string
   /** Accepted request modalities; absent means unknown, while an explicit omission is negative capability. */
   inputModalities?: readonly ModelModality[]
+  /** Bounded context choices, with the model default identified separately. */
+  contextOptions?: LlmModelContextOptions
+}
+
+/** Selectable context metadata for one exact logical model route. */
+export interface LlmModelContextOptions {
+  /** Context used when a caller does not choose a tier. */
+  defaultContextWindow: number
+  /** Allowed context sizes in adapter-preferred display order. */
+  contextWindows: readonly number[]
 }
 
 /** Provider-owned context capacity for one exact provider/model route. */
@@ -346,6 +388,8 @@ export interface GenerateOptions {
   model: string
   /** Adapter-owned reasoning effort selected for this exact model. */
   reasoningEffort?: ReasoningEffortId
+  /** Adapter-advertised effective context selected for this conversation. */
+  contextWindow?: number
   /**
    * Ordered conversation messages, exactly as the provider sees them (after
    * the `system` slot). A loop-built request assembles them as

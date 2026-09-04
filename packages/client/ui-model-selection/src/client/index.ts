@@ -83,9 +83,13 @@ function selectionOf(state: ModelDirectoryState, id: string): ModelSelection | u
       const reasoningEffort = sameRoute
         ? state.current?.reasoningEffort ?? model.reasoning?.defaultEffort
         : model.reasoning?.defaultEffort
+      const contextWindow = sameRoute
+        ? state.current?.contextWindow ?? model.context?.defaultContextWindow
+        : model.context?.defaultContextWindow
       return {
         provider: group.id,
         model: model.id,
+        ...contextWindow === undefined ? {} : { contextWindow },
         ...reasoningEffort === undefined ? {} : { reasoningEffort },
       }
     }

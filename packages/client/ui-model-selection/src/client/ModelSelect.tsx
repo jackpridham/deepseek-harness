@@ -1,7 +1,7 @@
 /**
  * ModelSelect: the composer's named model seat (`conversation.input.model`).
  * Two-level selection per figma 496:26454's MenuDropdown: the root menu is
- * the Model / Effort row pair (label + current value + a right chevron),
+ * the Model / Context / Effort rows (label + current value + a right chevron),
  * each drilling into its own list — the provider-grouped model list over
  * the shared directory, and the effort levels. The trigger (313:14108's
  * ToggleButton) shows both: model name + effort in the caption tone.
@@ -26,7 +26,7 @@ import type { ModelSelectInjected } from './slots.ts'
 import css from './ModelSelect.module.css'
 
 /** Which pane the dropdown shows: the two-row root or one drilled-in list. */
-type Pane = 'root' | 'model' | 'effort'
+type Pane = 'root' | 'model' | 'context' | 'effort'
 
 /** One dynamic effort row; undefined means preserve the provider default. */
 interface EffortChoice {
@@ -71,6 +71,9 @@ export function ModelSelect(
       selection: {
         provider: group.id,
         model: model.id,
+        ...model.context?.defaultContextWindow === undefined
+          ? {}
+          : { contextWindow: model.context.defaultContextWindow },
         ...model.reasoning?.defaultEffort === undefined
           ? {}
           : { reasoningEffort: model.reasoning.defaultEffort },
@@ -81,6 +84,11 @@ export function ModelSelect(
     : choices.findIndex(c => c.selection.provider === state.current?.provider && c.selection.model === state.current.model)
   const currentChoice = choices[selectedIndex]
   const reasoning = currentChoice?.model.reasoning
+  const context = currentChoice?.model.context
+  const effectiveContext = state.current?.contextWindow ?? context?.defaultContextWindow
+  const contextLabel = effectiveContext === undefined
+    ? undefined
+    : effectiveContext % 1024 === 0 ? `${effectiveContext / 1024}K` : effectiveContext.toLocaleString()
   const effectiveEffort = state.current?.reasoningEffort ?? reasoning?.defaultEffort
   const effortLabel = reasoning === undefined
     ? undefined
@@ -196,19 +204,41 @@ export function ModelSelect(
     const selection: ModelSelection = {
       provider: state.current.provider,
       model: state.current.model,
+      ...effectiveContext === undefined ? {} : { contextWindow: effectiveContext },
       ...effort === undefined ? {} : { reasoningEffort: effort },
     }
     lastActionRef.current = 'select'
     void select(selection).then(settleSelection)
   }
 
+  const chooseContext = (contextWindow: number): void => {
+    if (state.current === null) return
+    if (effectiveContext === contextWindow) {
+      close(true)
+      return
+    }
+    const selection: ModelSelection = {
+      provider: state.current.provider,
+      model: state.current.model,
+      contextWindow,
+      ...effectiveEffort === undefined ? {} : { reasoningEffort: effectiveEffort },
+    }
+    lastActionRef.current = 'select'
+    void select(selection).then(settleSelection)
+  }
+
   const modelLabel = currentChoice?.model.name ?? t('trigger.fallback')
-  const triggerLabel = effortLabel === undefined ? modelLabel : `${modelLabel} · ${effortLabel}`
+  const triggerDetails = [contextLabel, effortLabel].filter((value): value is string => value !== undefined)
+  const triggerLabel = triggerDetails.length === 0 ? modelLabel : `${modelLabel} · ${triggerDetails.join(' · ')}`
   const triggerAria = currentChoice === undefined
     ? t('trigger.selectAria')
-    : effortLabel === undefined
+    : contextLabel === undefined && effortLabel === undefined
       ? t('trigger.aria', { model: modelLabel })
-      : t('trigger.ariaEffort', { model: modelLabel, effort: effortLabel })
+      : contextLabel === undefined
+        ? t('trigger.ariaEffort', { model: modelLabel, effort: effortLabel })
+        : effortLabel === undefined
+          ? t('trigger.ariaContext', { model: modelLabel, context: contextLabel })
+          : t('trigger.ariaDetails', { model: modelLabel, context: contextLabel, effort: effortLabel })
   itemRefs.current = []
   let itemIndex = 0
   const itemRef = () => {
@@ -237,6 +267,7 @@ export function ModelSelect(
         }}
       >
         <span className={css.triggerLabel}>{modelLabel}</span>
+        {contextLabel !== undefined && <span className={css.triggerEffort}>{contextLabel}</span>}
         {effortLabel !== undefined && <span className={css.triggerEffort}>{effortLabel}</span>}
         <IconChevronDownOutline14 className={clsx(css.chevron, open && css.chevronOpen)} />
       </button>
@@ -256,6 +287,13 @@ export function ModelSelect(
                 <span className={css.cellValue}>{modelLabel}</span>
                 <IconChevronRightOutline14 className={css.cellChevron} />
               </button>
+              {context !== undefined && (
+                <button ref={itemRef()} type="button" role="menuitem" className={css.cell} onClick={() => { setPane('context') }}>
+                  <span className={css.cellLabel}>{t('menu.context')}</span>
+                  <span className={css.cellValue}>{contextLabel}</span>
+                  <IconChevronRightOutline14 className={css.cellChevron} />
+                </button>
+              )}
               {reasoning !== undefined && (
                 <button ref={itemRef()} type="button" role="menuitem" className={css.cell} onClick={() => { setPane('effort') }}>
                   <span className={css.cellLabel}>{t('menu.effort')}</span>
@@ -322,6 +360,38 @@ export function ModelSelect(
               {state.status === 'ready' && choices.length === 0 && (
                 <div className={css.empty}>{t('empty.models')}</div>
               )}
+            </>
+          )}
+
+          {pane === 'context' && (
+            <>
+              {context === undefined
+                ? <div className={css.empty}>{t('empty.contexts')}</div>
+                : context.contextWindows.map((value) => {
+                  const label = value % 1024 === 0 ? `${value / 1024}K` : value.toLocaleString()
+                  return (
+                    <button
+                      ref={itemRef()}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={effectiveContext === value}
+                      className={clsx(css.option, effectiveContext === value && css.selected)}
+                      key={value}
+                      disabled={busy}
+                      onClick={() => { chooseContext(value) }}
+                    >
+                      <span className={css.optionCopy}>
+                        <span className={css.modelName}>{label}</span>
+                        {value === context.defaultContextWindow && (
+                          <span className={css.description}>{t('context.default')}</span>
+                        )}
+                      </span>
+                      <span className={css.check}>
+                        {effectiveContext === value ? <IconCheckOutline16 /> : null}
+                      </span>
+                    </button>
+                  )
+                })}
             </>
           )}
 

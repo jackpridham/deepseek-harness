@@ -268,6 +268,11 @@ function assertCurrentLlmShape(event: Record<string, unknown>, index: number): v
       && (typeof reasoningEffort !== 'string' || reasoningEffort.length === 0)) {
       throw new Error(`seed request/header at index ${index} has an invalid reasoningEffort`)
     }
+    const contextWindow = configRecord['contextWindow']
+    if (contextWindow !== undefined
+      && (!Number.isSafeInteger(contextWindow) || (contextWindow as number) <= 0)) {
+      throw new Error(`seed request/header at index ${index} has an invalid contextWindow`)
+    }
     assertAdapterDefaults(headerRecord?.['adapterDefaults'], configRecord, index)
   }
   const type = event['type']

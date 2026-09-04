@@ -554,6 +554,18 @@ export class LlmRuntime extends Service {
         ...model.name === undefined ? {} : { name: model.name },
         ...inputModalities === undefined ? {} : { inputModalities },
         ...model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow },
+        ...model.contextWindows === undefined
+          ? {}
+          : { contextWindows: model.contextWindows.map(context => ({ ...context })) },
+        ...model.reasoning === undefined ? {} : {
+          reasoning: {
+            format: model.reasoning.format,
+            ...model.reasoning.defaultEffort === undefined
+              ? {}
+              : { defaultEffort: model.reasoning.defaultEffort },
+            efforts: model.reasoning.efforts.map(effort => ({ ...effort })),
+          },
+        },
         ...model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens },
       })
     }
@@ -599,12 +611,19 @@ export class LlmRuntime extends Service {
       }
       seen.add(model.id)
       const inputModalities = this.detachedModalities(model.inputModalities)
+      const contextOptions = model.contextOptions
       return {
         provider: model.provider,
         id: model.id,
         name: model.name,
         ...model.description === undefined ? {} : { description: model.description },
         ...inputModalities === undefined ? {} : { inputModalities },
+        ...contextOptions === undefined ? {} : {
+          contextOptions: {
+            defaultContextWindow: contextOptions.defaultContextWindow,
+            contextWindows: [...contextOptions.contextWindows],
+          },
+        },
       }
     })
   }
@@ -654,6 +673,21 @@ export class LlmRuntime extends Service {
         'INVALID_MODEL_CONTEXT',
       )
     }
+    const contextOptions = resolved.contextOptions
+    if (contextOptions !== undefined) {
+      const choices = contextOptions.contextWindows
+      if (!Number.isSafeInteger(contextOptions.defaultContextWindow)
+        || contextOptions.defaultContextWindow <= 0
+        || choices.length === 0
+        || choices.some(choice => !Number.isSafeInteger(choice) || choice <= 0)
+        || new Set(choices).size !== choices.length
+        || !choices.includes(contextOptions.defaultContextWindow)) {
+        throw new LlmError(
+          `adapter returned invalid context choices for provider "${provider}" model "${model}"`,
+          'INVALID_MODEL_CONTEXT',
+        )
+      }
+    }
     // Capability metadata rides through: an explicit modality omission is
     // negative capability downstream preflights act on (image admission).
     const inputModalities = this.detachedModalities(resolved.inputModalities)
@@ -671,6 +705,12 @@ export class LlmRuntime extends Service {
       name: resolved.name,
       ...resolved.description === undefined ? {} : { description: resolved.description },
       ...inputModalities === undefined ? {} : { inputModalities },
+      ...contextOptions === undefined ? {} : {
+        contextOptions: {
+          defaultContextWindow: contextOptions.defaultContextWindow,
+          contextWindows: [...contextOptions.contextWindows],
+        },
+      },
       ...context === undefined ? {} : { context: { contextWindow: context.contextWindow } },
       ...defaultMaxTokens === undefined ? {} : { defaultMaxTokens },
     }
@@ -745,6 +785,24 @@ export class LlmRuntime extends Service {
     const reasoning = info.reasoning
     const requested = defaulted.reasoningEffort
     let resolvedConfig = defaulted
+    const contextOptions = info.contextOptions
+    if (contextOptions !== undefined) {
+      const effectiveContext = resolvedConfig.contextWindow ?? contextOptions.defaultContextWindow
+      if (!contextOptions.contextWindows.includes(effectiveContext)) {
+        throw new LlmError(
+          `provider "${config.provider}" model "${config.model}" does not support context window ${effectiveContext}`,
+          'UNSUPPORTED_CONTEXT_WINDOW',
+        )
+      }
+      if (resolvedConfig.contextWindow !== effectiveContext) {
+        resolvedConfig = { ...resolvedConfig, contextWindow: effectiveContext }
+      }
+    } else if (resolvedConfig.contextWindow !== undefined) {
+      throw new LlmError(
+        `provider "${config.provider}" model "${config.model}" does not advertise selectable context windows`,
+        'UNSUPPORTED_CONTEXT_WINDOW',
+      )
+    }
     if (reasoning === undefined) {
       if (requested !== undefined) {
         throw new LlmError(
@@ -761,12 +819,14 @@ export class LlmRuntime extends Service {
             'UNSUPPORTED_REASONING_EFFORT',
           )
         }
-        if (requested !== effective) resolvedConfig = { ...defaulted, reasoningEffort: effective }
+        if (requested !== effective) resolvedConfig = { ...resolvedConfig, reasoningEffort: effective }
       }
     }
     return {
       config: resolvedConfig,
-      ...info.context === undefined ? {} : { context: info.context },
+      ...contextOptions !== undefined
+        ? { context: { contextWindow: resolvedConfig.contextWindow as number } }
+        : info.context === undefined ? {} : { context: info.context },
     }
   }
 

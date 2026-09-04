@@ -56,12 +56,13 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type { ModelThinkingLevel } from '@earendil-works/pi-ai'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { assertUsableApiKey, LlmError } from '@deepseek-ai/dsh-llm'
 import type { AdapterRegistrationHandle, DirectoryRegistrationHandle, LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
 import { deepEqualJson, installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { PiAiAdapter } from './adapter.ts'
-import { catalogProviderIds, catalogProviderTakesApiKey } from './catalog.ts'
+import { catalogProviderIds, catalogProviderTakesApiKey, THINKING_LEVELS } from './catalog.ts'
 import { assertServiceable, Config, resolveProfiles } from './config.ts'
 import type { ResolvedPiAiProviderProfile } from './config.ts'
 import { discoverModels } from './discovery.ts'
@@ -214,17 +215,44 @@ export function apply(ctx: Context, config: Config): void {
       ...signal === undefined ? {} : { signal },
     }, () => resolveApiKey(provider, profile))
     const configured = new Map((source.models ?? []).map(model => [model.id, model]))
-    const models = advertised.map(model => ({
-      id: model.id,
-      ...model.name === undefined ? {} : { name: model.name },
-      ...model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow },
-      ...model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens },
-      ...model.inputModalities === undefined ? {} : { input: [...model.inputModalities] },
-      ...configured.get(model.id),
-    }))
+    const models = advertised.map((model) => {
+      if (model.reasoning !== undefined && model.reasoning.format !== 'qwen-chat-template') {
+        throw new LlmError(
+          `pi-ai provider "${provider}" model "${model.id}" advertises unsupported reasoning format "${model.reasoning.format}"`,
+          'INVALID_CATALOG',
+        )
+      }
+      const unknownEffort = model.reasoning?.efforts.find(
+        effort => !THINKING_LEVELS.includes(effort.id as ModelThinkingLevel),
+      )
+      if (unknownEffort !== undefined) {
+        throw new LlmError(
+          `pi-ai provider "${provider}" model "${model.id}" advertises unsupported reasoning effort "${unknownEffort.id}"`,
+          'INVALID_CATALOG',
+        )
+      }
+      return {
+        id: model.id,
+        ...model.name === undefined ? {} : { name: model.name },
+        ...model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow },
+        ...model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens },
+        ...model.inputModalities === undefined ? {} : { input: [...model.inputModalities] },
+        ...model.reasoning === undefined ? {} : {
+          reasoningEfforts: Object.fromEntries(model.reasoning.efforts.map(effort => [effort.id, effort.wireValue])),
+          compat: { thinkingFormat: 'qwen-chat-template' as const },
+        },
+        ...configured.get(model.id),
+      }
+    })
     const refreshed = resolveProfiles({ [provider]: { ...source, models } }).get(provider)
     if (refreshed === undefined) throw new LlmError(`pi-ai adapter does not own provider "${provider}"`, 'NO_ADAPTER')
-    return refreshed
+    const contextRoutes = new Map(advertised.flatMap(model => model.contextWindows === undefined
+      ? []
+      : [[model.id, new Map(model.contextWindows.map(context => [context.contextWindow, context.model]))] as const]))
+    const reasoningDefaults = new Map<string, ModelThinkingLevel>(advertised.flatMap(model => model.reasoning?.defaultEffort === undefined
+      ? []
+      : [[model.id, model.reasoning.defaultEffort as ModelThinkingLevel] as const]))
+    return { ...refreshed, contextRoutes, reasoningDefaults }
   }
 
   const adapter = new PiAiAdapter({

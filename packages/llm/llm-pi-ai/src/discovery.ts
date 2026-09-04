@@ -21,7 +21,7 @@
  * @module dsh-llm-pi-ai/discovery
  */
 
-import { INVALID_CREDENTIAL_CODE, LlmError, normalizeApiKey } from '@deepseek-ai/dsh-llm'
+import { INVALID_CREDENTIAL_CODE, LlmError, normalizeApiKey, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { LlmDiscoveredModel, LlmModelDiscoveryRequest } from '@deepseek-ai/dsh-llm'
 import { attributionHeaders } from '@deepseek-ai/dsh-llm'
 import { catalogModels } from './catalog.ts'
@@ -58,7 +58,51 @@ interface ListingEntry {
   context_length?: unknown
   max_tokens?: unknown
   max_output_tokens?: unknown
+  context_windows?: unknown
+  reasoning?: unknown
   architecture?: { input_modalities?: unknown } | null
+}
+
+/** Bounded reasoning metadata from an endpoint-owned listing row. */
+function reasoning(value: unknown): LlmDiscoveredModel['reasoning'] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const entry = value as { format?: unknown; default_effort?: unknown; efforts?: unknown }
+  const format = label(entry.format)
+  if (format === undefined || !Array.isArray(entry.efforts)) return undefined
+  const seen = new Set<string>()
+  const efforts = entry.efforts.flatMap((raw) => {
+    const effort = raw as { id?: unknown; name?: unknown; wire_value?: unknown } | null
+    const id = label(effort?.id)
+    const name = label(effort?.name)
+    const wireValue = effort?.wire_value
+    if (id === undefined || name === undefined || seen.has(id)
+      || !(typeof wireValue === 'string' && wireValue.length > 0) && wireValue !== null) return []
+    seen.add(id)
+    return [{ id: ReasoningEffortId(id), name, wireValue }]
+  })
+  if (efforts.length === 0) return undefined
+  const defaultEffort = label(entry.default_effort)
+  if (defaultEffort !== undefined && !seen.has(defaultEffort)) return undefined
+  return {
+    format,
+    ...defaultEffort === undefined ? {} : { defaultEffort: ReasoningEffortId(defaultEffort) },
+    efforts,
+  }
+}
+
+/** Bounded context routes from an endpoint-owned listing row. */
+function contextWindows(value: unknown): LlmDiscoveredModel['contextWindows'] {
+  if (!Array.isArray(value)) return undefined
+  const seen = new Set<number>()
+  const choices = value.flatMap((raw) => {
+    const entry = raw as { context_window?: unknown; model?: unknown } | null
+    const contextWindow = capacity(entry?.context_window)
+    const model = label(entry?.model)
+    if (contextWindow === undefined || model === undefined || seen.has(contextWindow)) return []
+    seen.add(contextWindow)
+    return [{ contextWindow, model }]
+  })
+  return choices.length === 0 ? undefined : choices
 }
 
 /** Valid request modalities from a gateway extension, or `undefined`. */
@@ -157,6 +201,8 @@ function readListing(body: unknown): LlmDiscoveredModel[] {
     if (id === undefined) continue
     const name = label(entry?.name, entry?.display_name)
     const contextWindow = capacity(entry?.context_window, entry?.context_length)
+    const contexts = contextWindows(entry?.context_windows)
+    const reasoningInfo = reasoning(entry?.reasoning)
     const maxTokens = capacity(entry?.max_output_tokens, entry?.max_tokens)
     const input = inputModalities(entry?.architecture?.input_modalities)
     models.push({
@@ -164,6 +210,8 @@ function readListing(body: unknown): LlmDiscoveredModel[] {
       ...name === undefined ? {} : { name },
       ...input === undefined ? {} : { inputModalities: input },
       ...contextWindow === undefined ? {} : { contextWindow },
+      ...contexts === undefined ? {} : { contextWindows: contexts },
+      ...reasoningInfo === undefined ? {} : { reasoning: reasoningInfo },
       ...maxTokens === undefined ? {} : { maxTokens },
     })
   }

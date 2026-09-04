@@ -19,7 +19,7 @@ export type {
   DirectoryEntry, DirectoryListing,
   ToolCallView, ToolResultView, WorkspaceApi, WorkspaceId, WorkspaceView,
   SkillsApi, SkillEntry,
-  ModelCatalogFailure, ModelCatalogModel, ModelProviderGroup, ModelReasoning,
+  ModelCatalogFailure, ModelCatalogModel, ModelContextChoices, ModelProviderGroup, ModelReasoning,
   MessageId, ModelReasoningEffort, ModelSelection, QueueAction, QueuedInboxItem, SessionModels,
   SubagentsApi, SubagentAddress, SubagentCatalog, SubagentListEntry, SubagentPromptReceipt,
   JobView,
