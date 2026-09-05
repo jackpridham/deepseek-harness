@@ -29,7 +29,7 @@ All limits are required; the library supplies no defaults.
 
 ## Provider contract
 
-A provider supplies a branded stable id, automatic mode (`first-prompt` or `all-prompts`), and `generate(request)`. The request carries the live session, all eligible messages through one fixed revision, the current logged main-request route when available, and cancellation. The result identifies a non-empty title, unique ordered source-message seqs from that request, and the optional provider/model route used to generate it. The service normalizes and validates the result before it becomes durable.
+A provider supplies a branded stable id, automatic mode (`first-prompt` or `all-prompts`), and `generate(request)`. The request carries the live session, all eligible messages through one fixed revision, the captured main-request provider, model, context tier, and best-try acceptance when available, and cancellation. The result identifies a non-empty title, unique ordered source-message seqs from that request, and the optional model/context route used to generate it. The service normalizes and validates the result before it becomes durable.
 
 See the [session-title data structures](../../../docs/subsystems/session-title.md) and [implemented decision](../../../.agents/notes/implemented/feature/2026-07-21-log-backed-session-titles.md).
 

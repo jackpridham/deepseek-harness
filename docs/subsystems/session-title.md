@@ -22,6 +22,10 @@ interface SessionTitleModelProvenance {
   readonly provider: string
   /** Provider model id. */
   readonly model: string
+  /** Context tier of the inherited main request, when selected. */
+  readonly contextWindow?: number
+  /** Acceptance of the inherited advertised best-try tier. */
+  readonly bestTryContext?: boolean
 }
 ```
 
@@ -200,5 +204,5 @@ register(provider: SessionTitleProvider): () => Promise<void>
 
 Types: [Session](session.md)
 
-Source: [`packages/session/session-title/src/index.ts:261`](../../packages/session/session-title/src/index.ts)
+Source: [`packages/session/session-title/src/index.ts:275`](../../packages/session/session-title/src/index.ts)
 <!-- END GENERATED cordis-surface -->

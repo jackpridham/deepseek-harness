@@ -298,6 +298,8 @@ describe('SessionTitleService Provider lifecycle', () => {
     void ctx.llm.stream(markAgentLoopRequest(deepFreeze({
       provider: 'main-route',
       model: 'chat-model',
+      contextWindow: 262_144,
+      bestTryContext: true,
       messages: session.deriveMessages(),
       sessionId: session.id,
     })))
@@ -310,7 +312,7 @@ describe('SessionTitleService Provider lifecycle', () => {
         { seq: first.seq, text: 'First routed prompt' },
         { seq: second.seq, text: 'Second prompt on the same route' },
       ],
-      route: { provider: 'main-route', model: 'chat-model' },
+      route: { provider: 'main-route', model: 'chat-model', contextWindow: 262_144, bestTryContext: true },
     })
   })
 

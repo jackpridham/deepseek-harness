@@ -42,6 +42,20 @@ export interface SessionTitleModelProvenance {
   readonly provider: string
   /** Provider model id. */
   readonly model: string
+  /** Context tier of the inherited main request, when selected. */
+  readonly contextWindow?: number
+  /** Acceptance of the inherited advertised best-try tier. */
+  readonly bestTryContext?: boolean
+}
+
+/** Capture the model and context route without unrelated generation settings. */
+function modelRoute(config: SessionTitleModelProvenance): SessionTitleModelProvenance {
+  return {
+    provider: config.provider,
+    model: config.model,
+    ...config.contextWindow === undefined ? {} : { contextWindow: config.contextWindow },
+    ...config.bestTryContext === undefined ? {} : { bestTryContext: config.bestTryContext },
+  }
 }
 
 /** Durable ownership record for an accepted session title. */
@@ -421,7 +435,7 @@ export class SessionTitleService extends Service {
       throughSeq: latest.seq,
     }, state, signal)
     const config = session.requestHeader()?.config
-    const route = config === undefined ? undefined : { provider: config.provider, model: config.model }
+    const route = config === undefined ? undefined : modelRoute(config)
     return this.startProvider(session, work, route)
   }
 
@@ -491,10 +505,7 @@ export class SessionTitleService extends Service {
     const state = this.work.get(session)
     const pending = state?.pending
     if (state === undefined || pending === undefined || pending.throughSeq >= event.seq) return
-    const route = {
-      provider: event.data.header.config.provider,
-      model: event.data.header.config.model,
-    }
+    const route = modelRoute(event.data.header.config)
     this.startPending(session, state, pending, route)
   }
 
@@ -511,7 +522,7 @@ export class SessionTitleService extends Service {
       || boundary.seq <= pending.throughSeq
       || route?.provider !== options.provider
       || route.model !== options.model) return
-    this.startPending(session, state, pending, { provider: options.provider, model: options.model })
+    this.startPending(session, state, pending, modelRoute(options))
   }
 
   /** Consume one pending revision and schedule its non-blocking provider call. */
@@ -622,7 +633,20 @@ export class SessionTitleService extends Service {
         || typeof record.model !== 'string' || record.model.length === 0) {
         throw new Error('session-title provider result model must contain non-empty provider and model strings')
       }
-      model = { provider: record.provider, model: record.model }
+      if (record.contextWindow !== undefined
+        && (typeof record.contextWindow !== 'number' || !Number.isSafeInteger(record.contextWindow)
+          || record.contextWindow <= 0)) {
+        throw new Error('session-title provider result contextWindow must be a positive safe integer')
+      }
+      if (record.bestTryContext !== undefined && typeof record.bestTryContext !== 'boolean') {
+        throw new Error('session-title provider result bestTryContext must be a boolean')
+      }
+      model = modelRoute({
+        provider: record.provider,
+        model: record.model,
+        ...record.contextWindow === undefined ? {} : { contextWindow: record.contextWindow },
+        ...record.bestTryContext === undefined ? {} : { bestTryContext: record.bestTryContext },
+      })
     }
     return {
       title,

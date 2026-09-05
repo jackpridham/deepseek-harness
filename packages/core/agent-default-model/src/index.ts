@@ -28,6 +28,8 @@ export interface AgentDefaultModelSettings {
   model: string
   /** Adapter-advertised context tier, or the model default when absent. */
   contextWindow?: number
+  /** Explicit acceptance of an advertised best-try context tier. */
+  bestTryContext?: boolean
   /** Adapter-owned reasoning effort, or provider/default behavior when absent. */
   reasoningEffort?: string
 }
@@ -37,6 +39,7 @@ export const AGENT_DEFAULT_MODEL_SETTINGS_SCHEMA: z<AgentDefaultModelSettings> =
   provider: z.string().required(),
   model: z.string().required(),
   contextWindow: z.number().step(1).min(1),
+  bestTryContext: z.boolean(),
   reasoningEffort: z.string(),
 })
 
@@ -54,6 +57,7 @@ function selection(settings: AgentDefaultModelSettings): ModelSelection {
     provider: settings.provider,
     model: settings.model,
     ...settings.contextWindow === undefined ? {} : { contextWindow: settings.contextWindow },
+    ...settings.bestTryContext === undefined ? {} : { bestTryContext: settings.bestTryContext },
     ...settings.reasoningEffort === undefined
       ? {}
       : { reasoningEffort: ReasoningEffortId(settings.reasoningEffort) },
@@ -104,6 +108,7 @@ export class AgentDefaultModelConfig extends Service {
       provider: next.provider,
       model: next.model,
       ...next.contextWindow === undefined ? {} : { contextWindow: next.contextWindow },
+      ...next.bestTryContext === undefined ? {} : { bestTryContext: next.bestTryContext },
       ...next.reasoningEffort === undefined ? {} : { reasoningEffort: String(next.reasoningEffort) },
     })
   }

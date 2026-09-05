@@ -442,6 +442,11 @@ describe('SessionTitleService Provider validation and stale scheduling', () => {
       { value: { title: 'valid', messageSeqs: [first.seq], model: { provider: '', model: 'm' } }, error: /provider result model/ },
       { value: { title: 'valid', messageSeqs: [first.seq], model: { provider: 'p', model: 1 } }, error: /provider result model/ },
       { value: { title: 'valid', messageSeqs: [first.seq], model: { provider: 'p', model: '' } }, error: /provider result model/ },
+      ...[0, -1, 1.5, '262144', Number.MAX_SAFE_INTEGER + 1].map(contextWindow => ({
+        value: { title: 'valid', messageSeqs: [first.seq], model: { provider: 'p', model: 'm', contextWindow } },
+        error: /contextWindow must be a positive safe integer/,
+      })),
+      { value: { title: 'valid', messageSeqs: [first.seq], model: { provider: 'p', model: 'm', bestTryContext: 'true' } }, error: /bestTryContext must be a boolean/ },
     ]
     for (const item of cases) {
       result = item.value

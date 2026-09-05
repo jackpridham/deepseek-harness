@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import LlmRuntime, { createUserMessage, LlmAdapter  } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import SessionTitleService from '@deepseek-ai/dsh-session-title'
 import * as providerPlugin from '@deepseek-ai/dsh-session-title-first-prompt-llm'
@@ -17,6 +17,19 @@ let context: Context | undefined
 
 class LoaderAdapter extends LlmAdapter {
   readonly requests: GenerateOptions[] = []
+
+  override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    return Promise.resolve({
+      provider, id: model, name: model,
+      contextOptions: {
+        defaultContextWindow: 131_072,
+        contextWindows: [
+          { contextWindow: 131_072, available: true },
+          { contextWindow: 262_144, available: false, unavailableReason: 'requires best try' },
+        ],
+      },
+    })
+  }
 
   override async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requests.push(options)
@@ -32,7 +45,7 @@ afterEach(async () => {
   root = undefined
 })
 
-async function loadComposition(): Promise<Context> {
+async function loadComposition(inheritRoute = false): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-title-loader-'))
   const configPath = join(root, 'cordis.yml')
   await writeFile(configPath, [
@@ -50,8 +63,7 @@ async function loadComposition(): Promise<Context> {
     '    maxInputBytes: 1000',
     '    maxOutputTokens: 32',
     '    timeoutMs: 1000',
-    "    provider: 'title-route'",
-    "    model: 'title-model'",
+    ...inheritRoute ? [] : ["    provider: 'title-route'", "    model: 'title-model'"],
     '',
   ].join('\n'))
 
@@ -116,4 +128,34 @@ describe('session-title Loader composition', () => {
       },
     })
   })
+
+  it('keeps the 256K main route for automatic titles and refresh after later headers change', async () => {
+    const ctx = await loadComposition(true)
+    const adapter = new LoaderAdapter()
+    ctx.llm.registerAdapter(['main-route'], adapter)
+    const session = ctx.sessions.create(SessionId('loader-title-context'))
+    session.append('turn/start', { turn: 1 })
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'Hello' }], source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    const route = { provider: 'main-route', model: 'main-model', contextWindow: 262_144, bestTryContext: true }
+    session.append('request/header', { header: { config: route }, reason: 'initial' })
+    // Automatic work must capture its triggering header before the deferred dispatch.
+    session.append('request/header', {
+      header: { config: { provider: 'main-route', model: 'main-model', contextWindow: 131_072 } },
+      reason: 'change',
+    })
+    await expect.poll(() => adapter.requests.length).toBe(1)
+    expect(adapter.requests[0]).toMatchObject(route)
+    await expect.poll(() => ctx.sessionTitle.get(session)?.source.kind).toBe('provider')
+    expect(ctx.sessionTitle.get(session)?.source).toMatchObject({ model: route })
+    expect(session.events.find(event => event.type === 'session/title-llm-request')?.data)
+      .toMatchObject({ route })
+    await ctx.sessionTitle.refresh(session)
+    expect(adapter.requests[1]).toMatchObject({
+      provider: 'main-route', model: 'main-model', contextWindow: 131_072,
+    })
+    expect(adapter.requests[1]).not.toHaveProperty('bestTryContext')
+  })
+
 })

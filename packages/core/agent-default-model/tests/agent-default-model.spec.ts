@@ -60,6 +60,22 @@ describe('AgentDefaultModelConfig', () => {
     await bench.ctx.fiber.dispose()
   })
 
+  it('retains an accepted best-try tier and clears it with the next ordinary selection', async () => {
+    const bench = await boot()
+    const selected = {
+      provider: 'inf01', model: 'heretic', contextWindow: 262_144, bestTryContext: true,
+      reasoningEffort: ReasoningEffortId('xhigh'),
+    }
+    await bench.defaultModel.saveSelection(selected)
+    expect(bench.defaultModel.currentSelection()).toEqual(selected)
+    expect(bench.ctx.settings.get(AGENT_DEFAULT_MODEL_SETTINGS_NAMESPACE)).toEqual(selected)
+    await bench.defaultModel.saveSelection({ provider: 'inf01', model: 'heretic', contextWindow: 131_072 })
+    expect(bench.defaultModel.currentSelection()).toEqual({
+      provider: 'inf01', model: 'heretic', contextWindow: 131_072,
+    })
+    await bench.ctx.fiber.dispose()
+  })
+
   it('clears a stored effort when the saved selection has none', async () => {
     const bench = await boot()
     await bench.defaultModel.saveSelection({

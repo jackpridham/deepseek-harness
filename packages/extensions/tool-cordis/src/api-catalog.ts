@@ -4107,7 +4107,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionTitleModelProvenance',
-    declaration: 'export interface SessionTitleModelProvenance {\n    readonly provider: string;\n    readonly model: string;\n}',
+    declaration: 'export interface SessionTitleModelProvenance {\n    readonly provider: string;\n    readonly model: string;\n    readonly contextWindow?: number;\n    readonly bestTryContext?: boolean;\n}',
   },
   {
     name: 'SessionTitleObservation',

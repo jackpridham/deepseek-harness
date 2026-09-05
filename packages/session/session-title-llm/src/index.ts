@@ -250,8 +250,7 @@ export async function generateSessionTitleWithLlm(
   const system = systemPrompt(config)
   using callDeadline = deadline(request.signal, config.timeoutMs, SESSION_TITLE_TIMEOUT_CODE)
   const options: GenerateOptions = deepFreeze({
-    provider: route.provider,
-    model: route.model,
+    ...route,
     messages,
     system,
     maxTokens: config.maxOutputTokens,

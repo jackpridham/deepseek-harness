@@ -87,7 +87,7 @@ describe('web e2e: the composer model switch is the default for later sessions',
             name: 'Acme Large',
             contextWindow: 131_072,
             reasoningEfforts: { off: null, high: 'high' },
-          }],
+          }, { id: 'acme-extended', name: 'Acme Extended', contextWindow: 262_144 }],
         },
       },
     })
@@ -178,6 +178,45 @@ describe('web e2e: the composer model switch is the default for later sessions',
     })
     expect(tripwire.pageErrors).toEqual([])
   }, 60_000)
+
+  it('inherits the complete accepted best-try selection in a new session', async () => {
+    const sourceId = await createSession('best-try-source')
+    const selected = { provider: ROUTE, model: 'acme-extended', contextWindow: 262_144, bestTryContext: true }
+    const response = await scaffold.ctx.apiProxy.sessions.selectModel({
+      rpcId: 'best-try-select' as never,
+      payload: { sessionId: SessionId(sourceId), ...selected },
+    })
+    expect(response.result.ok).toBe(true)
+    const afterId = await createSession('best-try-new-chat')
+    expect({
+      saved: scaffold.ctx.agentDefaultModel.currentSelection(),
+      newChat: await currentOf(afterId),
+      existingChat: await currentOf('default-model-logged'),
+    }).toMatchInlineSnapshot(`
+      {
+        "existingChat": {
+          "contextWindow": 65536,
+          "model": "origin-large",
+          "provider": "origin-gateway",
+          "reasoningEffort": "off",
+        },
+        "newChat": {
+          "bestTryContext": true,
+          "contextWindow": 262144,
+          "model": "acme-extended",
+          "provider": "acme-gateway",
+        },
+        "saved": {
+          "bestTryContext": true,
+          "contextWindow": 262144,
+          "model": "acme-extended",
+          "provider": "acme-gateway",
+        },
+      }
+    `)
+    const document = await readFile(join(scaffold.harnessHome, 'settings.yaml'), 'utf8')
+    expect(document).toContain('bestTryContext: true')
+  })
 
   it('goes inert when the route the default names stops being served', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-default-model-blocked'))

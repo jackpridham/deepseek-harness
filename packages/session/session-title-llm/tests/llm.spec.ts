@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import LlmRuntime, { createUserMessage, CallId, isAgentLoopRequest, LlmAdapter  } from '@deepseek-ai/dsh-llm'
-import type { FinishReason, GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { FinishReason, GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import { SessionTitleProviderId } from '@deepseek-ai/dsh-session-title'
 import type { SessionTitleProviderRequest } from '@deepseek-ai/dsh-session-title'
@@ -21,6 +21,20 @@ class RecordingAdapter extends LlmAdapter {
     private readonly onDispatch?: () => void,
   ) {
     super()
+  }
+
+  override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    if (provider !== 'current-route') return super.resolveModel(provider, model)
+    return Promise.resolve({
+      provider, id: model, name: model,
+      contextOptions: {
+        defaultContextWindow: 131_072,
+        contextWindows: [
+          { contextWindow: 131_072, available: true },
+          { contextWindow: 262_144, available: false, unavailableReason: 'requires best try' },
+        ],
+      },
+    })
   }
 
   override async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -123,7 +137,10 @@ describe('generateSessionTitleWithLlm', () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
     await ctx.plugin(LlmRuntime)
-    const providerRequest = request(ctx)
+    const providerRequest = {
+      ...request(ctx),
+      route: { provider: 'current-route', model: 'current-model', contextWindow: 262_144, bestTryContext: true },
+    }
     let requestWasLoggedAtDispatch = false
     const adapter = new RecordingAdapter(SCRIPT, () => {
       requestWasLoggedAtDispatch = providerRequest.session.events
@@ -142,7 +159,7 @@ describe('generateSessionTitleWithLlm', () => {
     expect(result).toEqual({
       title: '五个字标题',
       messageSeqs: providerRequest.messages.map(message => message.seq),
-      model: { provider: 'current-route', model: 'current-model' },
+      model: { provider: 'current-route', model: 'current-model', contextWindow: 262_144, bestTryContext: true },
     })
     expect(requestWasLoggedAtDispatch).toBe(true)
     expect(adapter.requests).toHaveLength(1)
@@ -153,6 +170,8 @@ describe('generateSessionTitleWithLlm', () => {
     expect(options).toMatchObject({
       provider: 'current-route',
       model: 'current-model',
+      contextWindow: 262_144,
+      bestTryContext: true,
       maxTokens: 32,
       sessionId: providerRequest.session.id,
       purpose: 'session-title',
@@ -166,7 +185,7 @@ describe('generateSessionTitleWithLlm', () => {
       .toEqual({
         titleProvider: TITLE_PROVIDER,
         messageSeqs: providerRequest.messages.map(message => message.seq),
-        route: { provider: 'current-route', model: 'current-model' },
+        route: { provider: 'current-route', model: 'current-model', contextWindow: 262_144, bestTryContext: true },
         system: options.system,
         messages: options.messages,
         maxTokens: 32,
@@ -202,6 +221,8 @@ describe('generateSessionTitleWithLlm', () => {
       provider: 'explicit-route',
       model: 'explicit-model',
     })
+    expect(adapter.requests[0]).not.toHaveProperty('contextWindow')
+    expect(adapter.requests[0]).not.toHaveProperty('bestTryContext')
   })
 
   it('requires every deployment limit and a complete optional route pair', () => {

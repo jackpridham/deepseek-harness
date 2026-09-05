@@ -207,7 +207,10 @@ describe('Web session model selection', () => {
       contextWindow: 262_144,
       bestTryContext: true,
     })
-    expect(saved).toHaveLength(1)
+    expect(saved).toEqual([
+      { provider: 'context-provider', model: 'logical', contextWindow: 65_536 },
+      { provider: 'context-provider', model: 'logical', contextWindow: 262_144, bestTryContext: true },
+    ])
     await ctx.systemPrompt.assemble()
     const resolved = await agentEvents(ctx, agent).waterfall(
       'agent/request', { turn: 1, step: 0, signal: new AbortController().signal },
