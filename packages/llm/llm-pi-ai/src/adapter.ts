@@ -299,7 +299,7 @@ async function readyWorker(
   const observed = object(worker.observed)
   const contextWindow = observed?.context
   const mode = observed?.mode
-  const route = observed?.model
+  const route = observed?.route
   const identity = observed?.worker_config_identity
   if (typeof route !== 'string' || typeof contextWindow !== 'number' || !Number.isInteger(contextWindow) || contextWindow <= 0 || typeof mode !== 'string' || typeof identity !== 'string') {
     throw new LlmError('managed worker snapshot is stale; refusing to use catalog defaults', 'WORKER_STATE_UNAVAILABLE')
