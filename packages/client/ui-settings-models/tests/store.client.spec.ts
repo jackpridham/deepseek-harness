@@ -41,6 +41,12 @@ const NAMESPACES = [
   },
 ]
 
+const CATALOG = [{
+  id: 'local', name: 'Local', models: [{ id: 'chat', name: 'Chat', active: true, context: {
+    defaultContextWindow: 32_768, contextWindows: [{ contextWindow: 32_768, available: true }],
+  } }],
+}]
+
 function api(overrides: {
   providers?: () => Promise<RpcResponse<{ providers: typeof DIRECTORY }>>
   describeSettings?: () => Promise<RpcResponse<{ writable: boolean; namespaces: typeof NAMESPACES }>>
@@ -50,7 +56,7 @@ function api(overrides: {
   const face = {
     llm: {
       providers: overrides.providers ?? (() => Promise.resolve(ok({ providers: DIRECTORY }))),
-      models: () => Promise.resolve(ok({ groups: [], failures: [] })),
+      models: () => Promise.resolve(ok({ groups: CATALOG, failures: [] })),
     },
     settings: {
       describe: overrides.describeSettings ?? (() => Promise.resolve(ok({ writable: true, hasDocument: false, namespaces: NAMESPACES }))),
@@ -99,6 +105,7 @@ describe('ModelsSettingsStore', () => {
     expect(byProvider.get('anthropic')?.apiKeyEnv).toBeUndefined()
     expect(byProvider.get('ghost')).toMatchObject({ configured: false, removable: false })
     expect(state.namespaces.get('llm-pi-ai')?.ns).toBe('llm-pi-ai')
+    expect(state.groups).toEqual(CATALOG)
   })
 
   it('degrades the credential badge, not the page, when the credential domain fails', async () => {
@@ -132,7 +139,7 @@ describe('ModelsSettingsStore', () => {
     expect(store.store.getSnapshot().credentialError).toBe('credential transport refusal')
   })
 
-  it('surfaces a directory failure and keeps the last good rows', async () => {
+  it('keeps catalog browsing available when the loopback-only provider directory fails', async () => {
     const { face, mirror } = api()
     const store = new ModelsSettingsStore(face, settingsSchema, mirror)
     await store.load()
@@ -140,7 +147,7 @@ describe('ModelsSettingsStore', () => {
     const broken = api({ providers: () => Promise.resolve(fail('directory down')) })
     const failing = new ModelsSettingsStore(broken.face, settingsSchema, broken.mirror)
     await failing.load()
-    expect(failing.store.getSnapshot()).toMatchObject({ status: 'error', error: 'directory down' })
+    expect(failing.store.getSnapshot()).toMatchObject({ status: 'ready', error: null, rows: [], groups: CATALOG })
     // The first store's snapshot is untouched by the second's failure.
     expect(store.store.getSnapshot().status).toBe('ready')
   })
@@ -215,14 +222,14 @@ describe('edge joins', () => {
     expect(store.store.getSnapshot().status).toBe('ready')
   })
 
-  it('surfaces a settings describe failure', async () => {
+  it('keeps catalog browsing available when settings describe is unavailable', async () => {
     const { face, mirror } = api({ describeSettings: () => Promise.resolve(fail('settings down')) })
     const store = new ModelsSettingsStore(face, settingsSchema, mirror)
     await store.load()
-    expect(store.store.getSnapshot()).toMatchObject({ status: 'error', error: 'settings down' })
+    expect(store.store.getSnapshot()).toMatchObject({ status: 'ready', error: null, writable: false, rows: [], groups: CATALOG })
   })
 
-  it('reports a terminally unavailable settings mirror precisely', async () => {
+  it('reads the catalog through a terminally unavailable settings mirror', async () => {
     const { face } = api()
     const store = new ModelsSettingsStore(
       face,
@@ -230,10 +237,7 @@ describe('edge joins', () => {
       new SettingsDescribeMirror(face, 'memory'),
     )
     await store.load()
-    expect(store.store.getSnapshot()).toMatchObject({
-      status: 'error',
-      error: 'settings are unavailable in this browser',
-    })
+    expect(store.store.getSnapshot()).toMatchObject({ status: 'ready', error: null, writable: false, rows: [], groups: CATALOG })
   })
 
   it('reuses a held settings view after its refresh fails', async () => {
@@ -255,12 +259,12 @@ describe('edge joins', () => {
     expect(store.store.getSnapshot().rows).toHaveLength(4)
   })
 
-  it('stringifies a non-Error load failure', async () => {
+  it('stringifies a non-Error provider-editor failure without hiding the catalog', async () => {
     // The wire can surface non-Error throwables; the store must stringify them.
     const { face, mirror } = api({ providers: async () => { throw 'plain refusal' } })
     const store = new ModelsSettingsStore(face, settingsSchema, mirror)
     await store.load()
-    expect(store.store.getSnapshot()).toMatchObject({ status: 'error', error: 'plain refusal' })
+    expect(store.store.getSnapshot()).toMatchObject({ status: 'ready', error: null, providerError: 'plain refusal' })
   })
 
   it('drops a stale successful response after a newer load finished', async () => {

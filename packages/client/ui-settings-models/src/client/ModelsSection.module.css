@@ -31,6 +31,119 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+.catalog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.catalogTitle,
+.catalogProvider {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.catalogGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.catalogModels {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.catalogModel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+}
+
+.catalogModelHeading {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.catalogModelName,
+.catalogModelId {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalogModelName {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.catalogModelState,
+.catalogModelId,
+.catalogContexts,
+.catalogFailure,
+.catalogEmpty {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.catalogModelState {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.catalogActions {
+  display: inline-flex;
+  flex: 1 1 100%;
+  min-width: 0;
+  gap: 4px;
+}
+
+.catalogActions:empty {
+  display: none;
+}
+
+.catalogPicker {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+}
+
+.catalogModelId {
+  min-width: 0;
+}
+
+.catalogContexts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+
+.catalogFailure {
+  color: var(--dsw-alias-state-error-primary);
+}
+
 .notice {
   margin: 0;
   font-size: 12px;
@@ -75,6 +188,7 @@
 .rowIdentity {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
 }
@@ -359,6 +473,7 @@
 .customizedSummary {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   width: fit-content;
   padding: 2px 4px;
@@ -464,6 +579,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto auto;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
 }
 

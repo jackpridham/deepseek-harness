@@ -1160,7 +1160,7 @@ describe('ModelsSection', () => {
 
   it('renders the load failure with a retry control', async () => {
     const face = scriptedFace()
-    face.face.llm.providers = vi.fn(() => Promise.resolve(fail('directory down', 'internal'))) as never
+    face.face.llm.models = vi.fn(() => Promise.resolve(fail('directory down', 'internal'))) as never
     const controller = new ModelsSettingsStore(
       face.face as unknown as WireFace, settingsSchema, new SettingsDescribeMirror(face.face as never))
     await controller.load()
@@ -1255,6 +1255,23 @@ describe('ModelsSection', () => {
       t={t}
     />)
     await screen.findByText('DeepSeek')
+  })
+
+  it('renders the composer-owned picker for the active ordinary chat', async () => {
+    const { face } = scriptedFace()
+    const controller = new ModelsSettingsStore(face as unknown as WireFace, settingsSchema, new SettingsDescribeMirror(face as never))
+    await controller.load()
+    const renderSlot = vi.fn(() => null)
+    render(<ModelsSection
+      controller={controller}
+      useSnapshot={bindSnapshotSelector(controller.store)}
+      useSessions={selector => selector({ current: 'session-1' as never, currentAddress: undefined } as never)}
+      api={face as never}
+      schema={settingsSchema}
+      t={t}
+      renderSlot={renderSlot as never}
+    />)
+    expect(renderSlot).toHaveBeenCalledWith('settings.models.selection', { sessionId: 'session-1' })
   })
 
   it('removes by unsetting the profile path, never by rebuilding the section', async () => {

@@ -102,6 +102,10 @@ export function apply(ctx: ClientContext): void {
     id: 'models',
     order: 10,
     label: () => t('nav'),
+    children: {
+      'settings.models.catalog.actions': { kind: 'list', scope: 'root' },
+      'settings.models.selection': { kind: 'single', scope: 'root' },
+    },
     inject: injected,
   }, ModelsSection))
   ctx.slots.inject('settings.onboarding', () => ctx.slots.register({

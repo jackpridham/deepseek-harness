@@ -14,9 +14,9 @@
 
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import type { IApiClient } from '@deepseek-ai/dsh-api-remotes/client'
+import type { IApiClient, ModelProviderGroup, SessionId } from '@deepseek-ai/dsh-api-remotes/client'
 import { Button, IconPlusOutline16, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
+import type { InjectFace, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { CustomProviderCard } from './CustomProviderCard.tsx'
 import { deriveKeyRef, messageOf, protocolChoices, providerUsable } from './store.ts'
 import type { ModelsSettingsStore, ProviderRow } from './store.ts'
@@ -41,13 +41,36 @@ export interface ModelsSectionInjected {
   t: (key: keyof typeof en) => string
 }
 
+/** Facts a catalog-row action needs; runtime control ownership remains with its registrant. */
+export interface ModelCatalogActionsOwnerProps {
+  /** Registered provider route. */
+  provider: string
+  /** Provider-owned model id. */
+  model: string
+  /** Adapter-advertised context choices, when bounded. */
+  context: ModelProviderGroup['models'][number]['context']
+  /** Whether an ordinary chat can select this model. */
+  selectable: boolean
+  /** Observed loaded state, when the adapter reports it. */
+  active: boolean | undefined
+}
+
+declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface SlotMap {
+    /** Optional controls rendered beside one Host catalog row. */
+    'settings.models.catalog.actions': { kind: 'list'; scope: 'root'; owner: ModelCatalogActionsOwnerProps }
+    /** Composer-owned picker rendered for Settings' existing active chat. */
+    'settings.models.selection': { kind: 'single'; scope: 'root'; owner: { sessionId: SessionId } }
+  }
+}
+
 /**
  * Props delivered by the slot outlet: the inject face spread flat (the
  * renderer erases the share boundary at the render call).
  */
-export type ModelsSectionProps = Partial<InjectFace<ModelsSectionInjected>>
+export type ModelsSectionProps = Partial<Pick<PropsRuntime<'settings.section'>, 'useSessions'> & InjectFace<ModelsSectionInjected> & PropsRenderSlots<'settings.models.catalog.actions' | 'settings.models.selection'>>
 
-type ModelsSectionFace = InjectFace<ModelsSectionInjected>
+type ModelsSectionFace = Pick<PropsRuntime<'settings.section'>, 'useSessions'> & InjectFace<ModelsSectionInjected> & PropsRenderSlots<'settings.models.catalog.actions' | 'settings.models.selection'>
 
 /** Provider identity shared by row actions and confirmation copy. */
 export interface ProviderIdentity {
@@ -85,6 +108,55 @@ function renderProviderEditor({ target, ...props }: ProviderEditorRenderProps): 
       {...target.declared === true ? { declared: true } : {}}
       {...props}
     />
+  )
+}
+
+/** Format an advertised context tier using the same compact unit as the composer. */
+function contextLabel(value: number): string {
+  return value % 1024 === 0 ? `${value / 1024}K` : value.toLocaleString()
+}
+
+/** One session-independent model inventory row. */
+function CatalogModel({ provider, model, renderSlot }: {
+  provider: string
+  model: ModelProviderGroup['models'][number]
+  renderSlot: ModelsSectionFace['renderSlot']
+}): ReactNode {
+  const state = model.active === true ? 'Loaded' : 'Status unavailable'
+  return (
+    <li className={styles['catalogModel']}>
+      <div className={styles['catalogModelHeading']}>
+        <span className={styles['catalogModelName']} title={model.name}>{model.name}</span>
+        <span className={styles['catalogModelState']}>{state}</span>
+        {model.selectable === false ? <span className={styles['rowTag']}>Backend inventory</span> : null}
+        <span className={styles['catalogActions']}>{renderSlot('settings.models.catalog.actions', {
+          provider,
+          model: model.id,
+          context: model.context,
+          selectable: model.selectable !== false,
+          active: model.active,
+        })}</span>
+      </div>
+      <span className={styles['catalogModelId']} title={model.id}>{model.id}</span>
+      {model.context === undefined ? null : <span className={styles['catalogContexts']}>Context: {model.context.contextWindows.map(option => `${contextLabel(option.contextWindow)}${option.contextWindow === model.context?.defaultContextWindow ? ' (default)' : ''}${option.available ? '' : ' (best try)'}`).join(', ')}</span>}
+    </li>
+  )
+}
+
+/** Session-independent catalog projection shared with the composer through `llm.models`. */
+function Catalog({ groups, failures, renderSlot }: { groups: readonly ModelProviderGroup[]; failures: readonly { id: string; name: string; message: string }[]; renderSlot: ModelsSectionFace['renderSlot'] }): ReactNode {
+  return (
+    <section className={styles['catalog']} aria-label="Model catalog">
+      <h3 className={styles['catalogTitle']}>Available models</h3>
+      {groups.map(group => (
+        <section className={styles['catalogGroup']} key={group.id}>
+          <h4 className={styles['catalogProvider']}>{group.name}</h4>
+          <ul className={styles['catalogModels']}>{group.models.map(model => <CatalogModel key={model.id} provider={group.id} model={model} renderSlot={renderSlot} />)}</ul>
+        </section>
+      ))}
+      {failures.map(failure => <p className={styles['catalogFailure']} key={failure.id}>{`${failure.name}: ${failure.message}`}</p>)}
+      {groups.length === 0 && failures.length === 0 ? <p className={styles['catalogEmpty']}>No models are currently advertised.</p> : null}
+    </section>
   )
 }
 
@@ -176,17 +248,22 @@ export function providerCopy(template: string, target: ProviderIdentity): string
  * @returns the section, or null while the shell has not injected yet.
  */
 export function ModelsSection(props: ModelsSectionProps): ReactNode {
-  const { controller, useSnapshot, api, schema, t } = props
+  const { controller, useSnapshot, useSessions, api, schema, t, renderSlot } = props
   if (
     controller === undefined || useSnapshot === undefined || api === undefined
     || schema === undefined || t === undefined
   ) return null
-  return <Loaded injected={{ controller, useSnapshot, api, schema, t }} />
+  // Direct component tests mount without the slot renderer; production always
+  // supplies the declared child binding.
+  const actions = renderSlot ?? (() => null)
+  const sessions: ModelsSectionFace['useSessions'] = useSessions ?? (() => undefined as never)
+  return <Loaded injected={{ controller, useSnapshot, useSessions: sessions, api, schema, t, renderSlot: actions }} />
 }
 
 function Loaded({ injected }: { injected: ModelsSectionFace }): ReactNode {
   const { controller, api, schema, t } = injected
   const state = injected.useSnapshot(snapshot => snapshot)
+  const session = injected.useSessions(snapshot => snapshot.currentAddress === undefined ? snapshot.current : undefined)
   const [editing, setEditing] = useState<EditorTarget | undefined>(undefined)
   const [adding, setAdding] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<EditorTarget | undefined>(undefined)
@@ -285,6 +362,9 @@ function Loaded({ injected }: { injected: ModelsSectionFace }): ReactNode {
     <div className={styles['section']}>
       <h2 className={styles['title']}>{t('title')}</h2>
       <p className={styles['intro']}>{t('intro')}</p>
+      {session === undefined ? null : <div className={styles['catalogPicker']}>{injected.renderSlot('settings.models.selection', { sessionId: session })}</div>}
+      <Catalog groups={state.groups} failures={state.modelFailures} renderSlot={injected.renderSlot} />
+      {state.providerError === null ? null : <p className={styles['notice']}>{state.providerError}</p>}
       {!state.writable && state.status === 'ready' ? <p className={styles['notice']}>{t('readOnly')}</p> : null}
       {savedIdentity === undefined
         ? null

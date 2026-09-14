@@ -7,7 +7,7 @@
  */
 
 import type {
-  ConfigurableProviderView, CredentialView, IApiClient, SettingsNamespaceView,
+  ConfigurableProviderView, CredentialView, IApiClient, ModelCatalogFailure, ModelProviderGroup, SettingsNamespaceView,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
@@ -41,8 +41,14 @@ export interface ModelsSettingsState {
   error: string | null
   /** Credential enrichment failure; provider/settings rows remain usable. */
   credentialError: string | null
+  /** Provider-editor directory/settings failure; catalog browsing remains usable. */
+  providerError: string | null
   /** Whether the settings provider accepts writes. */
   writable: boolean
+  /** Session-independent model catalog, available to trusted remote browsers. */
+  groups: readonly ModelProviderGroup[]
+  /** Provider-local catalog failures; healthy groups remain visible. */
+  modelFailures: readonly ModelCatalogFailure[]
   /** Every configurable provider joined with its configured/credential state. */
   rows: readonly ProviderRow[]
   /** Namespace views by ns, for the editor's schema/layers/secrets. */
@@ -108,7 +114,7 @@ function apiKeyEnvOf(
 export class ModelsSettingsStore {
   /** The snapshot the section renders from (uSES-safe store). */
   readonly store: SnapshotStore<ModelsSettingsState> = createSnapshotStore<ModelsSettingsState>({
-    status: 'idle', error: null, credentialError: null, writable: false, rows: [], namespaces: new Map(),
+    status: 'idle', error: null, credentialError: null, providerError: null, writable: false, groups: [], modelFailures: [], rows: [], namespaces: new Map(),
   })
 
   /** Latest load wins; an older response never overwrites a newer one. */
@@ -125,32 +131,24 @@ export class ModelsSettingsStore {
   ) {}
 
   /**
-   * Refresh the whole page snapshot: the provider directory and the mirror's
-   * settings answer in parallel, then one batched credential describe over
-   * every referenced ref. Provider failure or absence of an initial settings
-   * answer keeps the last good rows and surfaces an error; a failed settings
-   * refresh reuses the mirror's held view.
+   * Refresh the model catalog and, when available, the local provider editor
+   * data. Catalog browsing is safe for trusted remote browsers; settings and
+   * credential reads remain loopback-only and merely suppress editing there.
    * @returns nothing; the snapshot carries the outcome.
    */
   async load(): Promise<void> {
     const generation = ++this.generation
     this.store.update((s) => { s.status = 'loading'; s.error = null })
-    let providers: ConfigurableProviderView[]
-    let writable: boolean
-    let views: readonly SettingsNamespaceView[]
+    let providers: ConfigurableProviderView[] = []
+    let writable = false
+    let views: readonly SettingsNamespaceView[] = []
+    let groups: readonly ModelProviderGroup[]
+    let modelFailures: readonly ModelCatalogFailure[]
     try {
-      const [providersResponse] = await Promise.all([
-        this.api.llm.providers({}),
-        this.describeFace.ensure(),
-      ])
-      if (!providersResponse.result.ok) throw new Error(providersResponse.result.error.message)
-      const mirrored = this.describeFace.getSnapshot()
-      if (mirrored.view === undefined) {
-        throw new Error(mirrored.error ?? 'settings are unavailable in this browser')
-      }
-      providers = providersResponse.result.value.providers
-      writable = mirrored.view.writable
-      views = mirrored.view.namespaces
+      const modelsResponse = await this.api.llm.models({})
+      if (!modelsResponse.result.ok) throw new Error(modelsResponse.result.error.message)
+      groups = modelsResponse.result.value.groups
+      modelFailures = modelsResponse.result.value.failures
     } catch (error) {
       if (generation !== this.generation) return
       this.store.update((s) => {
@@ -158,6 +156,23 @@ export class ModelsSettingsStore {
         s.error = error instanceof Error ? error.message : String(error)
       })
       return
+    }
+    let providerError: string | null = null
+    try {
+      const providersResponse = await this.api.llm.providers({})
+      await this.describeFace.ensure()
+      const mirrored = this.describeFace.getSnapshot()
+      if (!providersResponse.result.ok) {
+        providerError = providersResponse.result.error.message
+      } else if (mirrored.view === undefined) {
+        providerError = mirrored.error ?? 'Provider settings are unavailable in this browser'
+      } else {
+        providers = providersResponse.result.value.providers
+        writable = mirrored.view.writable
+        views = mirrored.view.namespaces
+      }
+    } catch (error) {
+      providerError = messageOf(error)
     }
     const namespaces = new Map(views.map(view => [view.ns, view]))
     const rows: ProviderRow[] = providers.map((entry) => {
@@ -196,7 +211,10 @@ export class ModelsSettingsStore {
       s.status = 'ready'
       s.error = null
       s.credentialError = credentialError
+      s.providerError = providerError
       s.writable = writable
+      s.groups = groups
+      s.modelFailures = modelFailures
       s.rows = rows.map(row => ({
         ...row,
         ...row.apiKeyEnv !== undefined && credentials[row.apiKeyEnv] !== undefined

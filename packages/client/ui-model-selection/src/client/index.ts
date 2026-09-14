@@ -12,14 +12,15 @@
  * history outside the direct-parent continuation path.
  */
 // Type-only: the carrier types, the forwarded Host-event face and the ctx.remote merge.
-import type { ModelSelection, SessionModels } from '@deepseek-ai/dsh-api-remotes/client'
+import type { ModelSelection, SessionId, SessionModels } from '@deepseek-ai/dsh-api-remotes/client'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type { CommandUiContract, SelectOption } from '@deepseek-ai/dsh-client-ui-commands/client'
 // Type-only: pulls the ui-conversation SlotMap merge (the input.model seat).
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import { createElement } from 'react'
+import type { PropsLocale, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ModelDirectoryState } from './directory.ts'
 import { ModelDirectoryResolver } from './service.ts'
 import type { ModelSelectInjected } from './slots.ts'
@@ -32,7 +33,17 @@ export { ModelDirectoryResolver } from './service.ts'
 export type { ModelSelectInjected } from './slots.ts'
 export type { ModelKey } from './locales.ts'
 
+export interface SettingsModelSelectionOwnerProps {
+  /** Existing ordinary chat whose ModelDirectory owns this selection. */
+  sessionId: SessionId
+}
+
 declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface SlotMap {
+    /** Reuses the composer picker for an existing Settings-visible chat. */
+    'settings.models.selection': { kind: 'single'; scope: 'root'; owner: SettingsModelSelectionOwnerProps }
+  }
+
   interface LocaleNamespaceMap {
     /** The model selection surfaces' copy (/model popup + composer seat). */
     model: ModelKey
@@ -154,6 +165,31 @@ export function apply(ctx: ClientContext): void {
         },
       },
     }), 'ui-model-selection: /model contribution')
+  })
+
+  // Settings renders the exact same picker against an existing ordinary chat.
+  // It is a root child because Settings itself has no session scope; its owner
+  // supplies the session id rather than manufacturing one.
+  ctx.inject(['slots', 'modelDirectories'], (scope: ClientContext) => {
+    const models = scope.modelDirectories
+    const sessions = scope.sessions
+    scope.slots.inject('settings.models.selection', () => scope.slots.register({
+      name: 'settings.models.selection',
+      locale: NS,
+    }, ({ sessionId, t }: SettingsModelSelectionOwnerProps & PropsLocale<'model'>) => {
+      const directory = models.directoryFor(sessionId)
+      const available = sessions.subagentAddress(sessionId) === undefined
+      return createElement(ModelSelect, {
+        available,
+        directory: directory.store,
+        load: () => { if (available) directory.load().catch(() => { /* surfaced on the store */ }) },
+        select: (selection: ModelSelection) => available
+          ? directory.select(selection).then(() => true, () => false)
+          : Promise.resolve(false),
+        locked: false,
+        t,
+      })
+    }))
   })
 
   // Entry 2: the composer's named model seat over the SAME directory.
