@@ -467,9 +467,11 @@ export class PiAiAdapter extends LlmAdapter {
       const state = profile.modelStates.get(model)
       const runtime = profile.loadModes.get(model)
       const contexts = new Map(contextRoutes ?? [[resolvedModel.contextWindow, { model: resolvedModel.id, available: true }]])
-      if (loaded !== undefined && !contexts.has(loaded.contextWindow)) {
+      // A ready worker is selectable even when this capacity is best-try cold.
+      if (loaded !== undefined) {
         contexts.set(loaded.contextWindow, { model: loaded.model, available: true })
       }
+      const defaultContextWindow = loaded?.contextWindow ?? resolvedModel.contextWindow
       return {
         provider,
         id: model,
@@ -489,10 +491,10 @@ export class PiAiAdapter extends LlmAdapter {
             ...loaded.options === undefined ? {} : { options: loaded.options },
             identity: loaded.identity,
           } },
-        context: { contextWindow: loaded?.contextWindow ?? resolvedModel.contextWindow },
+        context: { contextWindow: defaultContextWindow },
         ...state?.selectable === false ? {} : {
           contextOptions: {
-            defaultContextWindow: loaded?.contextWindow ?? resolvedModel.contextWindow,
+            defaultContextWindow,
             contextWindows: [...contexts.entries()].map(([contextWindow, route]) => ({
               contextWindow,
               available: route.available,
@@ -537,7 +539,10 @@ export class PiAiAdapter extends LlmAdapter {
         'UNSUPPORTED_CONTEXT_WINDOW',
       )
     }
-    if (contextRoute?.available === false && options.bestTryContext !== true) {
+    // The ready worker is already serving this capacity. Its static catalog
+    // route may be best-try for a cold admission, but adopting it needs no
+    // best-try opt-in and remains protected by the exact worker check above.
+    if (contextRoute?.available === false && loaded?.contextWindow !== contextWindow && options.bestTryContext !== true) {
       throw new LlmError(
         contextRoute.unavailableReason
           ?? `pi-ai provider "${options.provider}" model "${options.model}" context window ${contextWindow} requires best-try mode`,

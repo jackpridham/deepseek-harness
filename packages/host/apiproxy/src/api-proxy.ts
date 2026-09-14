@@ -268,8 +268,9 @@ function ok<T>(request: RpcRequest<unknown>, value: T): RpcResponse<T> {
  * session-scoped `session.models` and host-scoped `llm.models`. Catalog
  * membership stays advisory: an unlisted session selection remains valid for
  * provider dispatch, but is not injected back into the selector after its
- * owning catalog stops advertising it. Per-provider failures ride `failures`
- * without failing the sound groups; groups that advertise nothing are dropped.
+ * owning catalog stops advertising it. Provider and individual-model failures
+ * ride `failures` without failing sound groups; groups that advertise nothing
+ * are dropped.
  */
 async function buildModelCatalog(ctx: Context): Promise<{
   groups: ModelProviderGroup[]
@@ -278,63 +279,82 @@ async function buildModelCatalog(ctx: Context): Promise<{
   const catalog = await Promise.all(ctx.llm.listProviders().map(async (provider) => {
     try {
       const models = await ctx.llm.listModels(provider.id)
-      const entries = await Promise.all(models.map(async (model) => {
-        const resolved = await ctx.llm.resolveModelInfo(provider.id, model.id)
-        const reasoning: ModelReasoning | undefined = resolved.reasoning === undefined
-          ? undefined
-          : {
-            efforts: resolved.reasoning.efforts.map(effort => ({
-              id: effort.id,
-              name: effort.name,
-              ...effort.description === undefined
+      const resolvedEntries = await Promise.all(models.map(async (model) => {
+        try {
+          const resolved = await ctx.llm.resolveModelInfo(provider.id, model.id)
+          const reasoning: ModelReasoning | undefined = resolved.reasoning === undefined
+            ? undefined
+            : {
+              efforts: resolved.reasoning.efforts.map(effort => ({
+                id: effort.id,
+                name: effort.name,
+                ...effort.description === undefined
+                  ? {}
+                  : { description: effort.description },
+              })),
+              ...resolved.reasoning.defaultEffort === undefined
                 ? {}
-                : { description: effort.description },
-            })),
-            ...resolved.reasoning.defaultEffort === undefined
-              ? {}
-              : { defaultEffort: resolved.reasoning.defaultEffort },
-          }
-        return {
-          id: model.id,
-          name: model.name,
-          ...model.description === undefined ? {} : { description: model.description },
-          ...model.selectable === undefined ? {} : { selectable: model.selectable },
-          ...model.active === undefined ? {} : { active: model.active },
-          ...resolved.contextOptions === undefined ? {} : {
-            context: {
-              defaultContextWindow: resolved.contextOptions.defaultContextWindow,
-              contextWindows: [...resolved.contextOptions.contextWindows],
+                : { defaultEffort: resolved.reasoning.defaultEffort },
+            }
+          return {
+            kind: 'model' as const,
+            model: {
+              id: model.id,
+              name: model.name,
+              ...model.description === undefined ? {} : { description: model.description },
+              ...model.selectable === undefined ? {} : { selectable: model.selectable },
+              ...model.active === undefined ? {} : { active: model.active },
+              ...resolved.contextOptions === undefined ? {} : {
+                context: {
+                  defaultContextWindow: resolved.contextOptions.defaultContextWindow,
+                  contextWindows: [...resolved.contextOptions.contextWindows],
+                },
+              },
+              ...reasoning === undefined ? {} : { reasoning },
+              ...resolved.maxTokens === undefined ? {} : { maxTokens: resolved.maxTokens },
+              ...resolved.defaultLoadMode === undefined ? {} : { defaultLoadMode: resolved.defaultLoadMode },
+              ...resolved.loadModes === undefined ? {} : { loadModes: resolved.loadModes.map(mode => ({
+                id: mode.id,
+                name: mode.name,
+                ...mode.inputModalities === undefined ? {} : { inputModalities: [...mode.inputModalities] },
+                ...mode.options === undefined ? {} : { options: mode.options.map(option => ({
+                  id: option.id,
+                  name: option.name,
+                  type: option.type,
+                  ...option.default === undefined ? {} : { default: option.default },
+                  ...option.choices === undefined ? {} : { choices: [...option.choices] },
+                })) },
+              })) },
+              ...resolved.loaded === undefined ? {} : { loaded: {
+                ...resolved.loaded.contextWindow === undefined ? {} : { contextWindow: resolved.loaded.contextWindow },
+                ...resolved.loaded.mode === undefined ? {} : { mode: resolved.loaded.mode },
+                ...resolved.loaded.options === undefined ? {} : { options: { ...resolved.loaded.options } },
+                identity: resolved.loaded.identity,
+              } },
             },
-          },
-          ...reasoning === undefined ? {} : { reasoning },
-          ...resolved.maxTokens === undefined ? {} : { maxTokens: resolved.maxTokens },
-          ...resolved.defaultLoadMode === undefined ? {} : { defaultLoadMode: resolved.defaultLoadMode },
-          ...resolved.loadModes === undefined ? {} : { loadModes: resolved.loadModes.map(mode => ({
-            id: mode.id,
-            name: mode.name,
-            ...mode.inputModalities === undefined ? {} : { inputModalities: [...mode.inputModalities] },
-            ...mode.options === undefined ? {} : { options: mode.options.map(option => ({
-              id: option.id,
-              name: option.name,
-              type: option.type,
-              ...option.default === undefined ? {} : { default: option.default },
-              ...option.choices === undefined ? {} : { choices: [...option.choices] },
-            })) },
-          })) },
-          ...resolved.loaded === undefined ? {} : { loaded: {
-            ...resolved.loaded.contextWindow === undefined ? {} : { contextWindow: resolved.loaded.contextWindow },
-            ...resolved.loaded.mode === undefined ? {} : { mode: resolved.loaded.mode },
-            ...resolved.loaded.options === undefined ? {} : { options: { ...resolved.loaded.options } },
-            identity: resolved.loaded.identity,
-          } },
+          }
+        } catch (error: unknown) {
+          const failure: ModelCatalogFailure = {
+            id: provider.id,
+            name: provider.name,
+            message: `Model "${model.id}": ${error instanceof Error ? error.message : String(error)}`,
+          }
+          return { kind: 'failure' as const, failure }
         }
       }))
       const group: ModelProviderGroup = {
         id: provider.id,
         name: provider.name,
-        models: entries,
+        models: resolvedEntries.flatMap(entry => entry.kind === 'model' ? [entry.model] : []),
       }
-      return { kind: 'group' as const, group }
+      const messages = resolvedEntries.flatMap(entry => entry.kind === 'failure' ? [entry.failure.message] : [])
+      return {
+        kind: 'group' as const,
+        group,
+        failures: messages.length === 0
+          ? []
+          : [{ id: provider.id, name: provider.name, message: messages.join('\n') }],
+      }
     } catch (error: unknown) {
       const failure: ModelCatalogFailure = {
         id: provider.id,
@@ -346,7 +366,7 @@ async function buildModelCatalog(ctx: Context): Promise<{
   }))
   return {
     groups: catalog.flatMap(item => item.kind === 'group' ? [item.group] : []).filter(group => group.models.length > 0),
-    failures: catalog.flatMap(item => item.kind === 'failure' ? [item.failure] : []),
+    failures: catalog.flatMap(item => item.kind === 'group' ? item.failures : [item.failure]),
   }
 }
 
