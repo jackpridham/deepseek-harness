@@ -2635,6 +2635,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
           crumbs: crumbsOf(target),
           entries: [...children].sort((a, b) => a.localeCompare(b))
             .map(name => ({ name, path: target === '/' ? `/${name}` : `${target}/${name}`, hidden: name.startsWith('.') })),
+          canCreate: true,
           // The fixture tree is tiny; no level ever reaches a backend bound.
           truncated: false,
         })
