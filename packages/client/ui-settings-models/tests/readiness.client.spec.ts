@@ -46,6 +46,7 @@ function state(overrides: Partial<ModelsSettingsState> = {}): ModelsSettingsStat
     status: 'ready',
     error: null,
     credentialError: null,
+    providerError: null,
     writable: true,
     groups: [],
     modelFailures: [],
