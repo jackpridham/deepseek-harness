@@ -11,6 +11,7 @@ import {
   CompactionId,
   ManualCompactionError,
   compactCheckpointSource,
+  isCompactCheckpointSource,
   toolPairingBalancedAfter,
   toolPairingBalancedBefore,
 } from '@deepseek-ai/dsh-compaction'
@@ -130,6 +131,15 @@ export function selectCompactableRange(
   const first = surfaceNodes[0]!
   // oxlint-disable-next-line typescript/no-non-null-assertion
   const cutoff = surfaceNodes[keepFromIdx - 1]!
+  const shadowedSeqs = surfaceNodes.slice(0, keepFromIdx)
+  // A second automatic pass can otherwise repeatedly summarize the checkpoint
+  // that the first pass just produced, while newer context stays in the
+  // retained tail. There is no history left in this candidate to reduce.
+  const hasNewHistory = shadowedSeqs.some((seq) => {
+    const event = session.events[seq]
+    return event?.type !== 'user/message' || !isCompactCheckpointSource(event.data.source)
+  })
+  if (!hasNewHistory) return null
   return { start: first, end: cutoff }
 }
 

@@ -8,7 +8,9 @@ A request could reserve an output cap without checking the assembled input again
 
 ## Decision
 
-The agent loop measures the actual durable surface with its provisional header before dispatch, reserves the configured safety margin, and resolves isolated preset compaction through the agent-presets service, falling back to the ordinary scoped service. It gives that compaction provider one opportunity to reduce history, then sends the smaller effective cap or fails without dispatch. `output/budget` records that admission.
+Image pressure uses the attachment's pixel dimensions with a coarse 16×16 spatial-patch estimate, not encoded file bytes treated as base64 text. Pricing transport bytes made a retained image alone exhaust a 128K context while repeated compaction could only shrink the older checkpoint. The estimate remains model-independent; actual vision tokenization and provider overflow handling remain authoritative.
+
+The agent loop measures the actual durable surface with its provisional header before dispatch, reserves the configured safety margin, and resolves isolated preset compaction through the agent-presets service, falling back to the ordinary scoped service. Pressure and output admission share range selection, which declines a candidate made only of existing compaction checkpoints. It gives the compaction provider bounded opportunities to reduce new history, then sends the smaller effective cap or fails without dispatch. `output/budget` records that admission.
 
 A capped response retains text and reasoning, drops every tool call from the assembled message, and appends one durable continuation input. At most three additional requests are scheduled per turn. A repeated or empty text/reasoning result, continuation error, direct `AgentOptions.maxTokens` cap, or exhausted continuation bound ends recovery. `output/continuation` records the outcome. A successful continuation is a completed turn; an unrecovered cap remains `max-tokens`.
 

@@ -40,9 +40,9 @@ export function estimateContent(blocks: readonly ContentBlock[]): number {
         tokens += estimateContent(block.content) + BLOCK_OVERHEAD
         break
       case 'image':
-        // Fallback estimate: adapters may serialize attachments as inline
-        // base64. This prices that wire payload, not model-native vision tokens.
-        tokens += Math.ceil((Math.ceil(block.attachment.bytes / 3) * 4) / CHARS_PER_TOKEN) + BLOCK_OVERHEAD
+        // Coarse spatial estimate: encoded PNG/JPEG/base64 bytes are transport,
+        // not text tokens. Exact vision pricing depends on the model processor.
+        tokens += Math.ceil(block.attachment.width / 16) * Math.ceil(block.attachment.height / 16) + BLOCK_OVERHEAD
         break
       default:
         // ContentBlockMap is merge-extensible; unknown blocks retain a

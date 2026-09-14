@@ -8,6 +8,8 @@ Replay-aware token measurement through the singleton `ctx.tokenMeter` service. I
 
 The estimator has no settings. It intentionally uses one fixed heuristic: four characters per token plus structural overhead for roles, blocks, and request-envelope fields. Any key is rejected; model capacity belongs to the adapter that owns an exact provider/model route and is available through `ctx.llm.resolveModelInfo().context`.
 
+Images use a coarse spatial estimate of one token per 16×16 pixel patch, rounded up along each axis, plus block overhead. Encoded file size and base64 transport length do not count as text tokens; PNG/JPEG compression must not change the same image's estimated context cost. This is an approximation, not a model-specific vision tokenizer.
+
 ## Measurement contract
 
 `ctx.tokenMeter` directly exposes two operations:
