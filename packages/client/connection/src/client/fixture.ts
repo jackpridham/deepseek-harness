@@ -3095,6 +3095,13 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
         models: fixtureModelGroups().flatMap(group => group.models.map(model => ({ id: model.id, name: model.name }))),
       }),
     },
+    vortex: {
+      models: {
+        snapshot: request => ok(request, { phase: 'unknown', outcome: 'unknown' }),
+        operation: request => ok(request, { phase: 'unknown', outcome: 'unknown' }),
+        operationStatus: request => ok(request, { phase: 'unknown', outcome: 'unknown' }),
+      },
+    },
     respond(message: ClientResponse): Promise<RpcReceipt> {
       // Same routing discipline as the host: rpcId first, then the payload's
       // audit correlation; a settled or unknown id is not-pending.
@@ -3267,6 +3274,9 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'llm.providers': return this.api.llm.providers(request)
       case 'llm.models': return this.api.llm.models(request)
       case 'llm.discoverModels': return this.api.llm.discoverModels(request, signal)
+      case 'vortex.models.snapshot': return this.api.vortex.models.snapshot(request)
+      case 'vortex.models.operation': return this.api.vortex.models.operation(request)
+      case 'vortex.models.operationStatus': return this.api.vortex.models.operationStatus(request)
     }
   }
 

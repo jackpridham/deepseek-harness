@@ -106,6 +106,7 @@ export {
   captureDelegatedPolicyOverrides,
   childSessionMeta,
   resolveChildAgentOptions,
+  resolveChildModelSelection,
   resolveChildDepth,
   SubagentDepthError,
 } from './child-agent.ts'

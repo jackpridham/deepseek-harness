@@ -7,6 +7,7 @@
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { AttachmentIdType, ImageAttachmentLimits, ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
+import type { ModelModality } from '@deepseek-ai/dsh-llm/types'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types'
 // The pure-type outlet: api/ is browser-importable, and the package root's
 // cordis Context merge (via dsh-agent) must not enter client aggregates.
@@ -100,6 +101,14 @@ export interface ModelSelection {
   bestTryContext?: boolean
   /** Adapter-owned reasoning effort; absence preserves adapter/provider default behavior. */
   reasoningEffort?: string
+  /** Catalog-declared worker load mode, or the catalog default when absent. */
+  mode?: string
+  /** Catalog-declared scalar serving options. */
+  options?: Record<string, string | number | boolean>
+  /** Explicit per-request output preference; `auto` uses the model default. */
+  outputLimit?: 'auto' | number
+  /** Backend worker identity observed when the selection was accepted. */
+  workerConfigIdentity?: string
 }
 
 /** One adapter-owned reasoning effort displayed for an exact model route. */
@@ -136,6 +145,39 @@ export interface ModelCatalogModel {
   context?: ModelContextChoices
   /** Exact-route reasoning metadata when the adapter exposes it. */
   reasoning?: ModelReasoning
+  /** Maximum output tokens this model accepts. */
+  maxTokens?: number
+  /** Default worker load mode. */
+  defaultLoadMode?: string
+  /** Load modes available for this model. */
+  loadModes?: ModelLoadMode[]
+  /** Current verified worker configuration, when one is loaded. */
+  loaded?: ModelLoadedWorker
+}
+
+/** One catalog-declared worker load mode. */
+export interface ModelLoadMode {
+  id: string
+  name: string
+  inputModalities?: ModelModality[]
+  options?: ModelLoadModeOption[]
+}
+
+/** One typed scalar control declared by a worker load mode. */
+export interface ModelLoadModeOption {
+  id: string
+  name: string
+  type: 'integer' | 'number' | 'string' | 'boolean'
+  default?: string | number | boolean
+  choices?: Array<string | number | boolean>
+}
+
+/** Fresh worker facts used to explicitly resolve a session/configuration conflict. */
+export interface ModelLoadedWorker {
+  contextWindow?: number
+  mode?: string
+  options?: Record<string, string | number | boolean>
+  identity: string
 }
 
 /** Exact-model context choices advertised by the owning adapter. */
@@ -186,10 +228,17 @@ export interface SessionModels {
    * blocks input must read this rather than the groups.
    */
   routable: boolean
+  /** A persisted selection differs from the worker now loaded for it. */
+  conflict?: ModelSelectionConflict
   /** Successfully loaded provider groups. */
   groups: ModelProviderGroup[]
   /** Provider-local failures; successful groups remain usable. */
   failures: ModelCatalogFailure[]
+}
+
+/** Explicit choices for reconciling a restored session with fresh worker facts. */
+export interface ModelSelectionConflict {
+  loaded: ModelLoadedWorker
 }
 
 /** A client-requested mutation of one still-pending queue item. */
@@ -325,8 +374,13 @@ export interface SessionsApi {
     contextWindow?: number
     bestTryContext?: boolean
     reasoningEffort?: string
+    mode?: string
+    options?: Record<string, string | number | boolean>
+    outputLimit?: 'auto' | number
+    expectedWorkerConfigIdentity?: string
+    resolution?: 'adopt-loaded' | 'switch-worker'
   }>):
-  Promise<RpcResponse<{ selected: ModelSelection }>>
+  Promise<RpcResponse<{ selected: ModelSelection; operationId?: string }>>
 
   /**
    * Renames a session: appends a `session/title` event with the `user`

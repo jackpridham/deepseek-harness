@@ -87,6 +87,121 @@ export const inject = ['llm']
 
 const NS = settingsNamespace('llm-pi-ai')
 
+type InferenceOperation = {
+  operationId: string
+  provider: string
+  model: string
+  contextWindow: number
+  mode?: string
+  options?: Readonly<Record<string, string | number | boolean>>
+  workerConfigIdentity?: string
+  sessionId?: string
+  phase: 'started' | 'settled'
+  outcome?: 'completed' | 'failed' | 'cancelled'
+  signal: AbortSignal
+}
+
+type ModelOperationStatus = {
+  operationStatus(request: { operationId: string }): Promise<{
+    phase: string
+    outcome: string
+    reason?: unknown
+    swap?: unknown
+  }>
+}
+type RequestLifecycle = {
+  observe(event: {
+    sessionId?: string
+    provider: string
+    model: string
+    contextWindow?: number
+    mode?: string
+    options?: Readonly<Record<string, string | number | boolean>>
+    workerConfigIdentity?: string
+    phase: string
+    outcome?: string
+    operationId?: string
+    reason?: { code?: string; message?: string }
+    swap?: unknown
+  }): Promise<void>
+}
+
+/** Poll a backend-owned inference operation only while its local stream is alive. */
+function inferenceLifecycleObserver(ctx: Context): (detail: InferenceOperation) => void {
+  const polls = new Map<string, AbortController>()
+  return (detail) => {
+    if (detail.phase === 'settled') {
+      const controller = polls.get(detail.operationId)
+      polls.delete(detail.operationId)
+      if (detail.sessionId !== undefined) {
+        const controls = ctx.get('modelControls' as never) as ModelOperationStatus | undefined
+        const lifecycle = ctx.get('llmRequestLifecycle' as never) as RequestLifecycle | undefined
+        if (lifecycle !== undefined) void (async () => {
+          try {
+            const status = controls === undefined ? undefined : await controls.operationStatus({ operationId: detail.operationId })
+            const terminal = status !== undefined && ['completed', 'failed', 'rejected', 'cancelled'].includes(status.phase)
+            const reason = typeof status?.reason === 'object' && status.reason !== null
+              ? status.reason as { code?: string; message?: string }
+              : undefined
+            await lifecycle.observe({
+              ...detail,
+              operationId: detail.operationId,
+              phase: terminal ? status.phase : detail.outcome ?? 'cancelled',
+              outcome: terminal ? status.outcome : detail.outcome ?? 'cancelled',
+              ...reason === undefined ? {} : { reason },
+              ...status?.swap === undefined ? {} : { swap: status.swap },
+            })
+          } catch {
+            await lifecycle.observe({
+              ...detail,
+              operationId: detail.operationId,
+              phase: detail.outcome ?? 'cancelled',
+              outcome: detail.outcome ?? 'cancelled',
+            })
+          }
+        })()
+      }
+      controller?.abort()
+      return
+    }
+    if (detail.sessionId === undefined) return
+    const controls = ctx.get('modelControls' as never) as ModelOperationStatus | undefined
+    const lifecycle = ctx.get('llmRequestLifecycle' as never) as RequestLifecycle | undefined
+    if (controls === undefined || lifecycle === undefined) return
+    const controller = new AbortController()
+    polls.set(detail.operationId, controller)
+    detail.signal.addEventListener('abort', () => controller.abort(), { once: true })
+    void (async () => {
+      await lifecycle.observe({ ...detail, phase: 'requesting', outcome: 'pending' })
+      let previous = 'requesting:pending'
+      while (!controller.signal.aborted) {
+        try {
+          const status = await controls.operationStatus({ operationId: detail.operationId })
+          const reason = typeof status.reason === 'object' && status.reason !== null
+            ? status.reason as { code?: string; message?: string }
+            : undefined
+          const current = `${status.phase}:${status.outcome}:${JSON.stringify(status.reason)}:${JSON.stringify(status.swap)}`
+          if (current !== previous) {
+            await lifecycle.observe({
+              ...detail,
+              operationId: detail.operationId,
+              phase: status.phase,
+              outcome: status.outcome,
+              ...reason === undefined ? {} : { reason },
+              ...status.swap === undefined ? {} : { swap: status.swap },
+            })
+            previous = current
+          }
+          if (['completed', 'failed', 'rejected', 'cancelled'].includes(status.phase)) return
+        } catch {
+          // A 404 before backend admission is normal; never influence inference retries.
+        }
+        await new Promise<void>(resolve => setTimeout(resolve, 250))
+      }
+    })().finally(() => polls.delete(detail.operationId))
+  }
+}
+
 /**
  * The registry captures these per route; a change here must re-register.
  * Sorted by provider so a settings document that merely reorders its keys is
@@ -257,10 +372,16 @@ export function apply(ctx: Context, config: Config): void {
       selectable: model.selectable ?? true,
       active: model.active ?? false,
     }] as const))
+    const loadModes = new Map(advertised.map(model => [model.id, {
+      ...model.defaultLoadMode === undefined ? {} : { defaultLoadMode: model.defaultLoadMode },
+      ...model.loadModes === undefined ? {} : { loadModes: model.loadModes },
+      ...model.loadRoutes === undefined ? {} : { loadRoutes: model.loadRoutes },
+      ...model.loaded === undefined ? {} : { loaded: model.loaded },
+    }] as const))
     const reasoningDefaults = new Map<string, ModelThinkingLevel>(advertised.flatMap(model => model.reasoning?.defaultEffort === undefined
       ? []
       : [[model.id, model.reasoning.defaultEffort as ModelThinkingLevel] as const]))
-    return { ...refreshed, contextRoutes, modelStates, reasoningDefaults }
+    return { ...refreshed, contextRoutes, modelStates, loadModes, reasoningDefaults }
   }
 
   const adapter = new PiAiAdapter({
@@ -268,6 +389,7 @@ export function apply(ctx: Context, config: Config): void {
     resolveApiKey,
     refreshModels,
     resolveAttachments: () => ctx.get('attachments'),
+    onInferenceOperation: inferenceLifecycleObserver(ctx),
     onReplayDegrade: ({ provider, model, reason }) => {
       ctx.logger.warn(
         `llm-pi-ai: unusable replay state on assistant history for route "${provider}/${model}";`

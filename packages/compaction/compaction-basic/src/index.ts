@@ -9,7 +9,7 @@ import z from '@deepseek-ai/schemastery'
 import { CompactionEngine, ManualCompactionError } from '@deepseek-ai/dsh-compaction'
 import type { CompactionResult, CompactionTrigger } from '@deepseek-ai/dsh-compaction'
 import type { TokenMeter } from '@deepseek-ai/dsh-token-meter'
-import type { Session } from '@deepseek-ai/dsh-session'
+import type { EpochHeader, Session } from '@deepseek-ai/dsh-session'
 import { CONTEXT_WINDOW_EXCEEDED_CODE, assertNever } from '@deepseek-ai/dsh-llm'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
@@ -329,6 +329,47 @@ export class BasicCompactionEngine extends CompactionEngine {
       `compaction still above threshold after ${spec.compactionRetries + 1} compaction attempts `
       + `(${measurement.totalTokens} estimated tokens >= threshold ${spec.thresholdTokens})`,
     )
+  }
+
+  /**
+   * Compact against an upcoming assembled request rather than the prior header.
+   * @param agent - session owning the history to reduce.
+   * @param header - the exact next request envelope being admitted.
+   * @param contextWindow - resolved selected context capacity for that request.
+   * @param reserveTokens - output allowance plus estimator safety margin.
+   * @param signal - live turn cancellation signal.
+   * @returns the final replacement, or `null` when no safe region exists.
+   */
+  async compactForOutputBudget(
+    agent: Agent,
+    header: EpochHeader,
+    contextWindow: number,
+    reserveTokens: number,
+    signal: AbortSignal,
+  ): Promise<CompactionResult | null> {
+    const target = { provider: header.config.provider, model: header.config.model }
+    const policy = resolveTargetPolicy(this.config, target)
+    const spec = resolveCompactSpec(policy, contextWindow)
+    const threshold = contextWindow - reserveTokens
+    if (threshold <= 0) return null
+    const meter = this.ctx.tokenMeter
+    let measurement = meter.measure(agent.session, header)
+    if (measurement.totalTokens < threshold) return null
+    assertNoActiveCompaction(agent.session, 'output budget compaction')
+    const prune = this.ctx.get('toolResultPruner')
+    if (prune !== undefined) {
+      prune.pruneSession(agent.session)
+      measurement = meter.measure(agent.session, header)
+    }
+    let result: CompactionResult | null = null
+    for (let attempt = 0; attempt <= spec.compactionRetries; attempt += 1) {
+      const range = selectCompactableRange(agent.session, measurement, spec.retainTokens)
+      if (range === null) return result
+      result = await this.compactRegion(range.start, range.end, agent, signal)
+      measurement = meter.measure(agent.session, header)
+      if (measurement.totalTokens < threshold) return result
+    }
+    throw new Error(`compaction cannot reserve ${reserveTokens} output tokens in a ${contextWindow}-token context`)
   }
 
   /**

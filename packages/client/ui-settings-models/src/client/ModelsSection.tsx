@@ -122,12 +122,10 @@ function CatalogModel({ provider, model, renderSlot }: {
   model: ModelProviderGroup['models'][number]
   renderSlot: ModelsSectionFace['renderSlot']
 }): ReactNode {
-  const state = model.active === true ? 'Loaded' : 'Status unavailable'
   return (
     <li className={styles['catalogModel']}>
       <div className={styles['catalogModelHeading']}>
         <span className={styles['catalogModelName']} title={model.name}>{model.name}</span>
-        <span className={styles['catalogModelState']}>{state}</span>
         {model.selectable === false ? <span className={styles['rowTag']}>Backend inventory</span> : null}
         <span className={styles['catalogActions']}>{renderSlot('settings.models.catalog.actions', {
           provider,
@@ -151,7 +149,7 @@ function Catalog({ groups, failures, renderSlot }: { groups: readonly ModelProvi
       {groups.map(group => (
         <section className={styles['catalogGroup']} key={group.id}>
           <h4 className={styles['catalogProvider']}>{group.name}</h4>
-          <ul className={styles['catalogModels']}>{group.models.map(model => <CatalogModel key={model.id} provider={group.id} model={model} renderSlot={renderSlot} />)}</ul>
+          <ul className={styles['catalogModels']}>{[...group.models].sort((a, b) => Number(a.selectable === false) - Number(b.selectable === false)).map(model => <CatalogModel key={model.id} provider={group.id} model={model} renderSlot={renderSlot} />)}</ul>
         </section>
       ))}
       {failures.map(failure => <p className={styles['catalogFailure']} key={failure.id}>{`${failure.name}: ${failure.message}`}</p>)}

@@ -152,6 +152,10 @@ export const modelSelectionSchema = z.object({
   contextWindow: z.number().int().positive().optional(),
   bestTryContext: z.boolean().optional(),
   reasoningEffort: z.string().min(1).optional(),
+  mode: z.string().min(1).optional(),
+  options: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+  outputLimit: z.union([z.literal('auto'), z.number().int().positive()]).optional(),
+  workerConfigIdentity: z.string().min(1).optional(),
 }) satisfies z.ZodType<Wire<ModelSelection>>
 
 /** One adapter-owned reasoning effort. */
@@ -189,6 +193,26 @@ export const modelCatalogModelSchema = z.object({
   active: z.boolean().optional(),
   context: modelContextChoicesSchema.optional(),
   reasoning: modelReasoningSchema.optional(),
+  maxTokens: z.number().int().positive().optional(),
+  defaultLoadMode: z.string().min(1).optional(),
+  loadModes: z.array(z.object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    inputModalities: z.array(z.enum(['text', 'image'])).optional(),
+    options: z.array(z.object({
+      id: z.string().min(1),
+      name: z.string().min(1),
+      type: z.enum(['integer', 'number', 'string', 'boolean']),
+      default: z.union([z.string(), z.number(), z.boolean()]).optional(),
+      choices: z.array(z.union([z.string(), z.number(), z.boolean()])).optional(),
+    })).optional(),
+  })).optional(),
+  loaded: z.object({
+    contextWindow: z.number().int().positive().optional(),
+    mode: z.string().min(1).optional(),
+    options: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+    identity: z.string().min(1),
+  }).optional(),
 }) satisfies z.ZodType<Wire<ModelCatalogModel>>
 
 /** One successfully loaded provider group. */
@@ -269,6 +293,14 @@ export const sessionModelsRequestSchema = z.object({
 export const sessionModelsValueSchema = z.object({
   current: modelSelectionSchema,
   routable: z.boolean(),
+  conflict: z.object({
+    loaded: z.object({
+      contextWindow: z.number().int().positive().optional(),
+      mode: z.string().min(1).optional(),
+      options: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+      identity: z.string().min(1),
+    }),
+  }).optional(),
   groups: z.array(modelProviderGroupSchema),
   failures: z.array(modelCatalogFailureSchema),
 }) satisfies z.ZodType<Wire<ResponseValue<'session.models'>>>
@@ -281,11 +313,17 @@ export const sessionSelectModelRequestSchema = z.object({
   contextWindow: z.number().int().positive().optional(),
   bestTryContext: z.boolean().optional(),
   reasoningEffort: z.string().min(1).optional(),
+  mode: z.string().min(1).optional(),
+  options: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+  outputLimit: z.union([z.literal('auto'), z.number().int().positive()]).optional(),
+  expectedWorkerConfigIdentity: z.string().min(1).optional(),
+  resolution: z.enum(['adopt-loaded', 'switch-worker']).optional(),
 }) satisfies z.ZodType<Wire<RequestPayload<'session.selectModel'>>>
 
 /** session.selectModel response value. */
 export const sessionSelectModelValueSchema = z.object({
   selected: modelSelectionSchema,
+  operationId: z.string().min(1).optional(),
 }) satisfies z.ZodType<Wire<ResponseValue<'session.selectModel'>>>
 
 /** ContentBlock passthrough: core is merge-extensible — the type discriminant envelope is strict, the rest stays wide. */

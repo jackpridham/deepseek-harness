@@ -158,6 +158,10 @@ export function apply(ctx: Context, config: Config = {}, internals: RetryInterna
     next: () => Promise<RequestErrorAction>,
   ): Promise<RequestErrorAction> {
     if (policy === undefined) return next()
+    // Capacity cannot change without an explicit catalog-authorized swap;
+    // even an always policy must not resubmit the identical request forever.
+    if (failure.code === 'GPU_CAPACITY_INSUFFICIENT' || failure.code === 'gpu_capacity_insufficient'
+      || failure.code === 'WORKER_CONFIG_IDENTITY_CONFLICT' || failure.code === 'worker_config_identity_conflict') return next()
     if (policy.mode === 'always') {
       if (signal.aborted || lifetime.signal.aborted) return
       const fusedSignal = AbortSignal.any([signal, lifetime.signal])

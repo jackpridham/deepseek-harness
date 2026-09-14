@@ -12,6 +12,19 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { SubagentStopReason } from '@deepseek-ai/dsh-subagent'
 
+/** Complete request selection installed on SDK-created sessions before their first prompt. */
+export interface SdkModelSelection {
+  provider: string
+  model: string
+  contextWindow?: number
+  bestTryContext?: boolean
+  reasoningEffort?: string
+  mode?: string
+  options?: Record<string, string | number | boolean>
+  outputLimit?: 'auto' | number
+  workerConfigIdentity?: string
+}
+
 /** Parameters for the process-wide SDK handshake. */
 export interface InitializeParams {
   /** Working directory recorded on every SDK-created session's header. */
@@ -22,6 +35,8 @@ export interface InitializeParams {
   model: string
   /** Optional positive output-token cap inherited by SDK-created agents and their in-process descendants. */
   maxTokens?: number
+  /** Session selection applied before the first SDK prompt. */
+  selection?: SdkModelSelection
 }
 
 /** Wire-stable server identity returned by initialization. */

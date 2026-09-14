@@ -98,6 +98,22 @@ class SdkSubagentProvider implements SubagentProvider {
   constructor(readonly name: string, private readonly ctx: Context, private readonly config: ResolvedConfig) {}
 
   start(request: SubagentStartRequest) {
+    const parentHeader = request.parent.session.requestHeader()
+    const parentConfig = parentHeader?.config
+    const selection = parentConfig === undefined ? undefined : {
+      provider: this.config.provider,
+      model: this.config.model,
+      ...parentConfig.contextWindow === undefined ? {} : { contextWindow: parentConfig.contextWindow },
+      ...parentConfig.bestTryContext === undefined ? {} : { bestTryContext: parentConfig.bestTryContext },
+      ...parentConfig.reasoningEffort === undefined ? {} : { reasoningEffort: String(parentConfig.reasoningEffort) },
+      ...parentConfig.mode === undefined ? {} : { mode: parentConfig.mode },
+      ...parentConfig.options === undefined ? {} : { options: parentConfig.options },
+      ...this.config.maxTokens === undefined
+        ? parentHeader?.adapterDefaults?.maxTokens === true || parentConfig.maxTokens === undefined
+          ? { outputLimit: 'auto' as const }
+          : { outputLimit: parentConfig.maxTokens }
+        : {},
+    }
     const spec: SdkRunSpec = {
       command: this.config.command,
       args: this.config.args,
@@ -105,6 +121,7 @@ class SdkSubagentProvider implements SubagentProvider {
       provider: this.config.provider,
       model: this.config.model,
       ...this.config.maxTokens === undefined ? {} : { maxTokens: this.config.maxTokens },
+      ...selection === undefined ? {} : { selection },
       env: this.config.env,
       shutdownTimeoutMs: this.config.shutdownTimeoutMs,
       disposeEofGraceMs: this.config.disposeEofGraceMs,

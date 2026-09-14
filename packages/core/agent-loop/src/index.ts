@@ -138,6 +138,15 @@ function resolveMaxParallelToolCalls(value: number | undefined): number {
   return maxParallelToolCalls
 }
 
+/** Reserve a small configurable buffer for provider/tokenizer disagreement. */
+function resolveOutputSafetyMargin(value: number | undefined): number {
+  const outputSafetyMargin = value ?? 256
+  if (!Number.isSafeInteger(outputSafetyMargin) || outputSafetyMargin < 0) {
+    throw new Error('outputSafetyMargin must be a non-negative safe integer')
+  }
+  return outputSafetyMargin
+}
+
 /** Reject an output-token cap that cannot be represented exactly on the request wire. */
 function assertAgentOptions(options: AgentOptions): void {
   if (options.maxTokens !== undefined
@@ -258,6 +267,8 @@ export interface Config {
    * omission defaults to {@link DEFAULT_MAX_PARALLEL_TOOL_CALLS}.
    */
   maxParallelToolCalls?: number
+  /** Tokens held back from the context window during output admission. */
+  outputSafetyMargin?: number
   /** Agents created or resumed at plugin startup. */
   agents: (AgentOptions & {
     /** Stable config label used in logs and as the fresh combined-id prefix. */
@@ -272,7 +283,7 @@ export interface Config {
 }
 
 /** Agent-loop configuration after defaults and load-time validation. */
-type ResolvedConfig = Config & { maxParallelToolCalls: number }
+type ResolvedConfig = Config & { maxParallelToolCalls: number; outputSafetyMargin: number }
 
 /** Reject self-contained identity conflicts before any configured agent starts. */
 function validateConfiguredAgents(agents: Config['agents']): void {
@@ -299,6 +310,7 @@ export class AgentLoop extends Service implements AgentFactory {
   /** Runtime schema for declarative agents. */
   static Config = z.object({
     maxParallelToolCalls: z.number().step(1).min(1).default(DEFAULT_MAX_PARALLEL_TOOL_CALLS),
+    outputSafetyMargin: z.number().step(1).min(0).max(Number.MAX_SAFE_INTEGER).default(256),
     agents: z.array(z.object({
       id: z.string().required(),
       sessionId: z.string().min(1),
@@ -324,6 +336,7 @@ export class AgentLoop extends Service implements AgentFactory {
     let source: () => AgentLoopSettings = () => entry
     this.config = {
       ...config,
+      outputSafetyMargin: resolveOutputSafetyMargin(config.outputSafetyMargin),
       agents: applyLauncherIdentities(config.agents, ctx.get(CONFIGURED_AGENT_IDENTITIES_KEY)),
       // Read through on every scheduler decision: `tool-calls.ts` destructures
       // this at the start of each group, so a committed change caps the next

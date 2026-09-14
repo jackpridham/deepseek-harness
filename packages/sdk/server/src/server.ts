@@ -7,7 +7,8 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { resolve } from 'node:path'
-import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
+import { installModelSelection } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { carrierKeyOf, type Scoped } from '@deepseek-ai/dsh-scope'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -23,6 +24,7 @@ import type {
   SessionPromptResult,
   SubagentFinishedNotification,
   SubagentStartedNotification,
+  SdkModelSelection,
 } from '@deepseek-ai/dsh-sdk-protocol'
 
 interface SessionRecord {
@@ -55,6 +57,7 @@ export class HarnessSdkJsonRpcServer {
   private provider = 'deepseek-official'
   private model = 'deepseek-official'
   private maxTokens: number | undefined
+  private selection: SdkModelSelection | undefined
   private llmFiber: { dispose(): Promise<void> } | undefined
   private readonly sessions = new Map<string, SessionRecord>()
   private readonly sessionCreations = new Map<string, Promise<SessionRecord>>()
@@ -120,6 +123,15 @@ export class HarnessSdkJsonRpcServer {
     if (!this.hasAdapterFor(this.provider)) {
       if (this.provider !== 'deepseek-official') throw new Error(`no adapter registered for provider "${this.provider}"`)
       this.llmFiber = await this.ctx.plugin(LlmDeepSeek, {})
+    }
+    const selected = params.selection
+    if (selected?.outputLimit !== undefined && selected.outputLimit !== 'auto') {
+      const info = await this.ctx.llm.resolveModelInfo(selected.provider, selected.model)
+      this.selection = info.maxTokens !== undefined && selected.outputLimit > info.maxTokens
+        ? { ...selected, outputLimit: 'auto' }
+        : selected
+    } else {
+      this.selection = selected
     }
     return { serverInfo: { name: 'deepseek-harness-sdk-runtime', version: '0.0.1' } }
   }
@@ -220,14 +232,21 @@ export class HarnessSdkJsonRpcServer {
     // rows in the host plane, so this agent reads them from the global layer. A
     // deployment that configures a roster has to join one here first
     // (@deepseek-ai/dsh-agent-presets README, "Composing a child agent").
+    const selection = this.selection
     const handle = await this.ctx.agents.create({
       sessionId: SessionId(sessionId),
       meta: { cwd: this.cwd },
       agentOptions: {
-        provider: this.provider,
-        model: this.model,
+        provider: selection?.provider ?? this.provider,
+        model: selection?.model ?? this.model,
         ...this.maxTokens === undefined ? {} : { maxTokens: this.maxTokens },
       },
+      ...selection === undefined ? {} : { setup: (agentCtx: Context) => {
+        installModelSelection(agentCtx, {
+          current: selection as ModelSelection,
+          assembled: undefined,
+        } satisfies ModelSelectionRef)
+      } },
     })
     const rec: SessionRecord = { handle }
     this.sessions.set(sessionId, rec)

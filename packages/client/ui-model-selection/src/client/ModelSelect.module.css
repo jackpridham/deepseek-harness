@@ -247,3 +247,42 @@
   flex: 0 0 18px;
   color: var(--dsw-alias-label-primary);
 }
+
+.outputForm {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  padding: 8px 12px;
+}
+.outputForm label {
+  display: grid;
+  gap: 4px;
+  color: var(--dsw-alias-label-secondary);
+}
+.outputForm input {
+  width: 10rem;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-base);
+}
+
+.conflict {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  width: min(420px, 80vw);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  z-index: 10;
+}

@@ -624,6 +624,28 @@ export class LlmRuntime extends Service {
         ...inputModalities === undefined ? {} : { inputModalities },
         ...model.selectable === undefined ? {} : { selectable: model.selectable },
         ...model.active === undefined ? {} : { active: model.active },
+        ...model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens },
+        ...model.defaultLoadMode === undefined ? {} : { defaultLoadMode: model.defaultLoadMode },
+        ...model.loadModes === undefined ? {} : {
+          loadModes: model.loadModes.map(mode => ({
+            ...mode,
+            ...mode.options === undefined ? {} : { options: mode.options.map(option => ({ ...option })) },
+          })),
+        },
+        ...model.loadRoutes === undefined ? {} : {
+          loadRoutes: model.loadRoutes.map(route => ({
+            ...route,
+            ...route.options === undefined ? {} : { options: { ...route.options } },
+          })),
+        },
+        ...model.loaded === undefined ? {} : {
+          loaded: {
+            ...model.loaded.contextWindow === undefined ? {} : { contextWindow: model.loaded.contextWindow },
+            ...model.loaded.mode === undefined ? {} : { mode: model.loaded.mode },
+            ...model.loaded.options === undefined ? {} : { options: { ...model.loaded.options } },
+            identity: model.loaded.identity,
+          },
+        },
         ...contextOptions === undefined ? {} : {
           contextOptions: {
             defaultContextWindow: contextOptions.defaultContextWindow,
@@ -702,12 +724,28 @@ export class LlmRuntime extends Service {
     // Capability metadata rides through: an explicit modality omission is
     // negative capability downstream preflights act on (image admission).
     const inputModalities = this.detachedModalities(resolved.inputModalities)
+    const maxTokens = resolved.maxTokens
+    if (maxTokens !== undefined && (!Number.isSafeInteger(maxTokens) || maxTokens <= 0)) {
+      throw new LlmError(
+        `adapter returned invalid maxTokens for provider "${provider}" model "${model}"`,
+        'INVALID_MODEL_MAX_TOKENS',
+      )
+    }
     const defaultMaxTokens = resolved.defaultMaxTokens
     if (defaultMaxTokens !== undefined
       && (!Number.isSafeInteger(defaultMaxTokens) || defaultMaxTokens <= 0)) {
       throw new LlmError(
         `adapter returned invalid default maxTokens for provider "${provider}" model "${model}"`,
         'INVALID_MODEL_MAX_TOKENS',
+      )
+    }
+    const loaded = resolved.loaded
+    if (loaded !== undefined && (typeof loaded.identity !== 'string' || loaded.identity.length === 0
+      || (loaded.contextWindow !== undefined && (!Number.isSafeInteger(loaded.contextWindow) || loaded.contextWindow <= 0))
+      || (loaded.mode !== undefined && typeof loaded.mode !== 'string'))) {
+      throw new LlmError(
+        `adapter returned invalid loaded worker metadata for provider "${provider}" model "${model}"`,
+        'INVALID_MODEL_INFO',
       )
     }
     const info: LlmResolvedModelInfo = {
@@ -725,7 +763,29 @@ export class LlmRuntime extends Service {
         },
       },
       ...context === undefined ? {} : { context: { contextWindow: context.contextWindow } },
+      ...maxTokens === undefined ? {} : { maxTokens },
       ...defaultMaxTokens === undefined ? {} : { defaultMaxTokens },
+      ...resolved.defaultLoadMode === undefined ? {} : { defaultLoadMode: resolved.defaultLoadMode },
+      ...resolved.loadModes === undefined ? {} : {
+        loadModes: resolved.loadModes.map(mode => ({
+          ...mode,
+          ...mode.options === undefined ? {} : { options: mode.options.map(option => ({ ...option })) },
+        })),
+      },
+      ...resolved.loadRoutes === undefined ? {} : {
+        loadRoutes: resolved.loadRoutes.map(route => ({
+          ...route,
+          ...route.options === undefined ? {} : { options: { ...route.options } },
+        })),
+      },
+      ...loaded === undefined ? {} : {
+        loaded: {
+          ...loaded.contextWindow === undefined ? {} : { contextWindow: loaded.contextWindow },
+          ...loaded.mode === undefined ? {} : { mode: loaded.mode },
+          ...loaded.options === undefined ? {} : { options: { ...loaded.options } },
+          identity: loaded.identity,
+        },
+      },
     }
     const reasoning = resolved.reasoning
     if (reasoning === undefined) return info
@@ -798,9 +858,19 @@ export class LlmRuntime extends Service {
         'MODEL_NOT_SELECTABLE',
       )
     }
-    const defaulted = config.maxTokens === undefined && info.defaultMaxTokens !== undefined
+    let defaulted = config.maxTokens === undefined && info.defaultMaxTokens !== undefined
       ? { ...config, maxTokens: info.defaultMaxTokens }
       : config
+    if (config.maxTokens !== undefined && info.maxTokens !== undefined && config.maxTokens > info.maxTokens) {
+      throw new LlmError(
+        `provider "${config.provider}" model "${config.model}" does not support maxTokens ${config.maxTokens}`,
+        'UNSUPPORTED_MAX_TOKENS',
+      )
+    }
+    if (config.maxTokens === undefined && defaulted.maxTokens !== undefined && info.maxTokens !== undefined
+      && defaulted.maxTokens > info.maxTokens) {
+      defaulted = { ...defaulted, maxTokens: info.maxTokens }
+    }
     const reasoning = info.reasoning
     const requested = defaulted.reasoningEffort
     let resolvedConfig = defaulted
@@ -829,6 +899,17 @@ export class LlmRuntime extends Service {
         `provider "${config.provider}" model "${config.model}" does not advertise selectable context windows`,
         'UNSUPPORTED_CONTEXT_WINDOW',
       )
+    }
+    if (info.loaded !== undefined) {
+      if (resolvedConfig.mode === undefined && info.loaded.mode !== undefined) {
+        resolvedConfig = { ...resolvedConfig, mode: info.loaded.mode }
+      }
+      if (resolvedConfig.options === undefined && info.loaded.options !== undefined) {
+        resolvedConfig = { ...resolvedConfig, options: info.loaded.options }
+      }
+      if (resolvedConfig.workerConfigIdentity === undefined) {
+        resolvedConfig = { ...resolvedConfig, workerConfigIdentity: info.loaded.identity }
+      }
     }
     if (reasoning === undefined) {
       if (requested !== undefined) {

@@ -7,6 +7,7 @@
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { CallId, ProviderRequestId, ReasoningEffortId } from './brand.ts'
+import type { ModelServingOption } from './call-config.ts'
 import type { Message } from './message.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -237,6 +238,49 @@ export interface LlmDiscoveredModel {
   reasoning?: LlmDiscoveredReasoningInfo
   /** Maximum output tokens, when disclosed. */
   maxTokens?: number
+  /** Catalog default worker load mode. */
+  defaultLoadMode?: string
+  /** Catalog-declared worker load modes. */
+  loadModes?: readonly LlmLoadMode[]
+  /** Exact backend routes for context/mode/option selections. */
+  loadRoutes?: readonly LlmLoadRoute[]
+  /** Verified worker configuration currently loaded for this model. */
+  loaded?: LlmLoadedWorker
+}
+
+/** One selectable worker load mode. */
+export interface LlmLoadMode {
+  id: string
+  name: string
+  /** Modalities accepted while this serving mode is active. */
+  inputModalities?: readonly ModelModality[]
+  options?: readonly LlmLoadModeOption[]
+}
+
+/** One typed scalar control accepted by a worker load mode. */
+export interface LlmLoadModeOption {
+  id: string
+  name: string
+  type: 'integer' | 'number' | 'string' | 'boolean'
+  default?: ModelServingOption
+  choices?: readonly ModelServingOption[]
+}
+
+/** One backend-rendered dispatch route for a worker configuration. */
+export interface LlmLoadRoute {
+  model: string
+  contextWindow: number
+  mode: string
+  options?: Readonly<Record<string, ModelServingOption>>
+  identity: string
+}
+
+/** Fresh backend worker facts, distinct from the session selection. */
+export interface LlmLoadedWorker {
+  contextWindow?: number
+  mode?: string
+  options?: Readonly<Record<string, ModelServingOption>>
+  identity: string
 }
 
 /** Endpoint-advertised reasoning choices for one logical model. */
@@ -289,6 +333,16 @@ export interface LlmModelInfo {
   active?: boolean
   /** Bounded context choices, with the model default identified separately. */
   contextOptions?: LlmModelContextOptions
+  /** Maximum output tokens the adapter/model can accept. */
+  maxTokens?: number
+  /** Catalog default worker load mode. */
+  defaultLoadMode?: string
+  /** Catalog-declared worker load modes. */
+  loadModes?: readonly LlmLoadMode[]
+  /** Exact backend routes for context/mode/option selections. */
+  loadRoutes?: readonly LlmLoadRoute[]
+  /** Freshly observed loaded worker facts. */
+  loaded?: LlmLoadedWorker
 }
 
 /** Advertised context metadata for one exact logical model route. */
@@ -414,6 +468,12 @@ export interface GenerateOptions {
   contextWindow?: number
   /** Permit one advertised host-constrained context tier for a best-effort request. */
   bestTryContext?: boolean
+  /** Catalog-declared worker load mode selected for this request. */
+  mode?: string
+  /** Catalog-declared serving options selected for this request. */
+  options?: Readonly<Record<string, ModelServingOption>>
+  /** Backend worker identity expected at admission. */
+  workerConfigIdentity?: string
   /**
    * Ordered conversation messages, exactly as the provider sees them (after
    * the `system` slot). A loop-built request assembles them as

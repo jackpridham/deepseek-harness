@@ -21,6 +21,7 @@
  * @module dsh-llm-pi-ai/adapter
  */
 
+import { randomUUID } from 'node:crypto'
 import { createModels, getSupportedThinkingLevels } from '@earendil-works/pi-ai'
 import type {
   Api,
@@ -91,6 +92,20 @@ export interface PiAiAdapterOptions {
    * conversion because its stored replay state is unusable by this build.
    */
   onReplayDegrade?: (detail: { provider: string; model: string; reason: string }) => void
+  /** Observe one catalog-managed inference attempt without affecting its transport. */
+  onInferenceOperation?: (detail: {
+    operationId: string
+    provider: string
+    model: string
+    contextWindow: number
+    mode?: string
+    options?: Readonly<Record<string, string | number | boolean>>
+    workerConfigIdentity?: string
+    sessionId?: string
+    phase: 'started' | 'settled'
+    outcome?: 'completed' | 'failed' | 'cancelled'
+    signal: AbortSignal
+  }) => void
 }
 
 /** Copy profile stream knobs into pi-ai's common option vocabulary. */
@@ -184,13 +199,129 @@ function reasoningInfo(
 }
 
 /** Merge deployment headers while removing case-insensitive attribution collisions. */
-function requestHeaders(headers: Readonly<Record<string, string>> | undefined): Record<string, string> {
+function requestHeaders(
+  headers: Readonly<Record<string, string>> | undefined,
+  expectedWorkerConfigIdentity: string | undefined,
+  capacitySwap: boolean,
+  requestId: string | undefined,
+): Record<string, string> {
   const attribution = attributionHeaders()
   const reserved = new Set(Object.keys(attribution).map(name => name.toLowerCase()))
   return {
     ...Object.fromEntries(Object.entries(headers ?? {}).filter(([name]) => !reserved.has(name.toLowerCase()))),
+    ...expectedWorkerConfigIdentity === undefined
+      ? {}
+      : { 'X-Inf01-Expected-Worker-Identity': expectedWorkerConfigIdentity },
+    ...capacitySwap ? { 'X-Inf01-Capacity-Swap': '1' } : {},
+    ...requestId === undefined ? {} : { 'X-Inf01-Request-ID': requestId },
     ...attribution,
   }
+}
+
+/** Compute the backend admission identity when the catalog has a worker mode. */
+function expectedWorkerIdentity(options: GenerateOptions): string | undefined {
+  return options.workerConfigIdentity
+}
+
+/** A verified ready worker, read immediately before its managed request. */
+interface ReadyWorker {
+  model: string
+  contextWindow: number
+  mode: string
+  options?: Readonly<Record<string, string | number | boolean>>
+  identity: string
+}
+
+function object(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+function scalarOptions(value: unknown): Readonly<Record<string, string | number | boolean>> | undefined {
+  const raw = object(value)
+  if (raw === undefined) return undefined
+  const entries = Object.entries(raw).flatMap(([key, entry]) => typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean'
+    ? [[key, entry] as const]
+    : [])
+  return entries.length === 0 ? undefined : Object.fromEntries(entries)
+}
+
+function snapshotUrl(baseURL: string, model: string): string {
+  const endpoint = baseURL.replace(/\/v1\/?$/, '').replace(/\/+$/, '')
+  return `${endpoint}/vortex/models/snapshot?${new URLSearchParams({ model })}`
+}
+
+/**
+ * Read the managed worker that owns this logical model. A reply with no row,
+ * or a stopped row, is the only proof that catalog defaults may be used.
+ */
+async function readyWorker(
+  profile: ResolvedPiAiProviderProfile,
+  model: string,
+  apiKey: string | undefined,
+  signal: AbortSignal | undefined,
+): Promise<ReadyWorker | undefined> {
+  if (profile.modelsFromEndpoint !== true || profile.baseURL === undefined) return undefined
+  let response: Response
+  try {
+    response = await fetch(snapshotUrl(profile.baseURL, model), {
+      headers: {
+        accept: 'application/json',
+        ...apiKey === undefined ? {} : { authorization: `Bearer ${apiKey}` },
+        ...attributionHeaders(),
+      },
+      ...signal === undefined ? {} : { signal },
+    })
+  } catch (error: unknown) {
+    if (signal?.aborted) throw new LlmError('managed worker snapshot aborted by caller', 'ABORTED', { cause: error })
+    throw new LlmError('managed worker snapshot is unavailable; refusing to use catalog defaults', 'WORKER_STATE_UNAVAILABLE', { cause: error })
+  }
+  if (!response.ok) {
+    throw new LlmError(`managed worker snapshot answered ${response.status}; refusing to use catalog defaults`, 'WORKER_STATE_UNAVAILABLE')
+  }
+  let payload: Record<string, unknown> | undefined
+  try {
+    payload = object(await response.json())
+  } catch (error: unknown) {
+    throw new LlmError('managed worker snapshot is invalid; refusing to use catalog defaults', 'WORKER_STATE_UNAVAILABLE', { cause: error })
+  }
+  const rows = Array.isArray(payload?.workers) ? payload.workers
+    .map(object)
+    .filter((row): row is Record<string, unknown> => row !== undefined && object(row.configured)?.model === model)
+    : undefined
+  if (rows === undefined) throw new LlmError('managed worker snapshot has no worker rows', 'WORKER_STATE_UNAVAILABLE')
+  const worker = rows.find(row => row.state === 'ready')
+  if (worker === undefined) {
+    if (rows.length === 0 || rows.every(row => row.state === 'stopped' || row.state === 'idle')) return undefined
+    throw new LlmError('managed worker state is transitioning; refusing to use catalog defaults', 'WORKER_STATE_UNAVAILABLE')
+  }
+  const observed = object(worker.observed)
+  const contextWindow = observed?.context
+  const mode = observed?.mode
+  const route = observed?.model
+  const identity = observed?.worker_config_identity
+  if (typeof route !== 'string' || typeof contextWindow !== 'number' || !Number.isInteger(contextWindow) || contextWindow <= 0 || typeof mode !== 'string' || typeof identity !== 'string') {
+    throw new LlmError('managed worker snapshot is stale; refusing to use catalog defaults', 'WORKER_STATE_UNAVAILABLE')
+  }
+  const options = scalarOptions(observed?.options)
+  return {
+    model: route as string,
+    contextWindow: contextWindow as number,
+    mode: mode as string,
+    ...options === undefined ? {} : { options },
+    identity: identity as string,
+  }
+}
+
+function sameOptions(
+  left: Readonly<Record<string, string | number | boolean>> | undefined,
+  right: Readonly<Record<string, string | number | boolean>> | undefined,
+): boolean {
+  const leftEntries = Object.entries(left ?? {}).sort(([a], [b]) => a.localeCompare(b))
+  const rightEntries = Object.entries(right ?? {}).sort(([a], [b]) => a.localeCompare(b))
+  return leftEntries.length === rightEntries.length
+    && leftEntries.every(([key, value], index) => key === rightEntries[index]?.[0] && value === rightEntries[index]?.[1])
 }
 
 /**
@@ -281,6 +412,7 @@ export class PiAiAdapter extends LlmAdapter {
     return snapshot.models.getModels(provider).map((model) => {
       const contextRoutes = profile.contextRoutes.get(model.id)
       const state = profile.modelStates.get(model.id)
+      const runtime = profile.loadModes.get(model.id)
       return {
         provider,
         id: model.id,
@@ -288,6 +420,11 @@ export class PiAiAdapter extends LlmAdapter {
         inputModalities: [...model.input],
         selectable: state?.selectable ?? true,
         active: state?.active ?? false,
+        maxTokens: model.maxTokens,
+        ...runtime?.defaultLoadMode === undefined ? {} : { defaultLoadMode: runtime.defaultLoadMode },
+        ...runtime?.loadModes === undefined ? {} : { loadModes: runtime.loadModes },
+        ...runtime?.loadRoutes === undefined ? {} : { loadRoutes: runtime.loadRoutes },
+        ...runtime?.loaded === undefined ? {} : { loaded: runtime.loaded },
         ...state?.selectable === false ? {} : {
           contextOptions: {
             defaultContextWindow: model.contextWindow,
@@ -309,9 +446,10 @@ export class PiAiAdapter extends LlmAdapter {
     model: string,
     _signal?: AbortSignal,
   ): Promise<LlmResolvedModelInfo> {
-    return this.refreshed(provider, false, model, _signal).then((snapshot) => {
+    return this.refreshed(provider, false, model, _signal).then(async (snapshot) => {
       const profile = this.profileOf(snapshot, provider)
       const resolvedModel = this.modelOf(snapshot, provider, model)
+      const loaded = await readyWorker(profile, model, await this.config.resolveApiKey(provider, profile), _signal)
       const defaultLevel = describableReasoningLevel(
         resolvedModel,
         profile.reasoningDefaults.get(model) ?? profile.reasoning,
@@ -321,6 +459,11 @@ export class PiAiAdapter extends LlmAdapter {
       const configuredMaxTokens = profile.configuredMaxTokens.get(model)
       const contextRoutes = profile.contextRoutes.get(model)
       const state = profile.modelStates.get(model)
+      const runtime = profile.loadModes.get(model)
+      const contexts = new Map(contextRoutes ?? [[resolvedModel.contextWindow, { model: resolvedModel.id, available: true }]])
+      if (loaded !== undefined && !contexts.has(loaded.contextWindow)) {
+        contexts.set(loaded.contextWindow, { model: loaded.model, available: true })
+      }
       return {
         provider,
         id: model,
@@ -328,17 +471,27 @@ export class PiAiAdapter extends LlmAdapter {
         inputModalities: [...resolvedModel.input],
         selectable: state?.selectable ?? true,
         active: state?.active ?? false,
-        context: { contextWindow: resolvedModel.contextWindow },
+        maxTokens: resolvedModel.maxTokens,
+        ...runtime?.defaultLoadMode === undefined ? {} : { defaultLoadMode: runtime.defaultLoadMode },
+        ...runtime?.loadModes === undefined ? {} : { loadModes: runtime.loadModes },
+        ...runtime?.loadRoutes === undefined ? {} : { loadRoutes: runtime.loadRoutes },
+        ...loaded === undefined
+          ? runtime?.loaded === undefined ? {} : { loaded: runtime.loaded }
+          : { loaded: {
+            contextWindow: loaded.contextWindow,
+            mode: loaded.mode,
+            ...loaded.options === undefined ? {} : { options: loaded.options },
+            identity: loaded.identity,
+          } },
+        context: { contextWindow: loaded?.contextWindow ?? resolvedModel.contextWindow },
         ...state?.selectable === false ? {} : {
           contextOptions: {
-            defaultContextWindow: resolvedModel.contextWindow,
-            contextWindows: contextRoutes === undefined
-              ? [{ contextWindow: resolvedModel.contextWindow, available: true }]
-              : [...contextRoutes.entries()].map(([contextWindow, route]) => ({
-                contextWindow,
-                available: route.available,
-                ...route.unavailableReason === undefined ? {} : { unavailableReason: route.unavailableReason },
-              })),
+            defaultContextWindow: loaded?.contextWindow ?? resolvedModel.contextWindow,
+            contextWindows: [...contexts.entries()].map(([contextWindow, route]) => ({
+              contextWindow,
+              available: route.available,
+              ...route.unavailableReason === undefined ? {} : { unavailableReason: route.unavailableReason },
+            })),
           },
         },
         ...configuredMaxTokens === undefined ? {} : { defaultMaxTokens: configuredMaxTokens },
@@ -359,8 +512,19 @@ export class PiAiAdapter extends LlmAdapter {
     const snapshot = await this.refreshed(options.provider, false, options.model, options.signal)
     const profile = this.profileOf(snapshot, options.provider)
     const model = this.modelOf(snapshot, options.provider, options.model)
-    const contextWindow = options.contextWindow ?? model.contextWindow
+    const apiKey = await this.config.resolveApiKey(options.provider, profile)
+    const loaded = await readyWorker(profile, options.model, apiKey, options.signal)
+    if (loaded !== undefined) {
+      if ((options.contextWindow !== undefined && options.contextWindow !== loaded.contextWindow)
+        || (options.mode !== undefined && options.mode !== loaded.mode)
+        || (options.options !== undefined && !sameOptions(options.options, loaded.options))
+        || (options.workerConfigIdentity !== undefined && options.workerConfigIdentity !== loaded.identity)) {
+        throw new LlmError('managed worker configuration changed; adopt loaded settings or switch worker', 'WORKER_CONFIG_CONFLICT')
+      }
+    }
+    const contextWindow = options.contextWindow ?? loaded?.contextWindow ?? model.contextWindow
     const contextRoute = profile.contextRoutes.get(options.model)?.get(contextWindow)
+    const runtime = profile.loadModes.get(options.model)
     if (profile.contextRoutes.has(options.model) && contextRoute === undefined) {
       throw new LlmError(
         `pi-ai provider "${options.provider}" model "${options.model}" does not support context window ${contextWindow}`,
@@ -374,15 +538,30 @@ export class PiAiAdapter extends LlmAdapter {
         'UNAVAILABLE_CONTEXT_WINDOW',
       )
     }
-    const runtimeModel = contextRoute === undefined || contextRoute.model === model.id
-      ? model
-      : { ...model, id: contextRoute.model }
+    const mode = options.mode ?? loaded?.mode ?? runtime?.defaultLoadMode
+    const servingOptions = options.options ?? loaded?.options ?? Object.fromEntries(
+      runtime?.loadModes?.find(candidate => candidate.id === mode)?.options
+        ?.flatMap(option => option.default === undefined ? [] : [[option.id, option.default] as const]) ?? [],
+    )
+    const loadRoute = runtime?.loadRoutes?.find(route => route.contextWindow === contextWindow
+      && route.mode === mode
+      && sameOptions(route.options, servingOptions))
+    if (loaded === undefined && runtime?.loadRoutes !== undefined && loadRoute === undefined) {
+      throw new LlmError(
+        `pi-ai provider "${options.provider}" model "${options.model}" has no runtime route for the requested serving configuration`,
+        'UNSUPPORTED_SERVING_CONFIGURATION',
+      )
+    }
+    const runtimeModel = loaded === undefined && loadRoute === undefined
+      ? contextRoute === undefined || contextRoute.model === model.id ? model : { ...model, id: contextRoute.model }
+      : { ...model, id: loaded?.model ?? loadRoute?.model ?? model.id }
+    const operationId = profile.modelsFromEndpoint === true ? randomUUID() : undefined
+    const workerConfigIdentity = loaded?.identity ?? expectedWorkerIdentity(options)
+    let operationOutcome: 'completed' | 'failed' | 'cancelled' = 'cancelled'
     const reasoning = resolveReasoningLevel(
       model,
       options.reasoningEffort ?? profile.reasoningDefaults.get(options.model) ?? profile.reasoning,
     )
-    const apiKey = await this.config.resolveApiKey(options.provider, profile)
-
     const consumer = new AbortController()
     const upstream = options.signal === undefined
       ? consumer.signal
@@ -395,6 +574,10 @@ export class PiAiAdapter extends LlmAdapter {
       if (containsImage && !model.input.includes('image')) {
         throw new LlmError(`pi-ai model "${model.id}" does not support image input`, 'UNSUPPORTED_CONTENT')
       }
+      const servingMode = runtime?.loadModes?.find(candidate => candidate.id === mode)
+      if (containsImage && servingMode?.inputModalities !== undefined && !servingMode.inputModalities.includes('image')) {
+        throw new LlmError(`pi-ai model "${model.id}" mode "${mode}" does not support image input`, 'UNSUPPORTED_CONTENT')
+      }
       const attachments = containsImage ? this.config.resolveAttachments?.() : undefined
       if (containsImage && attachments === undefined) {
         throw new LlmError('pi-ai image input requires the durable attachment service', 'UNSUPPORTED_CONTENT')
@@ -405,6 +588,24 @@ export class PiAiAdapter extends LlmAdapter {
       const context = attachments === undefined
         ? toPiContext(options, undefined, onReplayDegrade)
         : await toPiContext(options, attachments, onReplayDegrade, profile.maxRequestImageBytes)
+      if (operationId !== undefined) {
+        try {
+          this.config.onInferenceOperation?.({
+            operationId,
+            provider: options.provider,
+            model: options.model,
+            contextWindow,
+            ...mode === undefined ? {} : { mode },
+            ...Object.keys(servingOptions).length === 0 ? {} : { options: servingOptions },
+            ...workerConfigIdentity === undefined ? {} : { workerConfigIdentity },
+            ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
+            phase: 'started',
+            signal: upstream,
+          })
+        } catch {
+          // Lifecycle observation cannot change model transport.
+        }
+      }
       const events = snapshot.models.streamSimple(runtimeModel, context, {
         ...profileOptions(profile, reasoning, apiKey),
         ...options.temperature === undefined ? {} : { temperature: options.temperature },
@@ -413,7 +614,12 @@ export class PiAiAdapter extends LlmAdapter {
         signal: watchdog.signal,
         // Profile headers are deployment-owned; attribution names are
         // Harness-owned and therefore win collisions.
-        headers: requestHeaders(profile.headers),
+        headers: requestHeaders(
+          profile.headers,
+          workerConfigIdentity,
+          profile.modelsFromEndpoint === true,
+          operationId,
+        ),
       })
       const iterator = toStreamChunks(events, contextWindow)[Symbol.asyncIterator]()
       let exhausted = false
@@ -424,12 +630,14 @@ export class PiAiAdapter extends LlmAdapter {
           if (timeout !== undefined) throw timeout
           if (result.done) {
             exhausted = true
+            operationOutcome = 'completed'
             return
           }
           yield result.value
         }
       } finally {
         if (!exhausted) {
+          operationOutcome = 'cancelled'
           consumer.abort('pi-ai stream consumer stopped')
           try {
             await iterator.return(undefined)
@@ -439,6 +647,7 @@ export class PiAiAdapter extends LlmAdapter {
         }
       }
     } catch (error: unknown) {
+      operationOutcome = options.signal?.aborted ? 'cancelled' : 'failed'
       if (timeoutOf(watchdog.signal, 'LLM_STREAM_IDLE_TIMEOUT') !== undefined) {
         throw new LlmError(`pi-ai stream idle timeout after ${streamIdleTimeoutMs}ms`, 'TIMEOUT', { cause: error })
       }
@@ -448,6 +657,25 @@ export class PiAiAdapter extends LlmAdapter {
       throw error
     } finally {
       consumer.abort('pi-ai stream consumer stopped')
+      if (operationId !== undefined) {
+        try {
+          this.config.onInferenceOperation?.({
+            operationId,
+            provider: options.provider,
+            model: options.model,
+            contextWindow,
+            ...mode === undefined ? {} : { mode },
+            ...Object.keys(servingOptions).length === 0 ? {} : { options: servingOptions },
+            ...workerConfigIdentity === undefined ? {} : { workerConfigIdentity },
+            ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
+            phase: 'settled',
+            outcome: operationOutcome,
+            signal: upstream,
+          })
+        } catch {
+          // Lifecycle observation cannot change model transport.
+        }
+      }
     }
   }
 }

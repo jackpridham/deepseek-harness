@@ -8,7 +8,7 @@
  * @module dsh-llm-pi-ai/stream
  */
 
-import { CallId, CONTEXT_WINDOW_EXCEEDED_CODE, EMPTY_RESPONSE_CODE, isContextWindowExceededError, isQuotaExceededError, LlmError, QUOTA_EXCEEDED_CODE } from '@deepseek-ai/dsh-llm'
+import { CallId, CONTEXT_WINDOW_EXCEEDED_CODE, EMPTY_RESPONSE_CODE, GPU_CAPACITY_INSUFFICIENT_CODE, isContextWindowExceededError, isQuotaExceededError, LlmError, QUOTA_EXCEEDED_CODE, WORKER_CONFIG_IDENTITY_CONFLICT_CODE } from '@deepseek-ai/dsh-llm'
 import type { FinishReason, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import { isContextOverflow } from '@earendil-works/pi-ai'
 import type { AssistantMessage, AssistantMessageEvent, Usage as PiUsage } from '@earendil-works/pi-ai'
@@ -36,7 +36,11 @@ export function mapUsage(usage: PiUsage): TokenUsage {
 // wrapper a bare `terminated`, so we are left pattern-matching terse words here.
 // If pi-ai ever forwards the original Error (or a fetch/dispatcher hook that lets
 // us capture the cause ourselves), classify on `code`/`cause` instead of text.
-function classifyPiAiError(message: string): string {
+function classifyPiAiError(message: string, details?: { code?: string; retryable?: boolean }): string {
+  if (details?.code === 'gpu_capacity_insufficient'
+    || /gpu_capacity_insufficient|gpu capacity is insufficient/i.test(message)) return GPU_CAPACITY_INSUFFICIENT_CODE
+  if (details?.code === 'worker_config_identity_conflict') return WORKER_CONFIG_IDENTITY_CONFLICT_CODE
+  if (details?.retryable === false) return 'PI_AI_NON_RETRYABLE'
   if (/\b(?:401|403)\b/.test(message)) return 'AUTH'
   if (isQuotaExceededError(message)) return QUOTA_EXCEEDED_CODE
   if (/\b429\b|rate.?limit/i.test(message)) return 'RATE_LIMIT'
@@ -110,7 +114,14 @@ export function mapStopReason(message: AssistantMessage, contextWindow?: number)
     }
     case 'error': {
       const text = message.errorMessage ?? 'pi-ai stream error'
-      return { kind: 'error', failure: { message: text, code: classifyPiAiError(text) } }
+      const details = message.errorDetails
+      return {
+        kind: 'error',
+        failure: {
+          message: details?.message === undefined || text.includes(details.message) ? text : `${text}: ${details.message}`,
+          code: classifyPiAiError(text, details),
+        },
+      }
     }
   }
 }

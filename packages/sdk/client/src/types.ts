@@ -7,6 +7,7 @@
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { SdkModelSelection } from '@deepseek-ai/dsh-sdk-protocol'
 
 /** One server-to-client notification as received off the wire. */
 export interface HarnessNotification {
@@ -56,6 +57,8 @@ export interface DeepSeekHarnessOptions {
   model?: string
   /** Maximum output tokens for each conversation-model request. */
   maxTokens?: number
+  /** Complete selection installed on each SDK-created session. */
+  selection?: SdkModelSelection
 }
 
 /** One owned session activity interval, from enqueue receipt through idle. */

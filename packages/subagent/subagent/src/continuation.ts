@@ -30,6 +30,8 @@ import type {
   AgentSetupCommit,
   CreateAgentOptions,
 } from '@deepseek-ai/dsh-agent'
+import { installModelSelection } from '@deepseek-ai/dsh-agent'
+import type { ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { boundContextSummary, createUserMessage, errorChain } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageId, MessageSource } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -44,6 +46,7 @@ import {
   captureDelegatedPolicyOverrides,
   childSessionMeta,
   resolveChildAgentOptions,
+  resolveChildModelSelection,
   resolveChildDepth,
 } from './child-agent.ts'
 import type { DelegatedPolicyOverrides } from './child-agent.ts'
@@ -262,6 +265,7 @@ interface MaterializeInputs {
     delegatedPolicies: DelegatedPolicyOverrides
   }
   agentOptions: AgentOptions
+  selection?: ModelSelection
   composition: { persona?: string | undefined; toolFilter?: ToolRestriction | undefined }
   signal: AbortSignal
 }
@@ -455,12 +459,15 @@ export class SubagentContinuationManager {
           throw new SubagentError(`subagent "${childId}" already exists`, 'DUPLICATE_CHILD')
         }
       }
+      const agentOptions = resolveChildAgentOptions(parent, request.agentOptions, childDepth)
+      const selection = resolveChildModelSelection(parent, agentOptions, request.agentOptions)
       const activation = await this.materialize({
         childId,
         provider: spec.provider,
         parent,
         create: { seed, meta: childSessionMeta(parent, childDepth, lineageSeedLength), delegatedPolicies },
-        agentOptions: resolveChildAgentOptions(parent, request.agentOptions, childDepth),
+        agentOptions,
+        ...selection === undefined ? {} : { selection },
         composition: { persona: request.persona, toolFilter: request.toolFilter },
         signal: spec.signal,
       })
@@ -1063,6 +1070,9 @@ export class SubagentContinuationManager {
         appendDelegatedPolicyOverrides((childCtx.agent as Agent).session, create.delegatedPolicies)
       }
       applyChildComposition(childCtx, parent, inputs.composition)
+      if (inputs.selection !== undefined) {
+        installModelSelection(childCtx, { current: inputs.selection, assembled: undefined } satisfies ModelSelectionRef)
+      }
       return this.setupRegistry.apply(childCtx)
     }
     const observer = this.host.observeActivation(provider, childId, parent)

@@ -35,3 +35,5 @@ None; this package neither assembles nor sends a provider request.
 - **Only pi-ai routes can be hand-declared** — the custom-provider card writes into `llm-pi-ai`, the one namespace whose profiles describe a whole provider. A `llm-deepseek` route is a composition fact, not something this page can create.
 - **Interrogation covers OpenAI-compatible endpoints** — the adapter reads only that model-list response format, so a gateway speaking another protocol reports that it cannot be asked and its models are entered by hand.
 - **Undeclared live routes render nowhere** — a route registered without a configurable-provider declaration has no settings address; it stays visible in pickers but not on this page's rows.
+
+Available-model runtime controls own their live status, so catalog inventory does not display a competing loaded-state label. The shared session picker and inventory retain selectable-first ordering; runtime Load/Unload operations remain separate from chat selection.

@@ -66,6 +66,9 @@ import {
 } from '../api/credentials.schema.ts'
 import { llmDiscoverModelsRequestSchema, llmModelsRequestSchema, llmProvidersRequestSchema } from '../api/llm.schema.ts'
 import {
+  vortexModelsOperationRequestSchema, vortexModelsOperationStatusRequestSchema, vortexModelsSnapshotRequestSchema,
+} from '../api/models.schema.ts'
+import {
   subagentHistoryRequestSchema,
   subagentInterruptRequestSchema,
   subagentListRequestSchema,
@@ -142,6 +145,9 @@ const UNARY_ROUTES: UnaryRoutes = {
   'llm.providers': { schema: llmProvidersRequestSchema, invoke: (api, r) => api.llm.providers(r) },
   'llm.models': { schema: llmModelsRequestSchema, invoke: (api, r) => api.llm.models(r) },
   'llm.discoverModels': { schema: llmDiscoverModelsRequestSchema, invoke: (api, r, signal) => api.llm.discoverModels(r, signal) },
+  'vortex.models.snapshot': { schema: vortexModelsSnapshotRequestSchema, invoke: (api, r) => api.vortex.models.snapshot(r) },
+  'vortex.models.operation': { schema: vortexModelsOperationRequestSchema, invoke: (api, r) => api.vortex.models.operation(r) },
+  'vortex.models.operationStatus': { schema: vortexModelsOperationStatusRequestSchema, invoke: (api, r) => api.vortex.models.operationStatus(r) },
 }
 
 /** Route lookup that narrows an arbitrary path segment to a map key (single cast point for the string→key refinement). */

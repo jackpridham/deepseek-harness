@@ -39,6 +39,11 @@ export function estimateContent(blocks: readonly ContentBlock[]): number {
       case 'tool-result':
         tokens += estimateContent(block.content) + BLOCK_OVERHEAD
         break
+      case 'image':
+        // Fallback estimate: adapters may serialize attachments as inline
+        // base64. This prices that wire payload, not model-native vision tokens.
+        tokens += Math.ceil((Math.ceil(block.attachment.bytes / 3) * 4) / CHARS_PER_TOKEN) + BLOCK_OVERHEAD
+        break
       default:
         // ContentBlockMap is merge-extensible; unknown blocks retain a
         // conservative structural JSON price under the fixed heuristic.

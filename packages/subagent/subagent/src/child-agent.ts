@@ -9,7 +9,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { Agent, AgentOptions, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentOptions, CreateAgentOptions, ModelSelection } from '@deepseek-ai/dsh-agent'
 import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { ToolRestriction } from '@deepseek-ai/dsh-tools'
@@ -70,8 +70,9 @@ export function resolveChildAgentOptions(
   requested: AgentOptions | undefined,
   childDepth: number,
 ): AgentOptions {
-  const parentProvider = parent.options.provider
-  const parentModel = parent.options.model
+  const parentConfig = parent.session.requestHeader()?.config
+  const parentProvider = parentConfig?.provider ?? parent.options.provider
+  const parentModel = parentConfig?.model ?? parent.options.model
   const parentMaxTokens = parent.options.maxTokens
   return {
     ...parentProvider !== undefined ? { provider: parentProvider } : {},
@@ -79,6 +80,37 @@ export function resolveChildAgentOptions(
     ...parentMaxTokens !== undefined ? { maxTokens: parentMaxTokens } : {},
     ...requested,
     subagentDepth: childDepth,
+  }
+}
+
+/**
+ * Recover the parent's accepted request selection for a same-route child.
+ * A child on another route starts from that model's own defaults instead.
+ * @param parent - delegating agent whose latest accepted header is authoritative.
+ * @param options - already-resolved child options.
+ * @param requested - raw child overrides; an explicit cap remains hard.
+ * @returns an installable child selection, or `undefined` for another model.
+ */
+export function resolveChildModelSelection(
+  parent: Agent,
+  options: AgentOptions,
+  requested: AgentOptions | undefined,
+): ModelSelection | undefined {
+  const header = parent.session.requestHeader()
+  const config = header?.config
+  if (config === undefined || options.provider !== config.provider || options.model !== config.model) return undefined
+  return {
+    provider: config.provider,
+    model: config.model,
+    ...config.contextWindow === undefined ? {} : { contextWindow: config.contextWindow },
+    ...config.bestTryContext === undefined ? {} : { bestTryContext: config.bestTryContext },
+    ...config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort },
+    ...config.mode === undefined ? {} : { mode: config.mode },
+    ...config.options === undefined ? {} : { options: config.options },
+    ...requested?.maxTokens === undefined && config.maxTokens !== undefined
+      ? { outputLimit: header?.adapterDefaults?.maxTokens === true ? 'auto' : config.maxTokens }
+      : {},
+    ...config.workerConfigIdentity === undefined ? {} : { workerConfigIdentity: config.workerConfigIdentity },
   }
 }
 

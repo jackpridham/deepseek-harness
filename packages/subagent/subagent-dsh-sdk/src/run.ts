@@ -13,6 +13,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { DeepSeekHarness, type HarnessNotification } from '@deepseek-ai/dsh-sdk-client'
+import type { SdkModelSelection } from '@deepseek-ai/dsh-sdk-protocol'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { SessionId, type SessionEvent, type TurnEndReason } from '@deepseek-ai/dsh-session'
 import type { SubagentResult, SubagentRun, SubagentStartRequest, SubagentStopReason } from '@deepseek-ai/dsh-subagent'
@@ -37,6 +38,8 @@ export interface SdkRunSpec {
   model: string
   /** Optional per-request output-token cap sent in the child runtime's initialize handshake. */
   maxTokens?: number
+  /** Complete selection installed before the child accepts its first prompt. */
+  selection?: SdkModelSelection
   /**
    * Extra environment variables to ADD for the child (e.g. the child
    * runtime's own `DEEPSEEK_API_KEY`, or `DSH_CORDIS_CONFIG`). Merged after
@@ -129,6 +132,7 @@ export async function startSdkRun(request: SubagentStartRequest, spec: SdkRunSpe
     provider: spec.provider,
     model: spec.model,
     ...spec.maxTokens === undefined ? {} : { maxTokens: spec.maxTokens },
+    ...spec.selection === undefined ? {} : { selection: spec.selection },
   })
 
   // Cancellation settles the result without waiting for a cooperative child.

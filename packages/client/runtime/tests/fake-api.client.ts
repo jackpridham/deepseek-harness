@@ -289,6 +289,14 @@ export class FakeApiClient implements IApiClient {
     discoverModels: payload => this.record('llm.discoverModels', payload, Promise.resolve(ok({ models: [] }))),
   }
 
+  readonly vortex: IApiClient['vortex'] = {
+    models: {
+      snapshot: payload => this.record('vortex.models.snapshot', payload, Promise.resolve(ok({ phase: 'unknown', outcome: 'unknown' }))),
+      operation: payload => this.record('vortex.models.operation', payload, Promise.resolve(ok({ phase: 'unknown', outcome: 'unknown' }))),
+      operationStatus: payload => this.record('vortex.models.operationStatus', payload, Promise.resolve(ok({ phase: 'unknown', outcome: 'unknown' }))),
+    },
+  }
+
   /** When true, streams never fire onOpen (misbehaving-carrier material for the handshake timeout guard). */
   suppressStreamOpen = false
 

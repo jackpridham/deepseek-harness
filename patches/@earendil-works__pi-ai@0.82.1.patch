@@ -1,0 +1,38 @@
+diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
+index ed81baa3860fa20cf9d38885f9dd4b6b2f639045..f60e58515703f5e44ae1ee8212e1bdeb80f9b2d0 100644
+--- a/dist/api/openai-completions.js
++++ b/dist/api/openai-completions.js
+@@ -450,6 +450,17 @@ export const stream = (model, context, options) => {
+             }
+             output.stopReason = options?.signal?.aborted ? "aborted" : "error";
+             output.errorMessage = formatProviderError(normalizeProviderError(error));
++            const providerError = error?.error;
++            if (providerError && typeof providerError === "object") {
++                const { code, message, retryable } = providerError;
++                if (typeof code === "string" || typeof message === "string" || typeof retryable === "boolean") {
++                    output.errorDetails = {
++                        ...(typeof code === "string" ? { code } : {}),
++                        ...(typeof message === "string" ? { message } : {}),
++                        ...(typeof retryable === "boolean" ? { retryable } : {}),
++                    };
++                }
++            }
+             // Some providers via OpenRouter give additional information in this field.
+             // normalizeProviderError already stringifies the parsed body (error.error)
+             // into errorMessage, so only append the raw metadata when it is not already
+diff --git a/dist/types.d.ts b/dist/types.d.ts
+index 0a1b76919766126f1c8c4a306b24e8096a5e02d0..535ab18b4167e9f2622fb571734f64599ae04c87 100644
+--- a/dist/types.d.ts
++++ b/dist/types.d.ts
+@@ -288,6 +288,11 @@ export interface AssistantMessage {
+     usage: Usage;
+     stopReason: StopReason;
+     errorMessage?: string;
++    errorDetails?: {
++        code?: string;
++        message?: string;
++        retryable?: boolean;
++    };
+     timestamp: number;
+ }
+ export interface ToolResultMessage<TDetails = any> {

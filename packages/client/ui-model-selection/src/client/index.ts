@@ -93,15 +93,21 @@ function selectionOf(state: ModelDirectoryState, id: string): ModelSelection | u
       if (rowId(group.id, model.id) !== id) continue
       if (model.selectable === false) return undefined
       const sameRoute = state.current?.provider === group.id && state.current.model === model.id
-      const reasoningEffort = sameRoute
-        ? state.current?.reasoningEffort ?? model.reasoning?.defaultEffort
-        : model.reasoning?.defaultEffort
+      const reasoningEffort = model.reasoning?.efforts.some(level => level.id === state.current?.reasoningEffort)
+        ? state.current?.reasoningEffort
+        : undefined
       const contextWindow = sameRoute
         ? state.current?.contextWindow ?? model.context?.defaultContextWindow
-        : model.context?.defaultContextWindow
+        : model.loaded?.contextWindow ?? model.context?.defaultContextWindow
+      const mode = sameRoute ? state.current?.mode : model.loaded?.mode ?? model.defaultLoadMode
+      const options = sameRoute ? state.current?.options : model.loaded?.options
       return {
         provider: group.id,
         model: model.id,
+        ...sameRoute ? state.current : {},
+        ...mode === undefined ? {} : { mode },
+        ...options === undefined ? {} : { options },
+        outputLimit: typeof state.current?.outputLimit === 'number' && model.maxTokens !== undefined && state.current.outputLimit > model.maxTokens ? 'auto' : state.current?.outputLimit ?? 'auto',
         ...contextWindow === undefined ? {} : { contextWindow },
         ...reasoningEffort === undefined ? {} : { reasoningEffort },
       }
@@ -183,8 +189,8 @@ export function apply(ctx: ClientContext): void {
         available,
         directory: directory.store,
         load: () => { if (available) directory.load().catch(() => { /* surfaced on the store */ }) },
-        select: (selection: ModelSelection) => available
-          ? directory.select(selection).then(() => true, () => false)
+        select: (selection: ModelSelection, resolution?: 'adopt-loaded' | 'switch-worker', expectedWorkerConfigIdentity?: string) => available
+          ? directory.select(selection, resolution, expectedWorkerConfigIdentity).then(() => true, () => false)
           : Promise.resolve(false),
         locked: false,
         t,
@@ -208,8 +214,8 @@ export function apply(ctx: ClientContext): void {
           load: () => {
             if (available) directory.load().catch(() => { /* surfaced on the store */ })
           },
-          select: (selection: ModelSelection) => available
-            ? directory.select(selection).then(() => true, () => false)
+          select: (selection: ModelSelection, resolution?: 'adopt-loaded' | 'switch-worker', expectedWorkerConfigIdentity?: string) => available
+            ? directory.select(selection, resolution, expectedWorkerConfigIdentity).then(() => true, () => false)
             : Promise.resolve(false),
         }
       },

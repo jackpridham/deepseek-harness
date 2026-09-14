@@ -115,7 +115,7 @@ Sources: [`packages/core/session/src/types.ts:340`](../packages/core/session/src
 }
 ```
 
-Source: [`packages/core/agent/src/types.ts:19`](../packages/core/agent/src/types.ts)
+Source: [`packages/core/agent/src/types.ts:32`](../packages/core/agent/src/types.ts)
 
 ### `agent-preset/*`
 
@@ -497,6 +497,77 @@ Source: [`packages/llm/llm-retry/src/types.ts:9`](../packages/llm/llm-retry/src/
 ```
 
 Source: [`packages/llm/llm-retry/src/types.ts:11`](../packages/llm/llm-retry/src/types.ts)
+
+### `model/*`
+
+<a id="modellifecycle--log-only"></a>
+
+#### `model/lifecycle` — log-only
+
+```ts persistence-catalog
+/** A correlated managed-worker lifecycle observation for this session. */
+'model/lifecycle': {
+  operationId?: string
+  turn?: number
+  step?: number
+  phase: string
+  outcome: string
+  reason?: { code?: string; message?: string }
+  swap?: unknown
+}
+```
+
+Source: [`packages/core/agent/src/types.ts:18`](../packages/core/agent/src/types.ts)
+
+<a id="modelselection--log-only"></a>
+
+#### `model/selection` — log-only
+
+```ts persistence-catalog
+/** A session-local model preference, persisted before its first request. */
+'model/selection': { selection: ModelSelection }
+```
+
+Source: [`packages/core/agent/src/types.ts:16`](../packages/core/agent/src/types.ts)
+
+### `output/*`
+
+<a id="outputbudget--log-only"></a>
+
+#### `output/budget` — log-only
+
+```ts persistence-catalog
+/** Effective allowance admitted for one assembled model request. */
+'output/budget': {
+  turn: number
+  step: number
+  requested: number
+  effective: number
+  contextWindow: number
+  inputTokens: number
+  safetyMargin: number
+  reduced?: true
+}
+```
+
+Source: [`packages/core/agent-loop/src/agent.ts:68`](../packages/core/agent-loop/src/agent.ts)
+
+<a id="outputcontinuation--log-only"></a>
+
+#### `output/continuation` — log-only
+
+```ts persistence-catalog
+/** Durable output-cap recovery progress for one turn. */
+'output/continuation': {
+  turn: number
+  step: number
+  attempt: number
+  phase: 'scheduled' | 'recovered' | 'stopped'
+  reason?: 'hard-cap' | 'no-progress' | 'limit' | 'error'
+}
+```
+
+Source: [`packages/core/agent-loop/src/agent.ts:60`](../packages/core/agent-loop/src/agent.ts)
 
 ### `permission/*`
 

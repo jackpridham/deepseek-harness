@@ -27,6 +27,12 @@ export const CONTEXT_WINDOW_EXCEEDED_CODE = 'CONTEXT_WINDOW_EXCEEDED'
 /** Canonical provider-neutral code for an exhausted account quota or balance. */
 export const QUOTA_EXCEEDED_CODE = 'QUOTA'
 
+/** Canonical terminal code for a worker admission rejection caused by GPU capacity. */
+export const GPU_CAPACITY_INSUFFICIENT_CODE = 'GPU_CAPACITY_INSUFFICIENT'
+
+/** Canonical terminal code for an admission request guarded by a stale worker identity. */
+export const WORKER_CONFIG_IDENTITY_CONFLICT_CODE = 'WORKER_CONFIG_IDENTITY_CONFLICT'
+
 /**
  * Canonical provider-neutral code for a response that completed normally but
  * carried no content blocks at all. Providers occasionally emit a degenerate

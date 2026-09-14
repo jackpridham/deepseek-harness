@@ -60,6 +60,9 @@ interface ListingEntry {
   max_output_tokens?: unknown
   context_windows?: unknown
   reasoning?: unknown
+  default_load_mode?: unknown
+  load_modes?: unknown
+  load_routes?: unknown
   selectable?: unknown
   architecture?: { input_modalities?: unknown } | null
 }
@@ -123,6 +126,67 @@ function inputModalities(value: unknown): LlmDiscoveredModel['inputModalities'] 
   if (!Array.isArray(value)) return undefined
   const modalities = value.filter((entry): entry is 'text' | 'image' => entry === 'text' || entry === 'image')
   return modalities.length === 0 ? undefined : [...new Set(modalities)]
+}
+
+/** Catalog-declared load modes; malformed rows are omitted rather than guessed. */
+function loadModes(value: unknown): LlmDiscoveredModel['loadModes'] {
+  if (!Array.isArray(value)) return undefined
+  const seen = new Set<string>()
+  const modes = value.flatMap((raw) => {
+    const entry = raw as { id?: unknown; name?: unknown; input_modalities?: unknown; options?: unknown } | null
+    const id = label(entry?.id)
+    if (id === undefined || seen.has(id)) return []
+    const name = label(entry?.name) ?? id
+    const options = Array.isArray(entry?.options) ? entry.options.flatMap((rawOption) => {
+      const option = rawOption as { id?: unknown; name?: unknown; type?: unknown; default?: unknown; choices?: unknown } | null
+      const optionId = label(option?.id)
+      const type = option?.type
+      if (optionId === undefined || (type !== 'integer' && type !== 'number' && type !== 'string' && type !== 'boolean')) return []
+      const scalar = (value: unknown): value is string | number | boolean => typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+      const choices = Array.isArray(option?.choices) ? option.choices.filter(scalar) : undefined
+      return [{
+        id: optionId,
+        name: label(option?.name) ?? optionId,
+        type: type as 'integer' | 'number' | 'string' | 'boolean',
+        ...scalar(option?.default) ? { default: option.default } : {},
+        ...choices === undefined || choices.length === 0 ? {} : { choices },
+      }]
+    }) : undefined
+    seen.add(id)
+    const input = inputModalities(entry?.input_modalities)
+    return [{
+      id,
+      name,
+      ...input === undefined ? {} : { inputModalities: input },
+      ...options === undefined || options.length === 0 ? {} : { options },
+    }]
+  })
+  return modes.length === 0 ? undefined : modes
+}
+
+/** Exact scheduler routes supplied by the catalog; this adapter never reconstructs route names. */
+function loadRoutes(value: unknown): LlmDiscoveredModel['loadRoutes'] {
+  if (!Array.isArray(value)) return undefined
+  const routes = value.flatMap((raw) => {
+    const route = raw as {
+      model?: unknown
+      context_window?: unknown
+      mode?: unknown
+      options?: unknown
+      worker_config_identity?: unknown
+    } | null
+    const model = label(route?.model)
+    const contextWindow = capacity(route?.context_window)
+    const mode = label(route?.mode)
+    const identity = label(route?.worker_config_identity)
+    if (model === undefined || contextWindow === undefined || mode === undefined || identity === undefined) return []
+    const options = typeof route?.options === 'object' && route.options !== null && !Array.isArray(route.options)
+      ? Object.fromEntries(Object.entries(route.options).filter(([, value]) =>
+        typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'))
+      : undefined
+    return [{ model, contextWindow, mode, identity, ...options === undefined || Object.keys(options).length === 0 ? {} : { options } }]
+  })
+  return routes.length === 0 ? undefined : routes
 }
 
 /** A positive integer field of a listing entry, or `undefined` when absent or unusable. */
@@ -223,6 +287,9 @@ function readListing(body: unknown): LlmDiscoveredModel[] {
     const reasoningInfo = reasoning(entry?.reasoning)
     const maxTokens = capacity(entry?.max_output_tokens, entry?.max_tokens)
     const input = inputModalities(entry?.architecture?.input_modalities)
+    const defaultLoadMode = label(entry?.default_load_mode)
+    const modes = loadModes(entry?.load_modes)
+    const routes = loadRoutes(entry?.load_routes)
     models.push({
       id,
       selectable: entry?.selectable !== false,
@@ -232,6 +299,9 @@ function readListing(body: unknown): LlmDiscoveredModel[] {
       ...contexts === undefined ? {} : { contextWindows: contexts },
       ...reasoningInfo === undefined ? {} : { reasoning: reasoningInfo },
       ...maxTokens === undefined ? {} : { maxTokens },
+      ...defaultLoadMode === undefined ? {} : { defaultLoadMode },
+      ...modes === undefined ? {} : { loadModes: modes },
+      ...routes === undefined ? {} : { loadRoutes: routes },
     })
   }
   return models

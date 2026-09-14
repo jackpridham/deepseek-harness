@@ -142,6 +142,7 @@ export async function summarizeWithLlm(
     )
   }
 
+  const inherited = configured === undefined ? latest : undefined
   const assembler = new BlockAssembler()
   const messages: Message[] = [
     ...input.messages,
@@ -153,6 +154,15 @@ export async function summarizeWithLlm(
   const options: GenerateOptions = {
     provider: target.provider,
     model: target.model,
+    // The auxiliary summary stays on the accepted conversation worker when
+    // no dedicated summarizer route was configured. Its own output cap remains
+    // independent below.
+    ...inherited?.contextWindow === undefined ? {} : { contextWindow: inherited.contextWindow },
+    ...inherited?.bestTryContext === undefined ? {} : { bestTryContext: inherited.bestTryContext },
+    ...inherited?.reasoningEffort === undefined ? {} : { reasoningEffort: inherited.reasoningEffort },
+    ...inherited?.mode === undefined ? {} : { mode: inherited.mode },
+    ...inherited?.options === undefined ? {} : { options: inherited.options },
+    ...inherited?.workerConfigIdentity === undefined ? {} : { workerConfigIdentity: inherited.workerConfigIdentity },
     messages,
     ...input.system === undefined ? {} : { system: input.system },
     ...input.tools === undefined ? {} : { tools: [...input.tools] },

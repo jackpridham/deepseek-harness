@@ -9,6 +9,9 @@
 import type { GenerateOptions } from './types.ts'
 import type { ReasoningEffortId } from './brand.ts'
 
+/** One provider-declared scalar serving option retained with the request header. */
+export type ModelServingOption = string | number | boolean
+
 /** Process-local identities of request objects assembled by dsh-agent-loop. */
 const AGENT_LOOP_REQUESTS = new WeakSet<GenerateOptions>()
 
@@ -26,6 +29,12 @@ export interface LlmCallConfig {
   reasoningEffort?: ReasoningEffortId
   contextWindow?: number
   bestTryContext?: boolean
+  /** Catalog-declared worker load mode selected for this request. */
+  mode?: string
+  /** Catalog-declared serving options selected for this request. */
+  options?: Readonly<Record<string, ModelServingOption>>
+  /** Backend worker identity expected at admission; mismatch rejects before execution. */
+  workerConfigIdentity?: string
   temperature?: number
   maxTokens?: number
   stop?: string[]
@@ -55,9 +64,12 @@ export function callConfigEquals(a: LlmCallConfig, b: LlmCallConfig): boolean {
     || a.reasoningEffort !== b.reasoningEffort
     || a.contextWindow !== b.contextWindow
     || a.bestTryContext !== b.bestTryContext
+    || a.mode !== b.mode
+    || a.workerConfigIdentity !== b.workerConfigIdentity
     || a.temperature !== b.temperature
     || a.maxTokens !== b.maxTokens
   ) return false
+  if (JSON.stringify(a.options) !== JSON.stringify(b.options)) return false
   if (a.stop === undefined || b.stop === undefined) return a.stop === b.stop
   return a.stop.length === b.stop.length && a.stop.every((s, i) => s === b.stop?.[i])
 }

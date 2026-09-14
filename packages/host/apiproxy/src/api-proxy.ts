@@ -9,13 +9,13 @@ import { homedir } from 'node:os'
 import { dirname, isAbsolute, parse, relative, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentHandle, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatus } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, LlmRequestLifecycle, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatus } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-presets/types'
 import { AttachmentError, admitEncodedImages } from '@deepseek-ai/dsh-attachment'
 import type { AttachmentIdType, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { contentHasImage, createUserMessage, freezeMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { errorChain } from '@deepseek-ai/dsh-llm'
-import type { ContentBlock, MessageSource } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, LlmModelInfo, MessageSource } from '@deepseek-ai/dsh-llm'
 import { isAppendSurfaceEvent, isJsonValue } from '@deepseek-ai/dsh-session'
 import type { JsonValue, Session, SessionEvent, SessionEventMap, SessionHeader, SessionId, UserMessage } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
@@ -37,11 +37,12 @@ import type { PresetBearingSession } from '@deepseek-ai/dsh-agent-presets'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {
   ApiProxy, ConfigurableProviderView, CredentialView, GoalRef, HistoryEntry, HostFrame,
-  ModelCatalogFailure, ModelProviderGroup,
+  ModelCatalogFailure, ModelCatalogModel, ModelProviderGroup,
   ModelReasoning, MuxFrame, PromptContentPart, QuestionResponsePayload, SessionListMetadata, SessionProjectionsBlock, SessionSearchItem,
   QueuedInboxItem, SessionSummary, SettingsNamespaceView, SubagentAddress, JobView, ToolEventView,
   WorkspaceId, WorkspaceView,
 } from './api/index.ts'
+import type { ModelControlEnvelope } from './api/models.ts'
 import {
   DEFAULT_SESSION_LOG_COMPRESSION_LEVEL,
   flushLiveSessionLog,
@@ -306,6 +307,26 @@ async function buildModelCatalog(ctx: Context): Promise<{
             },
           },
           ...reasoning === undefined ? {} : { reasoning },
+          ...resolved.maxTokens === undefined ? {} : { maxTokens: resolved.maxTokens },
+          ...resolved.defaultLoadMode === undefined ? {} : { defaultLoadMode: resolved.defaultLoadMode },
+          ...resolved.loadModes === undefined ? {} : { loadModes: resolved.loadModes.map(mode => ({
+            id: mode.id,
+            name: mode.name,
+            ...mode.inputModalities === undefined ? {} : { inputModalities: [...mode.inputModalities] },
+            ...mode.options === undefined ? {} : { options: mode.options.map(option => ({
+              id: option.id,
+              name: option.name,
+              type: option.type,
+              ...option.default === undefined ? {} : { default: option.default },
+              ...option.choices === undefined ? {} : { choices: [...option.choices] },
+            })) },
+          })) },
+          ...resolved.loaded === undefined ? {} : { loaded: {
+            ...resolved.loaded.contextWindow === undefined ? {} : { contextWindow: resolved.loaded.contextWindow },
+            ...resolved.loaded.mode === undefined ? {} : { mode: resolved.loaded.mode },
+            ...resolved.loaded.options === undefined ? {} : { options: { ...resolved.loaded.options } },
+            identity: resolved.loaded.identity,
+          } },
         }
       }))
       const group: ModelProviderGroup = {
@@ -327,6 +348,94 @@ async function buildModelCatalog(ctx: Context): Promise<{
     groups: catalog.flatMap(item => item.kind === 'group' ? [item.group] : []).filter(group => group.models.length > 0),
     failures: catalog.flatMap(item => item.kind === 'failure' ? [item.failure] : []),
   }
+}
+
+/** Merge authoritative plugin worker observations into the advisory adapter directory. */
+async function withWorkerSnapshots(
+  ctx: Context,
+  catalog: { groups: ModelProviderGroup[]; failures: ModelCatalogFailure[] },
+): Promise<{ groups: ModelProviderGroup[]; failures: ModelCatalogFailure[] }> {
+  const controls = ctx.get('modelControls')
+  if (controls === undefined) return catalog
+  await Promise.all(catalog.groups.flatMap(group => group.models.map(async (model) => {
+    try {
+      const snapshot = await controls.snapshot({ model: model.id })
+      const observed = snapshot.observed
+      if (typeof observed !== 'object' || observed === null || Array.isArray(observed)) return
+      const state = observed as Record<string, unknown>
+      const identity = typeof state.worker_config_identity === 'string'
+        ? state.worker_config_identity
+        : typeof state.workerConfigIdentity === 'string' ? state.workerConfigIdentity : undefined
+      if (identity === undefined) return
+      const contextWindow = typeof state.loaded_context === 'number'
+        ? state.loaded_context
+        : typeof state.contextWindow === 'number' ? state.contextWindow
+          : typeof state.context === 'number' ? state.context : undefined
+      const mode = typeof state.loaded_mode === 'string'
+        ? state.loaded_mode
+        : typeof state.mode === 'string' ? state.mode : undefined
+      const rawOptions = state.loaded_options ?? state.options
+      const options = typeof rawOptions === 'object' && rawOptions !== null && !Array.isArray(rawOptions)
+        ? Object.fromEntries(Object.entries(rawOptions).filter(([, value]) => typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'))
+        : undefined
+      model.loaded = {
+        identity,
+        ...contextWindow === undefined ? {} : { contextWindow },
+        ...mode === undefined ? {} : { mode },
+        ...options === undefined || Object.keys(options).length === 0 ? {} : { options },
+      }
+      model.active = true
+    } catch {
+      // A snapshot failure means unknown, never unloaded; the existing catalog remains usable.
+    }
+  })))
+  return catalog
+}
+
+/** Reject catalog-invalid serving controls before saving a session selection. */
+function validateServingSelection(
+  info: LlmModelInfo,
+  mode: string | undefined,
+  options: Record<string, string | number | boolean> | undefined,
+): void {
+  if (info.loadModes === undefined) return
+  const selectedMode = mode ?? info.defaultLoadMode
+  const selected = info.loadModes.find(candidate => candidate.id === selectedMode)
+  if (selected === undefined) throw new Error(`Model does not support serving mode "${selectedMode ?? ''}"`)
+  for (const [id, value] of Object.entries(options ?? {})) {
+    const control = selected.options?.find(candidate => candidate.id === id)
+    if (control === undefined) throw new Error(`Serving mode "${selected.id}" has no "${id}" option`)
+    if ((control.type === 'integer' && (!Number.isInteger(value) || typeof value !== 'number'))
+      || (control.type === 'number' && typeof value !== 'number')
+      || (control.type === 'string' && typeof value !== 'string')
+      || (control.type === 'boolean' && typeof value !== 'boolean')
+      || (control.choices !== undefined && !control.choices.includes(value))) {
+      throw new Error(`Invalid "${id}" value for serving mode "${selected.id}"`)
+    }
+  }
+}
+
+function workerIdentity(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  return typeof record.workerConfigIdentity === 'string'
+    ? record.workerConfigIdentity
+    : typeof record.worker_config_identity === 'string' ? record.worker_config_identity : undefined
+}
+
+function workerConfigurationMatches(current: ModelSelection, loaded: NonNullable<ModelCatalogModel['loaded']>, model: ModelCatalogModel): boolean {
+  const mode = current.mode ?? model.defaultLoadMode
+  const loadedMode = loaded.mode ?? model.defaultLoadMode
+  const defaults = (value: string | undefined) => Object.fromEntries(
+    model.loadModes?.find(candidate => candidate.id === value)?.options
+      ?.flatMap(option => option.default === undefined ? [] : [[option.id, option.default] as const]) ?? [],
+  )
+  const options = { ...defaults(mode), ...current.options }
+  const loadedOptions = { ...defaults(loadedMode), ...loaded.options }
+  return (current.contextWindow ?? model.context?.defaultContextWindow) === (loaded.contextWindow ?? model.context?.defaultContextWindow)
+    && mode === loadedMode
+    && Object.keys(options).length === Object.keys(loadedOptions).length
+    && Object.entries(options).every(([key, value]) => loadedOptions[key] === value)
 }
 
 /** Wrap an error result echoing the request's rpcId. */
@@ -1301,6 +1410,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     const selection: WebModelSelectionRef = {
       get current(): ModelSelection {
         if (picked !== undefined) return picked
+        const saved = [...agent.session.events].reverse().find(event => event.type === 'model/selection')
+        if (saved?.type === 'model/selection') return saved.data.selection
         // Incrementally folded by the session, so a per-step read costs
         // O(new events) rather than a rescan.
         const logged = agent.session.requestHeader()?.config
@@ -1313,6 +1424,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           ...logged.reasoningEffort === undefined
             ? {}
             : { reasoningEffort: logged.reasoningEffort },
+          ...logged.mode === undefined ? {} : { mode: logged.mode },
+          ...logged.options === undefined ? {} : { options: { ...logged.options } },
+          outputLimit: logged.maxTokens ?? 'auto',
         }
       },
       set current(next: ModelSelection) {
@@ -1417,6 +1531,28 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
   })
   const agentFor: typeof resolveAgent = sessionId =>
     serializeWorkspaceOperation(() => resolveAgent(sessionId))
+
+  const llmRequestLifecycle: LlmRequestLifecycle = {
+    async observe(event) {
+      if (event.sessionId === undefined) return
+      try {
+        const found = await agentFor(event.sessionId as SessionId)
+        if ('error' in found) return
+        found.agent.session.append('model/lifecycle', {
+          ...event.operationId === undefined ? {} : { operationId: event.operationId },
+          ...event.turn === undefined ? {} : { turn: event.turn },
+          ...event.step === undefined ? {} : { step: event.step },
+          phase: event.phase,
+          outcome: event.outcome ?? (event.phase === 'completed' ? 'succeeded' : event.phase === 'failed' ? 'failed' : 'pending'),
+          ...event.reason === undefined ? {} : { reason: event.reason },
+          ...event.swap === undefined ? {} : { swap: event.swap },
+        })
+      } catch {
+        // Lifecycle rendering must never alter the request result.
+      }
+    },
+  }
+  ctx.provide('llmRequestLifecycle', llmRequestLifecycle)
 
   /** Send one transient frame to every connected mux consumer. */
   function broadcast(payload: MuxFrame): void {
@@ -2399,13 +2535,24 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         const found = await agentFor(sessionId)
         if ('error' in found) return err(request, found.error)
         const current = selectionFor(found.agent).current
-        const { groups, failures } = await buildModelCatalog(ctx)
+        const { groups, failures } = await withWorkerSnapshots(ctx, await buildModelCatalog(ctx))
         const routable = routeServed(current.provider)
-        return ok(request, { current: { ...current }, routable, groups, failures })
+        const loaded = groups.find(group => group.id === current.provider)?.models
+          .find(model => model.id === current.model)?.loaded
+        const catalogModel = groups.find(group => group.id === current.provider)?.models
+          .find(model => model.id === current.model)
+        const conflict = loaded === undefined || catalogModel === undefined
+          || workerConfigurationMatches(current, loaded, catalogModel)
+          ? undefined
+          : { loaded }
+        return ok(request, { current: { ...current }, routable, groups, failures, ...conflict === undefined ? {} : { conflict } })
       },
 
       async selectModel(request) {
-        const { sessionId, provider, model, contextWindow, bestTryContext, reasoningEffort } = request.payload
+        const {
+          sessionId, provider, model, contextWindow, bestTryContext, reasoningEffort,
+          mode, options, outputLimit, expectedWorkerConfigIdentity, resolution,
+        } = request.payload
         const found = await agentFor(sessionId)
         if ('error' in found) return err(request, found.error)
         return serializeImageAdmission(found.agent, async () => {
@@ -2418,28 +2565,130 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
               ...reasoningEffort === undefined
                 ? {}
                 : { reasoningEffort: ReasoningEffortId(reasoningEffort) },
+              ...mode === undefined ? {} : { mode },
+              ...options === undefined ? {} : { options },
+              ...typeof outputLimit !== 'number' ? {} : { maxTokens: outputLimit },
+              ...expectedWorkerConfigIdentity === undefined ? {} : { workerConfigIdentity: expectedWorkerConfigIdentity },
             })
+            const info = await ctx.llm.resolveModelInfo(resolved.provider, resolved.model)
+            validateServingSelection(info, mode, options)
             const pendingImage = [...found.agent.inbox.nextTurn, ...found.agent.inbox.nextStep]
               .some(message => contentHasImage(message.content))
             if (pendingImage || messagesHaveImage(found.agent.session.deriveMessages())) {
-              const info = await ctx.llm.resolveModelInfo(resolved.provider, resolved.model)
-              if (info.inputModalities !== undefined && !info.inputModalities.includes('image')) {
+              const selectedMode = info.loadModes?.find(candidate => candidate.id === (mode ?? info.defaultLoadMode))
+              const modalities = selectedMode?.inputModalities ?? info.inputModalities
+              if (modalities !== undefined && !modalities.includes('image')) {
                 return err(request, {
                   code: 'model-unavailable',
-                  message: `Model "${resolved.model}" does not accept image input, but this session already contains images; select an image-capable model.`,
+                  message: `Model "${resolved.model}" does not accept image input, but this session already contains images;`
+                    + ' select an image-capable model.',
                   details: { provider, model },
                 })
               }
             }
+            let switchedWorkerConfigIdentity: string | undefined
+            let switchOperationId: string | undefined
+            if (resolution === 'switch-worker') {
+              const controls = ctx.get('modelControls')
+              if (controls === undefined) {
+                return err(request, {
+                  code: 'model-controls-unavailable',
+                  message: 'managed model controls are unavailable',
+                  details: {},
+                })
+              }
+              let operation = await controls.operation({
+                action: 'load',
+                model: resolved.model,
+                ...resolved.contextWindow === undefined ? {} : { context: resolved.contextWindow },
+                ...mode === undefined ? {} : { mode },
+                ...options === undefined ? {} : { options },
+                ...expectedWorkerConfigIdentity === undefined ? {} : { expectedWorkerConfigIdentity },
+                switchWorker: true,
+                sessionId: String(found.agent.id),
+              })
+              switchOperationId = operation.operationId
+              found.agent.session.append('model/lifecycle', {
+                ...operation.operationId === undefined ? {} : { operationId: operation.operationId },
+                phase: operation.phase,
+                outcome: operation.outcome,
+                ...typeof operation.reason === 'object' && operation.reason !== null
+                  ? { reason: operation.reason as { code?: string; message?: string } }
+                  : {},
+                ...operation.swap === undefined ? {} : { swap: operation.swap },
+              })
+              let lastLifecycle = `${operation.phase}:${operation.outcome}`
+              const terminal = (value: typeof operation) =>
+                ['ready', 'unloaded', 'failed', 'rejected', 'cancelled', 'expired'].includes(value.phase)
+                || ['failed', 'rejected', 'cancelled', 'expired'].includes(value.outcome)
+              while (operation.operationId !== undefined && !terminal(operation)) {
+                await new Promise<void>(resolve => setTimeout(resolve, 250))
+                operation = await controls.operationStatus({ operationId: operation.operationId })
+                const lifecycle = `${operation.phase}:${operation.outcome}`
+                if (lifecycle !== lastLifecycle) {
+                  found.agent.session.append('model/lifecycle', {
+                    ...operation.operationId === undefined ? {} : { operationId: operation.operationId },
+                    phase: operation.phase,
+                    outcome: operation.outcome,
+                    ...typeof operation.reason === 'object' && operation.reason !== null
+                      ? { reason: operation.reason as { code?: string; message?: string } }
+                      : {},
+                    ...operation.swap === undefined ? {} : { swap: operation.swap },
+                  })
+                  lastLifecycle = lifecycle
+                }
+              }
+              if (operation.phase !== 'ready') {
+                return err(request, {
+                  code: 'model-unavailable',
+                  message: typeof operation.reason === 'object' && operation.reason !== null && 'message' in operation.reason
+                    ? String(operation.reason.message)
+                    : 'worker switch did not reach ready state',
+                  details: {
+                    provider,
+                    model,
+                    ...switchOperationId === undefined ? {} : { operationId: switchOperationId },
+                  },
+                })
+              }
+              switchedWorkerConfigIdentity = workerIdentity((await controls.snapshot({
+                model: resolved.model,
+                ...resolved.contextWindow === undefined ? {} : { context: resolved.contextWindow },
+                ...mode === undefined ? {} : { mode },
+              })).observed)
+              if (switchedWorkerConfigIdentity === undefined) {
+                return err(request, {
+                  code: 'model-unavailable',
+                  message: 'worker switch completed without an authoritative worker identity',
+                  details: { provider, model },
+                })
+              }
+            }
+            const observed = resolution === 'adopt-loaded'
+              ? (await ctx.llm.resolveModelInfo(resolved.provider, resolved.model)).loaded
+              : undefined
+            const effectiveContextWindow = observed?.contextWindow ?? resolved.contextWindow
+            const workerConfigIdentity = switchedWorkerConfigIdentity
+              ?? observed?.identity
             const selected: ModelSelection = {
               provider: resolved.provider,
               model: resolved.model,
-              ...resolved.contextWindow === undefined ? {} : { contextWindow: resolved.contextWindow },
+              ...effectiveContextWindow === undefined ? {} : { contextWindow: effectiveContextWindow },
               ...resolved.bestTryContext === undefined ? {} : { bestTryContext: resolved.bestTryContext },
-              ...resolved.reasoningEffort === undefined
+              ...reasoningEffort === undefined
                 ? {}
-                : { reasoningEffort: resolved.reasoningEffort },
+                : { reasoningEffort: ReasoningEffortId(reasoningEffort) },
+              ...observed?.mode === undefined
+                ? mode === undefined ? {} : { mode }
+                : { mode: observed.mode },
+              ...observed?.options === undefined
+                ? options === undefined ? {} : { options: { ...options } }
+                : { options: { ...observed.options } },
+              outputLimit: outputLimit ?? 'auto',
+              ...workerConfigIdentity === undefined ? {} : { workerConfigIdentity },
             }
+            found.agent.session.append('model/selection', { selection: selected })
+            await flushLiveSessionLog({ sessions: ctx.get('sessions') }, found.agent.id)
             selectionFor(found.agent).current = selected
             try {
               await defaults.saveDefaultModelSelection?.(selected)
@@ -2448,7 +2697,10 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                 `api-proxy: the model switch applies to this session but was not saved as the default: ${String(error)}`,
               )
             }
-            return ok(request, { selected: { ...selected } })
+            return ok(request, {
+              selected: { ...selected },
+              ...switchOperationId === undefined ? {} : { operationId: switchOperationId },
+            })
           } catch (error: unknown) {
             return err(request, {
               code: 'model-unavailable',
@@ -3545,7 +3797,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       },
 
       async models(request) {
-        return ok(request, await buildModelCatalog(ctx))
+        return ok(request, await withWorkerSnapshots(ctx, await buildModelCatalog(ctx)))
       },
 
       async discoverModels(request, signal) {
@@ -3570,6 +3822,46 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             details: { settingsNs, ...baseURL === undefined ? {} : { baseURL } },
           })
         }
+      },
+    },
+
+    vortex: {
+      models: {
+        async snapshot(request) {
+          const controls = ctx.get('modelControls')
+          if (controls === undefined) return err<ModelControlEnvelope>(request, {
+            code: 'model-controls-unavailable', message: 'managed model controls are unavailable', details: {},
+          })
+          return ok(request, await controls.snapshot(request.payload))
+        },
+
+        async operation(request) {
+          const controls = ctx.get('modelControls')
+          if (controls === undefined) return err<ModelControlEnvelope>(request, {
+            code: 'model-controls-unavailable', message: 'managed model controls are unavailable', details: {},
+          })
+          const operation = await controls.operation(request.payload)
+          const sessionId = request.payload.sessionId as SessionId | undefined
+          const session = sessionId === undefined ? undefined : ctx.sessions.get(sessionId)
+          session?.append('model/lifecycle', {
+            ...operation.operationId === undefined ? {} : { operationId: operation.operationId },
+            ...request.payload.turn === undefined ? {} : { turn: request.payload.turn },
+            ...request.payload.step === undefined ? {} : { step: request.payload.step },
+            phase: operation.phase,
+            outcome: operation.outcome,
+            ...typeof operation.reason === 'object' && operation.reason !== null ? { reason: operation.reason as { code?: string; message?: string } } : {},
+            ...operation.swap === undefined ? {} : { swap: operation.swap },
+          })
+          return ok(request, operation)
+        },
+
+        async operationStatus(request) {
+          const controls = ctx.get('modelControls')
+          if (controls === undefined) return err<ModelControlEnvelope>(request, {
+            code: 'model-controls-unavailable', message: 'managed model controls are unavailable', details: {},
+          })
+          return ok(request, await controls.operationStatus(request.payload))
+        },
       },
     },
 

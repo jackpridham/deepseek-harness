@@ -73,7 +73,8 @@ turn/start
      step/start
      append entered messages as user/message
      derive model history from the log
-     agent/request -> llm/stream -> assistant/chunk* -> assistant/message
+     agent/request -> output admission (token meter, optional compaction, effective cap) -> llm/stream -> assistant/chunk* -> assistant/message
+     capped output -> output/continuation -> durable next-step continuation (at most three)
      tool/call* -> tools/pre-execute -> tools/execute -> tools/post-execute -> tool/result*
      step/end
      tools owe another request, or next-step input arrived -> claim -> next step
@@ -82,6 +83,10 @@ turn/end
 ```
 
 `turn/*`, `step/*`, `user/message`, `assistant/*`, and `tool/*` are durable session events; the rest are live extension points across three domains. `agent/pre-step`, `agent/request`, `llm/stream`, and the three `tools/*` events are waterfalls, whose listeners must call `next()` to delegate; `agent/turn-stopping` is serial and has no `next()`.
+
+`output/budget` records the requested and effective allowance after the complete assembled request is measured. `output/continuation` records a capped response's bounded same-turn recovery, so reconnecting clients distinguish it from a terminal `max-tokens` turn.
+
+Token admission is estimate-based. Image attachments use their possible base64 wire length when an adapter has no model-native vision-token estimate; the configured safety margin and bounded provider context-overflow recovery remain the protection for tokenizer or vision-accounting differences.
 
 Input reaches the driver through one inbox. Some messages wake it immediately; injected context waits in the inbox until another message does.
 

@@ -24,7 +24,7 @@ import type { ModelSelectInjected } from './slots.ts'
 import css from './ModelSelect.module.css'
 
 /** Which sibling selector owns the open dropdown. */
-type Pane = 'model' | 'context' | 'effort'
+type Pane = 'model' | 'context' | 'effort' | 'output' | 'mode'
 
 /** One dynamic effort row; undefined means preserve the provider default. */
 interface EffortChoice {
@@ -52,6 +52,8 @@ export function ModelSelect(
     () => directory.getSnapshot(),
   )
   const [open, setOpen] = useState(false)
+  const [resolutionPending, setResolutionPending] = useState<'adopt-loaded' | 'switch-worker'>()
+  const [customOutput, setCustomOutput] = useState('')
   const [pane, setPane] = useState<Pane>('model')
   const [menuLayout, setMenuLayout] = useState({ below: false, maxHeight: 360 })
   // The in-menu error strip serves catalog loads (its Retry re-runs the
@@ -66,21 +68,25 @@ export function ModelSelect(
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
   const id = useId()
 
-  const choices = useMemo(() => state.groups.flatMap(group =>
-    group.models.map(model => ({
-      group,
-      model,
-      selection: {
-        provider: group.id,
-        model: model.id,
-        ...model.context?.defaultContextWindow === undefined
-          ? {}
-          : { contextWindow: model.context.defaultContextWindow },
-        ...model.reasoning?.defaultEffort === undefined
-          ? {}
-          : { reasoningEffort: model.reasoning.defaultEffort },
-      } satisfies ModelSelection,
-    }))), [state.groups])
+  const orderedGroups = useMemo(() => [true, false].flatMap(selectable => state.groups
+    .map(group => ({ ...group, models: group.models.filter(model => (model.selectable !== false) === selectable) }))
+    .filter(group => group.models.length > 0)), [state.groups])
+  const choices = useMemo(() => orderedGroups.flatMap(group =>
+    group.models.map((model) => {
+      const contextWindow = model.loaded?.contextWindow ?? model.context?.defaultContextWindow
+      const mode = model.loaded?.mode ?? model.defaultLoadMode
+      return ({
+        group,
+        model,
+        selection: {
+          provider: group.id,
+          model: model.id,
+          ...mode === undefined ? {} : { mode },
+          ...model.loaded?.options === undefined ? {} : { options: model.loaded.options },
+          ...contextWindow === undefined ? {} : { contextWindow },
+
+        } satisfies ModelSelection,
+      })})), [orderedGroups])
   const selectedIndex = state.current === null
     ? -1
     : choices.findIndex(c => c.selection.provider === state.current?.provider && c.selection.model === state.current.model)
@@ -101,6 +107,7 @@ export function ModelSelect(
       ? t('effort.providerDefault')
       : reasoning.efforts.find(level => level.id === effectiveEffort)?.name ?? effectiveEffort
   const effortLabel = currentEffortLabel ?? t('menu.effort')
+  const effortOrigin = state.current?.reasoningEffort === undefined ? 'Model default' : 'Session preference'
   const effortChoices = useMemo<readonly EffortChoice[]>(() => reasoning === undefined
     ? []
     : [
@@ -114,7 +121,10 @@ export function ModelSelect(
         ...effort.description === undefined ? {} : { description: effort.description },
       })),
     ], [reasoning, t])
-  const busy = state.status === 'selecting'
+  const busy = state.status === 'selecting' || state.status === 'loading'
+  const loaded = state.conflict?.loaded ?? currentChoice?.model.loaded
+  const effectiveMode = state.current?.mode ?? currentChoice?.model.defaultLoadMode
+  const conflict = state.conflict !== null && state.conflict !== undefined
 
   const reload = (): void => {
     lastActionRef.current = 'load'
@@ -181,7 +191,7 @@ export function ModelSelect(
   }
 
   const moveFocus = (offset: number): void => {
-    const items = itemRefs.current.filter(item => item !== null)
+    const items = itemRefs.current.filter(item => item !== null && !item.disabled)
     if (items.length === 0) return
     const active = items.findIndex(item => item === document.activeElement)
     const next = (Math.max(active, 0) + offset + items.length) % items.length
@@ -224,7 +234,15 @@ export function ModelSelect(
       return
     }
     lastActionRef.current = 'select'
-    void select(selection).then(settleSelection)
+    const outputLimit = state.current?.outputLimit
+    const target = choices.find(choice => choice.selection.provider === selection.provider && choice.selection.model === selection.model)
+    const unsupported = typeof outputLimit === 'number' && target?.model.maxTokens !== undefined && outputLimit > target.model.maxTokens
+    const effort = state.current?.reasoningEffort
+    const retainedEffort = effort !== undefined && target?.model.reasoning?.efforts.some(level => level.id === effort) ? effort : undefined
+    void select({ ...selection, ...retainedEffort === undefined ? {} : { reasoningEffort: retainedEffort }, outputLimit: unsupported ? 'auto' : outputLimit ?? 'auto' }).then((accepted) => {
+      settleSelection(accepted)
+      if (accepted && unsupported) { toastSeq.current += 1; setToast({ seq: toastSeq.current, text: 'Output reset to Auto: the selected model does not support the previous allowance.' }) }
+    })
   }
 
   const chooseEffort = (effort: string | undefined): void => {
@@ -234,12 +252,12 @@ export function ModelSelect(
       return
     }
     const selection: ModelSelection = {
-      provider: state.current.provider,
-      model: state.current.model,
+      ...state.current,
       ...effectiveContext === undefined ? {} : { contextWindow: effectiveContext },
       ...state.current.bestTryContext === true ? { bestTryContext: true } : {},
       ...effort === undefined ? {} : { reasoningEffort: effort },
     }
+    if (effort === undefined) delete selection.reasoningEffort
     lastActionRef.current = 'select'
     void select(selection).then(settleSelection)
   }
@@ -251,14 +269,27 @@ export function ModelSelect(
       return
     }
     const selection: ModelSelection = {
-      provider: state.current.provider,
-      model: state.current.model,
+      ...state.current,
       contextWindow,
-      ...bestTryContext ? { bestTryContext: true } : {},
-      ...effectiveEffort === undefined ? {} : { reasoningEffort: effectiveEffort },
+      bestTryContext,
+
     }
     lastActionRef.current = 'select'
     void select(selection).then(settleSelection)
+  }
+
+  const resolveConflict = (resolution: 'adopt-loaded' | 'switch-worker'): void => {
+    if (state.current === null || loaded === undefined || resolutionPending !== undefined) return
+    setResolutionPending(resolution)
+    void select(state.current, resolution, loaded.identity).then(settleSelection).finally(() => setResolutionPending(undefined))
+  }
+
+  const chooseOption = (id: string, value: string | number | boolean | undefined): void => {
+    if (state.current === null) return
+    const options = Object.fromEntries(Object.entries(state.current.options ?? {}).filter(([key]) => key !== id))
+    if (value !== undefined) options[id] = value
+    lastActionRef.current = 'select'
+    void select({ ...state.current, options }).then((accepted) => { if (!accepted) settleSelection(false) })
   }
 
   const modelLabel = currentChoice?.model.name ?? t('trigger.fallback')
@@ -323,6 +354,7 @@ export function ModelSelect(
             aria-label={reasoning === undefined
               ? t('trigger.effortUnsupported')
               : t('trigger.effortAria', { effort: effortLabel })}
+            title={reasoning === undefined ? undefined : `${effortOrigin} · Per-request reasoning`}
             aria-haspopup={reasoning === undefined ? undefined : 'menu'}
             aria-expanded={reasoning === undefined ? undefined : open && pane === 'effort'}
             aria-controls={reasoning === undefined || !open ? undefined : `${id}-menu`}
@@ -336,6 +368,19 @@ export function ModelSelect(
         </Tooltip>
       )}
 
+      {currentChoice?.model.loadModes !== undefined && currentChoice.model.loadModes.length > 0 && (
+        <button type="button" className={css.trigger} disabled={locked || busy} aria-label="Serving mode" aria-haspopup="menu" aria-expanded={open && pane === 'mode'} onClick={event => show('mode', event.currentTarget)}>
+          {currentChoice.model.loadModes.find(mode => mode.id === effectiveMode)?.name ?? 'Mode'}<IconChevronDownOutline14 />
+        </button>
+      )}
+      {currentChoice !== undefined && (
+        <button type="button" className={css.trigger} disabled={locked || busy}
+          aria-label="Output allowance" aria-haspopup="menu" aria-expanded={open && pane === 'output'}
+          onClick={(event) => { setCustomOutput(typeof state.current?.outputLimit === 'number' ? String(state.current.outputLimit) : ''); show('output', event.currentTarget) }}>
+          Output {typeof state.current?.outputLimit === 'number' ? state.current.outputLimit.toLocaleString() : 'Auto'}
+          <IconChevronDownOutline14 />
+        </button>
+      )}
       {open && (
         <div
           id={`${id}-menu`}
@@ -345,6 +390,49 @@ export function ModelSelect(
           aria-busy={state.status === 'loading' || busy}
           style={{ '--dsh-model-menu-max-height': `${menuLayout.maxHeight}px` } as MenuStyle}
         >
+          {pane === 'mode' && currentChoice?.model.loadModes?.map(mode => (
+            <button key={mode.id} ref={itemRef()} type="button" role="menuitemradio" aria-checked={effectiveMode === mode.id} className={css.option} disabled={busy}
+              onClick={() => { if (state.current !== null) { lastActionRef.current = 'select'; void select({ ...state.current, mode: mode.id, options: {} }).then(settleSelection) } }}>
+              {mode.name}
+            </button>
+          ))}
+          {pane === 'mode' && currentChoice?.model.loadModes?.find(mode => mode.id === effectiveMode)?.options?.map(option => (
+            <label key={option.id} className={css.outputForm}>
+              <input type="checkbox" checked={option.id in (state.current?.options ?? {})} disabled={busy} aria-label={`Include ${option.name}`} onChange={event => chooseOption(option.id, event.target.checked ? option.default ?? (option.type === 'boolean' ? false : option.type === 'string' ? '' : 0) : undefined)} />
+              {option.name}
+              {option.id in (state.current?.options ?? {}) && (option.choices !== undefined
+                ? <select
+                  aria-label={option.name}
+                  disabled={busy}
+                  value={String(state.current?.options?.[option.id])}
+                  onChange={event => chooseOption(option.id, option.choices?.find(value => String(value) === event.target.value))}
+                >
+                  {option.choices.map(value => <option key={String(value)} value={String(value)}>{String(value)}</option>)}
+                </select>
+                : option.type === 'boolean'
+                  ? <input type="checkbox" aria-label={option.name} disabled={busy} checked={state.current?.options?.[option.id] === true} onChange={event => chooseOption(option.id, event.target.checked)} />
+                  : <input aria-label={option.name} disabled={busy} type={option.type === 'string' ? 'text' : 'number'} step={option.type === 'integer' ? 1 : 'any'} value={String(state.current?.options?.[option.id] ?? '')} onChange={event => chooseOption(option.id, option.type === 'string' ? event.target.value : Number(event.target.value))} />)}
+            </label>
+          ))}
+          {pane === 'output' && (
+            <div className={css.groups}>
+              <p className={css.description}>Completion allowance includes reasoning and tool arguments. Context is selected separately.</p>
+              {(['auto', 4096, 8192, 16384, 32768, 65536] as const).filter(value => value === 'auto' || currentChoice?.model.maxTokens === undefined || value <= currentChoice.model.maxTokens).map(value => (
+                <button ref={itemRef()} key={value} type="button" role="menuitemradio"
+                  aria-checked={(state.current?.outputLimit ?? 'auto') === value} className={css.option} disabled={busy}
+                  onClick={() => { if (state.current !== null) { lastActionRef.current = 'select'; void select({ ...state.current, outputLimit: value }).then(settleSelection) } }}>
+                  {value === 'auto' ? 'Auto' : value.toLocaleString()}
+                </button>
+              ))}
+              <form className={css.outputForm} onSubmit={(event) => {
+                event.preventDefault()
+                if (state.current !== null) { lastActionRef.current = 'select'; void select({ ...state.current, outputLimit: Number(customOutput) }).then(settleSelection) }
+              }}>
+                <label>Custom tokens<input type="number" min={1} step={1} max={currentChoice?.model.maxTokens} required value={customOutput} onChange={event => setCustomOutput(event.target.value)} /></label>
+                <button className={css.retry} disabled={busy}>Apply</button>
+              </form>
+            </div>
+          )}
           {pane === 'model' && (
             <>
               {state.status === 'loading' && (
@@ -363,10 +451,10 @@ export function ModelSelect(
                 </div>
               ))}
               <div className={clsx(css.groups, 'scrollable')}>
-                {state.groups.map((group) => {
-                  const headingId = `${id}-${group.id}`
+                {orderedGroups.map((group, groupIndex) => {
+                  const headingId = `${id}-${group.id}-${groupIndex}`
                   return (
-                    <section role="group" aria-labelledby={headingId} className={css.group} key={group.id}>
+                    <section role="group" aria-labelledby={headingId} className={css.group} key={`${group.id}-${groupIndex}`}>
                       <div className={css.groupTitle} id={headingId}>{group.name}</div>
                       {group.models.map((model) => {
                         const selected = state.current?.provider === group.id && state.current.model === model.id
@@ -469,6 +557,7 @@ export function ModelSelect(
 
           {pane === 'effort' && (
             <>
+              <p className={css.status}>{effortOrigin} · Per-request reasoning</p>
               {state.error !== null && lastActionRef.current === 'load' && (
                 <div className={css.error}>
                   <span>{t('error.action', { message: state.error })}</span>
@@ -503,6 +592,14 @@ export function ModelSelect(
               </div>
             </>
           )}
+        </div>
+      )}
+      {conflict && loaded !== undefined && state.current !== null && (
+        <div className={css.conflict} role="alert" aria-busy={resolutionPending !== undefined}>
+          {resolutionPending !== undefined && <span role="status"><StateDot state="ongoing" /> {resolutionPending === 'switch-worker' ? 'Switching worker…' : 'Adopting loaded settings…'}</span>}
+          <span>Loaded worker differs: {loaded.contextWindow === undefined ? 'context unknown' : `${loaded.contextWindow / 1024}K`} · {loaded.mode ?? 'mode unknown'}. Choose settings for the next request.</span>
+          <button type="button" className={css.retry} disabled={busy || locked} onClick={() => resolveConflict('adopt-loaded')}>Adopt loaded settings</button>
+          <button type="button" className={css.retry} disabled={busy || locked} onClick={() => resolveConflict('switch-worker')}>Switch worker</button>
         </div>
       )}
       {toast !== null && (

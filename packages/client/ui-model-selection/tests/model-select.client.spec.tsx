@@ -32,6 +32,7 @@ const reasoning = {
 function state(overrides: Partial<ModelDirectoryState> = {}): ModelDirectoryState {
   return {
     current: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+    conflict: null,
     routable: true,
     groups: [{
       id: 'deepseek-official',

@@ -291,6 +291,19 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
         return { rpcId: request.rpcId, result: { ok: true, value: { models: [] } } }
       },
     },
+    vortex: {
+      models: {
+        async snapshot(request) {
+          return { rpcId: request.rpcId, result: { ok: true, value: { phase: 'unloaded', outcome: 'accepted' } } }
+        },
+        async operation(request) {
+          return { rpcId: request.rpcId, result: { ok: true, value: { phase: 'unloaded', outcome: 'accepted' } } }
+        },
+        async operationStatus(request) {
+          return { rpcId: request.rpcId, result: { ok: true, value: { phase: 'unloaded', outcome: 'accepted' } } }
+        },
+      },
+    },
     events: {
       mux: (_request, signal) => stream(muxFrames, signal),
       host: (_request, signal) => stream(hostFrames, signal),

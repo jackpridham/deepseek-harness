@@ -13,8 +13,8 @@
 
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import { foldConsumedWork } from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
+import { foldConsumedWork, installModelSelection } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { SessionId, type SessionEvent, type TurnEndReason } from '@deepseek-ai/dsh-session'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import {
@@ -25,6 +25,7 @@ import {
   childSessionMeta,
   finalAssistantOutput,
   resolveChildAgentOptions,
+  resolveChildModelSelection,
   resolveChildDepth,
 } from '@deepseek-ai/dsh-subagent'
 import type {
@@ -115,6 +116,8 @@ export async function startInProcessRun(
   // Capture before the first await: a later parent switch belongs to the
   // parent's future.
   const inherited = captureDelegatedPolicyOverrides(parent)
+  const agentOptions = resolveChildAgentOptions(parent, request.agentOptions, childDepth)
+  const selection = resolveChildModelSelection(parent, agentOptions, request.agentOptions)
 
   let structured: StructuredAttachment | undefined
   const setup = (childCtx: Context): void => {
@@ -123,6 +126,9 @@ export async function startInProcessRun(
       persona: request.persona,
       toolFilter: request.toolFilter,
     })
+    if (selection !== undefined) {
+      installModelSelection(childCtx, { current: selection, assembled: undefined } satisfies ModelSelectionRef)
+    }
     if (request.outputSchema !== undefined) {
       structured = attachStructuredRuntime(childCtx, request.outputSchema)
     }
@@ -133,7 +139,7 @@ export async function startInProcessRun(
     sessionId: childId,
     meta: childSessionMeta(parent, childDepth, activationBoundary),
     ...seed !== undefined ? { seed } : {},
-    agentOptions: resolveChildAgentOptions(parent, request.agentOptions, childDepth),
+    agentOptions,
     signal: request.signal,
     setup,
   })

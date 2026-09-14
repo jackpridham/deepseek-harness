@@ -6,7 +6,7 @@
 
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { ModelSelection } from '@deepseek-ai/dsh-agent'
+import type { ModelSelection, ModelServingOption, OutputLimit } from '@deepseek-ai/dsh-agent'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 
@@ -32,6 +32,12 @@ export interface AgentDefaultModelSettings {
   bestTryContext?: boolean
   /** Adapter-owned reasoning effort, or provider/default behavior when absent. */
   reasoningEffort?: string
+  /** Catalog-declared worker load mode. */
+  mode?: string
+  /** Catalog-declared serving options for the selected load mode. */
+  options?: Record<string, ModelServingOption>
+  /** Explicit output preference; `auto` keeps the model default. */
+  outputLimit?: OutputLimit
 }
 
 /** Schema of the default Agent model settings section. */
@@ -41,6 +47,9 @@ export const AGENT_DEFAULT_MODEL_SETTINGS_SCHEMA: z<AgentDefaultModelSettings> =
   contextWindow: z.number().step(1).min(1),
   bestTryContext: z.boolean(),
   reasoningEffort: z.string(),
+  mode: z.string(),
+  options: z.dict(z.union([z.string(), z.number(), z.boolean()])),
+  outputLimit: z.union(['auto' as const, z.number().step(1).min(1)]),
 })
 
 /** Composition entry for the default model selection. */
@@ -61,6 +70,9 @@ function selection(settings: AgentDefaultModelSettings): ModelSelection {
     ...settings.reasoningEffort === undefined
       ? {}
       : { reasoningEffort: ReasoningEffortId(settings.reasoningEffort) },
+    ...settings.mode === undefined ? {} : { mode: settings.mode },
+    ...settings.options === undefined ? {} : { options: settings.options },
+    ...settings.outputLimit === undefined ? {} : { outputLimit: settings.outputLimit },
   }
 }
 
@@ -110,6 +122,9 @@ export class AgentDefaultModelConfig extends Service {
       ...next.contextWindow === undefined ? {} : { contextWindow: next.contextWindow },
       ...next.bestTryContext === undefined ? {} : { bestTryContext: next.bestTryContext },
       ...next.reasoningEffort === undefined ? {} : { reasoningEffort: String(next.reasoningEffort) },
+      ...next.mode === undefined ? {} : { mode: next.mode },
+      ...next.options === undefined ? {} : { options: next.options },
+      ...next.outputLimit === undefined ? {} : { outputLimit: next.outputLimit },
     })
   }
 }
