@@ -133,35 +133,36 @@ function inferenceLifecycleObserver(ctx: Context): (detail: InferenceOperation) 
     if (detail.phase === 'settled') {
       const controller = polls.get(detail.operationId)
       polls.delete(detail.operationId)
+      controller?.abort()
       if (detail.sessionId !== undefined) {
         const controls = ctx.get('modelControls' as never) as ModelOperationStatus | undefined
         const lifecycle = ctx.get('llmRequestLifecycle' as never) as RequestLifecycle | undefined
         if (lifecycle !== undefined) void (async () => {
+          const local = {
+            ...detail,
+            operationId: detail.operationId,
+            phase: detail.outcome ?? 'cancelled',
+            outcome: detail.outcome ?? 'cancelled',
+          }
+          await lifecycle.observe(local)
           try {
             const status = controls === undefined ? undefined : await controls.operationStatus({ operationId: detail.operationId })
             const terminal = status !== undefined && ['completed', 'failed', 'rejected', 'cancelled'].includes(status.phase)
+            if (!terminal) return
             const reason = typeof status?.reason === 'object' && status.reason !== null
               ? status.reason as { code?: string; message?: string }
               : undefined
             await lifecycle.observe({
               ...detail,
               operationId: detail.operationId,
-              phase: terminal ? status.phase : detail.outcome ?? 'cancelled',
-              outcome: terminal ? status.outcome : detail.outcome ?? 'cancelled',
+              phase: status.phase,
+              outcome: status.outcome,
               ...reason === undefined ? {} : { reason },
               ...status?.swap === undefined ? {} : { swap: status.swap },
             })
-          } catch {
-            await lifecycle.observe({
-              ...detail,
-              operationId: detail.operationId,
-              phase: detail.outcome ?? 'cancelled',
-              outcome: detail.outcome ?? 'cancelled',
-            })
-          }
+          } catch { /* Local settlement is already durable. */ }
         })()
       }
-      controller?.abort()
       return
     }
     if (detail.sessionId === undefined) return

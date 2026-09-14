@@ -20,7 +20,7 @@ A capped response retains text and reasoning, drops every tool call from the ass
 
 ## Managed model contract
 
-The shared picker puts selectable models first and exposes catalog modes and output limits. Selection is durable before acknowledgment; fresh requests adopt verified loaded context, mode and generation before budgeting. An intentional configuration change requires an explicit worker switch; the accepted generation is saved only after readiness. Native model operations and ordinary inference share backend request IDs and lifecycle facts. The provider preserves structured terminal capacity errors through a maintained pi-ai patch.
+The shared picker puts selectable models first and exposes catalog modes and output limits. Selection is durable before acknowledgment; fresh requests adopt verified loaded context, mode and generation before budgeting. An intentional configuration change requires an explicit worker switch; the accepted generation is saved only after readiness. Native model operations and ordinary inference share backend request IDs and lifecycle facts. Ordinary chat alone surfaces those facts as conversation lifecycle rows; title and compaction retain backend correlation without extra rows. Stream settlement immediately records its completed, failed, or cancelled outcome before optional backend enrichment. The provider preserves structured terminal capacity errors through a maintained pi-ai patch.
 
 ## Validation
 

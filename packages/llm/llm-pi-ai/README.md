@@ -197,7 +197,7 @@ Conversion preserves logical request order without adding text, while the select
 
 pi-ai events become harness reasoning, text, tool-call, usage, and finish chunks. The adapter passes parsed tool arguments to the harness as raw JSON strings.
 
-Managed inference operations publish lifecycle updates until their stream settles. A status poll still in flight at settlement cannot publish a stale pending phase afterward.
+Managed ordinary-chat inference operations publish lifecycle updates until their stream settles; title and compaction calls retain backend correlation without creating conversation rows. Settlement immediately publishes the streamed terminal outcome, then optionally enriches it from backend status. A status poll still in flight at settlement cannot publish a stale pending phase afterward.
 
 #### Token effect
 

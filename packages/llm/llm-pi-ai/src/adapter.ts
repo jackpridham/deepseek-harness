@@ -562,8 +562,9 @@ export class PiAiAdapter extends LlmAdapter {
       ? contextRoute === undefined || contextRoute.model === model.id ? model : { ...model, id: contextRoute.model }
       : { ...model, id: loaded?.model ?? loadRoute?.model ?? model.id }
     const operationId = profile.modelsFromEndpoint === true ? randomUUID() : undefined
+    const observeOperation = operationId !== undefined && options.purpose === undefined
     const workerConfigIdentity = loaded?.identity ?? expectedWorkerIdentity(options)
-    let operationOutcome: 'completed' | 'failed' | 'cancelled' = 'cancelled'
+    let operationOutcome: 'completed' | 'failed' | 'cancelled' | undefined
     const reasoning = resolveReasoningLevel(
       model,
       options.reasoningEffort ?? profile.reasoningDefaults.get(options.model) ?? profile.reasoning,
@@ -594,7 +595,7 @@ export class PiAiAdapter extends LlmAdapter {
       const context = attachments === undefined
         ? toPiContext(options, undefined, onReplayDegrade)
         : await toPiContext(options, attachments, onReplayDegrade, profile.maxRequestImageBytes)
-      if (operationId !== undefined) {
+      if (observeOperation) {
         try {
           this.config.onInferenceOperation?.({
             operationId,
@@ -636,14 +637,19 @@ export class PiAiAdapter extends LlmAdapter {
           if (timeout !== undefined) throw timeout
           if (result.done) {
             exhausted = true
-            operationOutcome = 'completed'
+            operationOutcome ??= 'completed'
             return
+          }
+          if (result.value.type === 'finish') {
+            operationOutcome = result.value.reason.kind === 'error'
+              ? 'failed'
+              : result.value.reason.kind === 'aborted' ? 'cancelled' : 'completed'
           }
           yield result.value
         }
       } finally {
         if (!exhausted) {
-          operationOutcome = 'cancelled'
+          operationOutcome ??= 'cancelled'
           consumer.abort('pi-ai stream consumer stopped')
           try {
             await iterator.return(undefined)
@@ -663,7 +669,7 @@ export class PiAiAdapter extends LlmAdapter {
       throw error
     } finally {
       consumer.abort('pi-ai stream consumer stopped')
-      if (operationId !== undefined) {
+      if (observeOperation) {
         try {
           this.config.onInferenceOperation?.({
             operationId,
@@ -675,7 +681,7 @@ export class PiAiAdapter extends LlmAdapter {
             ...workerConfigIdentity === undefined ? {} : { workerConfigIdentity },
             ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
             phase: 'settled',
-            outcome: operationOutcome,
+            outcome: operationOutcome ?? 'completed',
             signal: upstream,
           })
         } catch {
