@@ -59,7 +59,7 @@ describe('BrowseDirectoryPicker', () => {
 
   it('cuts a level at maxEntries keeping the name-sorted head, and flags the cut', async () => {
     const ctx = new Context()
-    const fiber = ctx.plugin(BrowseDirectoryPicker, { maxEntries: 1 })
+    const fiber = ctx.plugin(BrowseDirectoryPicker, { maxEntries: 1, defaultDirectory: homedir() })
     await fiber.await()
     const bounded = ctx.get('directoryPicker')!.capability()
     if (bounded.kind !== 'browse') throw new Error('browse backend must advertise the browse capability')
@@ -168,7 +168,7 @@ describe('BrowseDirectoryPicker', () => {
 
   it('opens the configured default directory when no path is given', async () => {
     const ctx = new Context()
-    const fiber = ctx.plugin(BrowseDirectoryPicker, { defaultDirectory: root })
+    const fiber = ctx.plugin(BrowseDirectoryPicker, { defaultDirectory: root, maxEntries: 1000 })
     await fiber.await()
     const picker = ctx.get('directoryPicker')!.capability()
     if (picker.kind !== 'browse') throw new Error('browse backend must advertise the browse capability')
@@ -176,6 +176,19 @@ describe('BrowseDirectoryPicker', () => {
       const listing = await picker.list()
       expect(listing.path).toBe(root)
       expect(listing.canCreate).toBe(true)
+    } finally {
+      await fiber.dispose()
+    }
+  })
+
+  it('rejects a relative configured default rather than resolving against cwd', async () => {
+    const ctx = new Context()
+    const fiber = ctx.plugin(BrowseDirectoryPicker, { defaultDirectory: 'relative-workspace', maxEntries: 1000 })
+    await fiber.await()
+    try {
+      const picker = ctx.get('directoryPicker')!.capability()
+      if (picker.kind !== 'browse') throw new Error('expected browse backend')
+      await expect(picker.list()).rejects.toMatchObject({ code: 'directory-unreadable' })
     } finally {
       await fiber.dispose()
     }

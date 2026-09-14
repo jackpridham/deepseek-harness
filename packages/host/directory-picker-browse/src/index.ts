@@ -217,15 +217,15 @@ export default class BrowseDirectoryPicker extends DirectoryPicker {
     return this.browseCapability
   }
 
-  private async list(path?: string, signal?: AbortSignal): Promise<DirectoryListing> {
+  private async list(path = this.config.defaultDirectory, signal?: AbortSignal): Promise<DirectoryListing> {
     const home = homedir()
     // The seam contract takes fully qualified paths only; resolve() would
     // silently rebase a relative or empty wire value under the host process
     // cwd (or, for rooted drive-less Windows forms, its current drive).
-    if (path !== undefined && !fullyQualified(path)) {
+    if (!fullyQualified(path)) {
       throw new DirectoryPickerError('directory-unreadable', path, `cannot list "${path}": not a fully qualified path`)
     }
-    const target = resolve(path ?? this.config.defaultDirectory)
+    const target = resolve(path)
     // Stream the level (opendir, one dirent at a time) into a name-sorted
     // window of maxEntries + 1 candidates: memory stays bounded no matter how
     // many children the directory holds, the window keeps the name-sorted
