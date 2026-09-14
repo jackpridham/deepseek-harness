@@ -449,7 +449,13 @@ export class PiAiAdapter extends LlmAdapter {
     return this.refreshed(provider, false, model, _signal).then(async (snapshot) => {
       const profile = this.profileOf(snapshot, provider)
       const resolvedModel = this.modelOf(snapshot, provider, model)
+      // Catalog metadata remains selectable while worker telemetry is unavailable.
+      // stream() still requires a fresh, valid worker snapshot before dispatch.
       const loaded = await readyWorker(profile, model, await this.config.resolveApiKey(provider, profile), _signal)
+        .catch((error: unknown) => {
+          if (error instanceof LlmError && error.code === 'WORKER_STATE_UNAVAILABLE') return undefined
+          throw error
+        })
       const defaultLevel = describableReasoningLevel(
         resolvedModel,
         profile.reasoningDefaults.get(model) ?? profile.reasoning,
