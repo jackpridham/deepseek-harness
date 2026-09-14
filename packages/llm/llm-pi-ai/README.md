@@ -197,6 +197,8 @@ Conversion preserves logical request order without adding text, while the select
 
 pi-ai events become harness reasoning, text, tool-call, usage, and finish chunks. The adapter passes parsed tool arguments to the harness as raw JSON strings.
 
+Managed inference operations publish lifecycle updates until their stream settles. A status poll still in flight at settlement cannot publish a stale pending phase afterward.
+
 #### Token effect
 
 Generated content affects later inputs only after the loop records it. pi-ai folds reasoning tokens into output usage when the provider does not report them separately.

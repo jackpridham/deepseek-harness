@@ -668,7 +668,12 @@ export class ReactLoopAgent implements Agent {
       ...tools.length > 0 ? { tools } : {},
     })
     const contextWindow = preparedCall?.context?.contextWindow
-    const meter = this.loopCtx.get('tokenMeter') as { measure(session: Session, header: EpochHeader): { totalTokens: number } } | undefined
+    const presetServices = this.loopCtx.get('agentPresets') as {
+      serviceFor(agent: ReactLoopAgent, name: 'compaction'): unknown
+    } | undefined
+    const meter = this.ctx.get('tokenMeter') as {
+      measure(session: Session, header: EpochHeader): { totalTokens: number }
+    } | undefined
     if (contextWindow !== undefined && config.maxTokens !== undefined) {
       if (meter === undefined) throw new LlmError('token meter is required for output budgeting', 'OUTPUT_BUDGET_UNAVAILABLE')
       let measurement = meter.measure(session, header)
@@ -676,16 +681,17 @@ export class ReactLoopAgent implements Agent {
       if (available < config.maxTokens) {
         // Existing compaction owns balanced history replacement. It may decline
         // when no valid checkpoint can shrink this particular request.
-        const compaction = this.loopCtx.get('compaction') as {
+        const compaction = (presetServices?.serviceFor(this, 'compaction') ?? this.ctx.get('compaction')) as {
           compactForOutputBudget(
             agent: ReactLoopAgent, header: EpochHeader, contextWindow: number,
             reserveTokens: number, signal: AbortSignal,
           ): Promise<unknown>
         } | undefined
-        if (compaction === undefined) throw new LlmError('compaction is required when output space is exhausted', 'OUTPUT_BUDGET_UNAVAILABLE')
-        await compaction.compactForOutputBudget(
-          this, header, contextWindow, config.maxTokens + this.loopCtx.agentLoop.config.outputSafetyMargin, signal,
-        )
+        if (compaction !== undefined) {
+          await compaction.compactForOutputBudget(
+            this, header, contextWindow, config.maxTokens + this.loopCtx.agentLoop.config.outputSafetyMargin, signal,
+          )
+        }
         measurement = meter.measure(session, header)
         available = contextWindow - measurement.totalTokens - this.loopCtx.agentLoop.config.outputSafetyMargin
       }

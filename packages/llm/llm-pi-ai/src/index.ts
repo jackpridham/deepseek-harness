@@ -177,6 +177,7 @@ function inferenceLifecycleObserver(ctx: Context): (detail: InferenceOperation) 
       while (!controller.signal.aborted) {
         try {
           const status = await controls.operationStatus({ operationId: detail.operationId })
+          if (controller.signal.aborted) return
           const reason = typeof status.reason === 'object' && status.reason !== null
             ? status.reason as { code?: string; message?: string }
             : undefined

@@ -369,7 +369,7 @@ export class BasicCompactionEngine extends CompactionEngine {
       measurement = meter.measure(agent.session, header)
       if (measurement.totalTokens < threshold) return result
     }
-    throw new Error(`compaction cannot reserve ${reserveTokens} output tokens in a ${contextWindow}-token context`)
+    return result
   }
 
   /**
