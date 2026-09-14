@@ -4,15 +4,20 @@ import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import type { ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold } from './scaffold.ts'
 import { ZH_BROWSER_LOCALE, connectFreshWorkspaceZh } from './support.ts'
 
+interface SelectedModel {
+  provider: string
+  model: string
+  contextWindow?: number
+}
+
 interface HostModelReader {
   sessions: {
     models(request: { rpcId: unknown; payload: { sessionId: SessionId } }): Promise<{
-      result: { ok: boolean; value: { current: ModelSelection | null } }
+      result: { ok: boolean; value: { current: SelectedModel | null } }
     }>
   }
 }
