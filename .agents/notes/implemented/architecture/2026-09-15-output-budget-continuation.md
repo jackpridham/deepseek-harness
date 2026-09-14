@@ -8,7 +8,7 @@ A request could reserve an output cap without checking the assembled input again
 
 ## Decision
 
-The agent loop measures the actual durable surface with its provisional header before dispatch, reserves the configured safety margin, and resolves token metering and compaction through the agent's isolated preset service when present, falling back to the ordinary scoped service. It gives that compaction provider one opportunity to reduce history, then sends the smaller effective cap or fails without dispatch. `output/budget` records that admission.
+The agent loop measures the actual durable surface with its provisional header before dispatch, reserves the configured safety margin, and resolves isolated preset compaction through the agent-presets service, falling back to the ordinary scoped service. It gives that compaction provider one opportunity to reduce history, then sends the smaller effective cap or fails without dispatch. `output/budget` records that admission.
 
 A capped response retains text and reasoning, drops every tool call from the assembled message, and appends one durable continuation input. At most three additional requests are scheduled per turn. A repeated or empty text/reasoning result, continuation error, direct `AgentOptions.maxTokens` cap, or exhausted continuation bound ends recovery. `output/continuation` records the outcome. A successful continuation is a completed turn; an unrecovered cap remains `max-tokens`.
 
