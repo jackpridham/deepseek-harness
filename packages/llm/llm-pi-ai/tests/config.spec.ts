@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assertServiceable, Config } from '../src/config.ts'
+import { assertServiceable, Config, resolveProfiles } from '../src/config.ts'
 
 /** Validate one hand-declared route, with the caller's fields layered onto it. */
 const routeWith = (profile: Record<string, unknown>): (() => unknown) =>
@@ -17,6 +17,23 @@ const routeWith = (profile: Record<string, unknown>): (() => unknown) =>
 /** Validate that route with the caller's fields on its single model entry. */
 const configWith = (model: Record<string, unknown>): (() => unknown) =>
   routeWith({ models: [{ id: 'm', ...model }] })
+
+describe('endpoint-owned catalog bootstrap', () => {
+  it('accepts a custom provider without local model entries', () => {
+    const config = routeWith({ models: [], modelsFromEndpoint: true })() as Config
+    expect(() => { assertServiceable(config) }).not.toThrow()
+    expect(resolveProfiles(config.providers).get('acme-gateway')?.configuredMaxTokens.size).toBe(0)
+  })
+
+  it('still rejects an empty custom catalog without discovery', () => {
+    expect(() => { assertServiceable(routeWith({ models: [] })() as Config) }).toThrow(/resolves no models/)
+  })
+
+  it('requires a discovery endpoint even when local entries are absent', () => {
+    expect(() => resolveProfiles({ local: { api: 'openai-completions', modelsFromEndpoint: true } }))
+      .toThrow(/requires baseURL/)
+  })
+})
 
 describe('reasoning schema boundary', () => {
   it('rejects a level pi-ai does not know at the write that produced it', () => {

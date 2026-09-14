@@ -107,11 +107,11 @@ describe('request-level dynamic profiles', () => {
           api: 'openai-completions',
           baseURL: `${server.url}/v1`,
           modelsFromEndpoint: true,
-          models: [{ id: 'seed', contextWindow: 1024, maxTokens: 128 }],
         },
       },
     })
 
+    expect(server.paths).toEqual([])
     await expect(ctx.llm.listModels('inf01')).resolves.toEqual([{
       provider: 'inf01',
       id: 'qwen-next',
@@ -195,7 +195,6 @@ describe('request-level dynamic profiles', () => {
           api: 'openai-completions',
           baseURL: server.url,
           modelsFromEndpoint: true,
-          models: [{ id: 'seed', contextWindow: 1024, maxTokens: 128 }],
         },
       },
     })
@@ -229,7 +228,6 @@ describe('request-level dynamic profiles', () => {
           api: 'openai-completions',
           baseURL: server.url,
           modelsFromEndpoint: true,
-          models: [{ id: 'seed', contextWindow: 1024, maxTokens: 128 }],
         },
       },
     })

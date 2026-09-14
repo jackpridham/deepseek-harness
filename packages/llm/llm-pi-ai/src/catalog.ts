@@ -606,8 +606,10 @@ export interface RouteCatalogRequest {
   api?: string
   /** Endpoint override; absent defers to the catalog model, then the catalog provider. */
   baseURL?: string
-  /** Configured catalog; absent means the whole installed catalog for this route. */
+  /** Configured entries; absent inherits installed models unless endpoint discovery owns membership. */
   models?: readonly PiAiModelProfile[]
+  /** Permit an empty initial catalog while request-time endpoint discovery owns membership. */
+  modelsFromEndpoint?: boolean
   /** Installed-catalog customizations by model id; only meaningful while `models` is absent. */
   modelOverrides?: Readonly<Record<string, PiAiModelOverride>>
   /** Route-level wire-compatibility switches, landing on each model whose protocol declares them; entries override per field. */
@@ -835,8 +837,10 @@ export function resolveRouteModels(request: RouteCatalogRequest): RouteCatalog {
   // the same path with the same diagnostics and request-default semantics.
   const entries: readonly PiAiModelProfile[] = configured.length > 0
     ? configured
-    : [...defaults.values()].map(model => ({ id: model.id, ...overrides[model.id] }))
-  if (entries.length === 0) {
+    : request.modelsFromEndpoint === true
+      ? []
+      : [...defaults.values()].map(model => ({ id: model.id, ...overrides[model.id] }))
+  if (entries.length === 0 && request.modelsFromEndpoint !== true) {
     invalid(provider, 'resolves no models; the installed catalog does not describe this route, so its models'
       + ' must be listed in configuration')
   }

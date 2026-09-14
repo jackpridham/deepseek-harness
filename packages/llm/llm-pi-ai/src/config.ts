@@ -422,6 +422,7 @@ export function resolveProfiles(
     const displayName = source.displayName ?? provider
     const catalog = resolveRouteModels({
       provider,
+      ...source.modelsFromEndpoint === true ? { modelsFromEndpoint: true } : {},
       ...source.api === undefined ? {} : { api: source.api },
       ...source.baseURL === undefined ? {} : { baseURL: source.baseURL },
       ...source.models === undefined ? {} : { models: source.models },
