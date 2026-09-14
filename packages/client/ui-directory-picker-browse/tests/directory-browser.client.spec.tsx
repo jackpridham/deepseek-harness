@@ -32,6 +32,7 @@ function listingFor(path?: string): DirectoryListing {
         { name: '.config', path: `${HOME}/.config`, hidden: true },
         { name: 'Documents', path: DOCS, hidden: false },
       ],
+      canCreate: true,
       truncated: false,
     },
     '/': {
@@ -39,6 +40,7 @@ function listingFor(path?: string): DirectoryListing {
       home: HOME,
       crumbs: [{ name: '/', path: '/', hidden: false }],
       entries: [{ name: 'home', path: '/home', hidden: false }],
+      canCreate: true,
       truncated: false,
     },
     [`${HOME}/.config`]: {
@@ -51,6 +53,7 @@ function listingFor(path?: string): DirectoryListing {
         { name: '.config', path: `${HOME}/.config`, hidden: true },
       ],
       entries: [],
+      canCreate: true,
       truncated: false,
     },
     [DOCS]: {
@@ -63,6 +66,7 @@ function listingFor(path?: string): DirectoryListing {
         { name: 'Documents', path: DOCS, hidden: false },
       ],
       entries: [{ name: 'harness', path: HARNESS, hidden: false }],
+      canCreate: true,
       truncated: false,
     },
     [HARNESS]: {
@@ -76,6 +80,7 @@ function listingFor(path?: string): DirectoryListing {
         { name: 'harness', path: HARNESS, hidden: false },
       ],
       entries: [],
+      canCreate: true,
       truncated: false,
     },
   }
@@ -518,6 +523,7 @@ describe('DirectoryBrowser', () => {
       home: ROOT,
       crumbs: [{ name: 'C:\\', path: ROOT, hidden: false }],
       entries: [{ name: 'Users', path: 'C:\\Users', hidden: false }],
+      canCreate: true,
       truncated: false,
     }
     const winUsers: DirectoryListing = {
@@ -525,6 +531,7 @@ describe('DirectoryBrowser', () => {
       home: ROOT,
       crumbs: [{ name: 'C:\\', path: ROOT, hidden: false }, { name: 'users', path: TYPED, hidden: false }],
       entries: [],
+      canCreate: true,
       truncated: false,
     }
     mount({ listDirectory: vi.fn(async (path?: string) => (path === TYPED ? winUsers : winRoot)) })
@@ -775,6 +782,7 @@ describe('DirectoryBrowser', () => {
         home: ROOT,
         crumbs: chain,
         entries: [{ name: 'mid', path: MID, hidden: false }, { name: 'other', path: `${ROOT}/other`, hidden: false }],
+        canCreate: true,
         truncated: false,
       },
       [MID]: {
@@ -782,6 +790,7 @@ describe('DirectoryBrowser', () => {
         home: ROOT,
         crumbs: [...chain, { name: 'mid', path: MID, hidden: false }],
         entries: [{ name: 'leaf', path: LEAF, hidden: false }, { name: 'sibling', path: `${MID}/sibling`, hidden: false }],
+        canCreate: true,
         truncated: false,
       },
       [LEAF]: {
@@ -789,6 +798,7 @@ describe('DirectoryBrowser', () => {
         home: ROOT,
         crumbs: [...chain, { name: 'mid', path: MID, hidden: false }, { name: 'leaf', path: LEAF, hidden: false }],
         entries: [],
+        canCreate: true,
         truncated: false,
       },
     }
@@ -1115,6 +1125,7 @@ describe('DirectoryBrowser', () => {
         { name: 'Program Files', path: `${ROOT}Program Files`, hidden: false },
         { name: 'Users', path: `${ROOT}Users`, hidden: false },
       ],
+      canCreate: true,
       truncated: false,
     }
     const listDirectory = vi.fn(async () => windowsListing)
@@ -1218,6 +1229,7 @@ describe('DirectoryBrowser', () => {
         { name: 'data', path: '/srv/data', hidden: false },
       ],
       entries: [],
+      canCreate: true,
       truncated: false,
     }
     mount({ listDirectory: vi.fn(async () => outside) })
@@ -1267,6 +1279,7 @@ describe('DirectoryBrowser', () => {
       path: `${HOME}/fresh`, home: HOME,
       crumbs: [...listingFor(HOME).crumbs, { name: 'fresh', path: `${HOME}/fresh`, hidden: false }],
       entries: [],
+      canCreate: true,
       truncated: false,
     }
     b.listDirectory.mockImplementation((path?: string) =>
@@ -1549,6 +1562,7 @@ describe('DirectoryBrowser', () => {
           path: `${DOCS}/fresh`, home: HOME,
           crumbs: [...listingFor(DOCS).crumbs, { name: 'fresh', path: `${DOCS}/fresh`, hidden: false }],
           entries: [],
+          canCreate: true,
           truncated: false,
         }
       }
@@ -1681,7 +1695,7 @@ describe('DirectoryBrowser', () => {
   })
 
   it('names the create target by its path when the level reports no crumbs', async () => {
-    const bare: DirectoryListing = { path: '/srv/data', home: HOME, crumbs: [], entries: [], truncated: false }
+    const bare: DirectoryListing = { path: '/srv/data', home: HOME, crumbs: [], entries: [], canCreate: true, truncated: false }
     mount({ listDirectory: vi.fn(async () => bare) })
     await waitFor(() => { expect(screen.getByRole('button', { name: 'browser.newFolder' })).toBeTruthy() })
     await waitFor(() => {
@@ -1689,6 +1703,14 @@ describe('DirectoryBrowser', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'browser.newFolder' }))
     expect(screen.getByText('browser.createIn:/srv/data')).toBeTruthy()
+  })
+
+  it('disables New folder and explains when the Host cannot create in the listed directory', async () => {
+    mount({ listDirectory: vi.fn(async () => ({ ...listingFor(HOME), canCreate: false })) })
+    await waitFor(() => {
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: 'browser.newFolder' }).disabled).toBe(true)
+    })
+    expect(screen.getByRole('status').textContent).toBe('browser.newFolderUnavailable')
   })
 
   it('refuses to close the nested dialog while the creation is in flight', async () => {

@@ -15,6 +15,8 @@ import type { Context } from '@deepseek-ai/cordis'
 // Empty type imports carry the `loader` and `webServer` Context merges for the reads below.
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 import type {} from '@deepseek-ai/dsh-host-webserver'
+import { homedir } from 'node:os'
+import z from '@deepseek-ai/schemastery'
 import { canExecute, hasLinuxChooserBinary } from './probe.ts'
 import type { DirectoryPickerBackendKind } from './resolve.ts'
 import { resolveDirectoryPickerBackend } from './resolve.ts'
@@ -27,6 +29,17 @@ export { resolveDirectoryPickerBackend } from './resolve.ts'
 export const name = 'directory-picker-auto'
 /** Required services: the effective bind host (`webServer`) and the entry tree the backend mounts into (`loader`). */
 export const inject = ['webServer', 'loader']
+
+/** Validated adaptive chooser configuration. */
+export interface Config {
+  /** Directory the browse interaction opens when the caller supplies no path. */
+  defaultDirectory: string
+}
+
+/** The deployment-owned browse start directory; native interactions ignore it. */
+export const Config: z<Config> = z.object({
+  defaultDirectory: z.string().default(homedir()),
+})
 
 /**
  * Host backend package per resolved kind — fixed composition vocabulary, not a
@@ -59,7 +72,7 @@ export const SURFACE_PACKAGES: Record<DirectoryPickerBackendKind, string> = {
  * both faces of the mounted interaction (and their dependents) quiesced.
  * @param ctx - cordis context carrying the injected `webServer` and `loader`.
  */
-export async function apply(ctx: Context): Promise<void> {
+export async function apply(ctx: Context, config: Config): Promise<void> {
   const backend = resolveDirectoryPickerBackend({
     bindHost: ctx.webServer.host,
     platform: process.platform,
@@ -84,7 +97,9 @@ export async function apply(ctx: Context): Promise<void> {
     }
     try {
       for (const name of [BACKEND_PACKAGES[backend], SURFACE_PACKAGES[backend]]) {
-        ids.push(await ctx.loader.create({ name }))
+        ids.push(await ctx.loader.create(
+          name === BACKEND_PACKAGES.browse ? { name, config: { defaultDirectory: config.defaultDirectory } } : { name },
+        ))
       }
     } catch (cause) {
       // Setup owns the entries it created until it returns the disposer: leaving

@@ -90,7 +90,7 @@ afterEach(async () => {
 /** Write a two-row cordis.yml (webserver + chooser), then boot it through the real Loader. */
 async function loadComposition(
   bindHost: '127.0.0.1' | '0.0.0.0',
-  options: { failSurface?: boolean } = {},
+  options: { failSurface?: boolean; defaultDirectory?: string } = {},
 ): Promise<{ ctx: Context; configPath: string }> {
   root = await mkdtemp(join(tmpdir(), 'dsh-directory-picker-auto-'))
   const configPath = join(root, 'cordis.yml')
@@ -100,6 +100,7 @@ async function loadComposition(
     `    host: '${bindHost}'`,
     '    port: 0',
     `- name: '${AUTO}'`,
+    ...(options.defaultDirectory === undefined ? [] : ['  config:', `    defaultDirectory: '${options.defaultDirectory}'`]),
     '',
   ].join('\n'))
 
@@ -216,6 +217,14 @@ describe('real Loader composition', () => {
     expect(entryNames(ctx)).toContain(BROWSE_SURFACE)
     expect(entryNames(ctx)).not.toContain(NATIVE)
     expect(entryNames(ctx)).not.toContain(NATIVE_SURFACE)
+  })
+
+  it('forwards the configured browse default directory into the mounted backend', { timeout: 60_000 }, async () => {
+    const { ctx } = await loadComposition('0.0.0.0', { defaultDirectory: tmpdir() })
+    const picker = ctx.get('directoryPicker') as DirectoryPicker
+    const capability = picker.capability()
+    if (capability.kind !== 'browse') throw new Error('expected browse capability')
+    expect((await capability.list()).path).toBe(tmpdir())
   })
 
   it('unmounts the backend when the surface entry fails to load', { timeout: 60_000 }, async () => {

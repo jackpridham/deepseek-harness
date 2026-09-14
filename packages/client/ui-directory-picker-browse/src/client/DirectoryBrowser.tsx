@@ -49,7 +49,7 @@ import css from './DirectoryBrowser.module.css'
 export interface DirectoryBrowserProps {
   /** Dialog visibility (owner-local; closed unmounts nothing but resets on reopen). */
   open: boolean
-  /** List one directory level (absent path = the Host home directory); the signal aborts a superseded scan on the wire. */
+  /** List one directory level (absent path = the Host-configured default); the signal aborts a superseded scan on the wire. */
   listDirectory: (path?: string, signal?: AbortSignal) => Promise<DirectoryListing>
   /** Create one child directory under an existing parent. */
   createDirectory: (path: string, name: string) => Promise<string>
@@ -591,6 +591,10 @@ export function DirectoryBrowser({ open, listDirectory, createDirectory, onOpen,
 
   /** The folder a create or Open acts on: the selection, else the listed level. */
   const targetPath = selected?.path ?? parent?.path ?? null
+  // A selection is created inside the child preview. While that preview is
+  // loading, creation stays unavailable rather than borrowing the parent
+  // level's permission. The Host measured this in its own filesystem view.
+  const canCreate = selected === null ? parent?.canCreate === true : child?.canCreate === true
   const targetName = selected?.name
     ?? (parent === null ? '' : (displayCrumbs(parent, t('browser.home')).at(-1)?.name ?? parent.path))
 
@@ -955,7 +959,7 @@ export function DirectoryBrowser({ open, listDirectory, createDirectory, onOpen,
           <Button
             variant="outline"
             icon={<IconPlusOutline16 size={14} />}
-            disabled={parent === null || loading || parentInert || draftPending}
+            disabled={parent === null || !canCreate || loading || parentInert || draftPending}
             onClick={() => {
               setFolderDraft('')
               setCreateError(null)
@@ -963,6 +967,8 @@ export function DirectoryBrowser({ open, listDirectory, createDirectory, onOpen,
           >
             {t('browser.newFolder')}
           </Button>
+          {parent !== null && !canCreate && !loading && !parentInert && !draftPending
+          && <span className={css.createUnavailable} role="status">{t('browser.newFolderUnavailable')}</span>}
           <button
             type="button"
             className={clsx(css.showHiddenToggle, showHidden && css.showHiddenToggleActive)}

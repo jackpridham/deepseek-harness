@@ -351,6 +351,7 @@ describe('host domain schemas', () => {
       home: '/home/u',
       crumbs: [{ name: '/', path: '/', hidden: false }, { name: 'p', path: '/home/u/p', hidden: false }],
       entries: [{ name: '.dot', path: '/home/u/p/.dot', hidden: true }],
+      canCreate: true,
       truncated: false,
     })
     expect(listing.entries[0]?.hidden).toBe(true)

@@ -36,7 +36,7 @@ export const directoryEntrySchema = z.object({
   hidden: z.boolean(),
 }) satisfies z.ZodType<Wire<DirectoryEntry>>
 
-/** host.listDirectory request payload; an absent path lists the home directory. */
+/** host.listDirectory request payload; an absent path lists the configured default directory. */
 export const hostListDirectoryRequestSchema = z.object({
   path: z.string().optional(),
 }) satisfies z.ZodType<Wire<RequestPayload<'host.listDirectory'>>>
@@ -47,6 +47,7 @@ export const hostListDirectoryValueSchema = z.object({
   home: z.string(),
   crumbs: z.array(directoryEntrySchema),
   entries: z.array(directoryEntrySchema),
+  canCreate: z.boolean(),
   truncated: z.boolean(),
 }) satisfies z.ZodType<Wire<ResponseValue<'host.listDirectory'>>>
 

@@ -28,6 +28,8 @@ export interface DirectoryListing {
   crumbs: DirectoryEntry[]
   /** Direct child directories, name-sorted; symlinks to directories included. */
   entries: DirectoryEntry[]
+  /** Whether the Host service can create a child directory in this listed level. */
+  canCreate: boolean
   /** True when the backend cut `entries` at its complete-result bound (the name-sorted tail is absent). */
   truncated: boolean
 }
@@ -65,7 +67,7 @@ export interface HostApi {
 
   /**
    * List one directory level for the in-app browser; an absent path lists the
-   * host account's home directory. Only served under the `browse` capability;
+   * configured default directory. Only served under the `browse` capability;
    * unreadable or missing targets fail with `directory-unreadable`. The
    * carrier's request signal follows the caller, stopping the backend's scan
    * on disconnect or timeout.

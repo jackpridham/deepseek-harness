@@ -166,6 +166,21 @@ describe('BrowseDirectoryPicker', () => {
     expect(listing.path).toBe(homedir())
   })
 
+  it('opens the configured default directory when no path is given', async () => {
+    const ctx = new Context()
+    const fiber = ctx.plugin(BrowseDirectoryPicker, { defaultDirectory: root })
+    await fiber.await()
+    const picker = ctx.get('directoryPicker')!.capability()
+    if (picker.kind !== 'browse') throw new Error('browse backend must advertise the browse capability')
+    try {
+      const listing = await picker.list()
+      expect(listing.path).toBe(root)
+      expect(listing.canCreate).toBe(true)
+    } finally {
+      await fiber.dispose()
+    }
+  })
+
   it('throws directory-unreadable for a missing target', async () => {
     const missing = join(root, 'no-such-dir')
     const failure = await capability.list(missing).catch((error: unknown) => error)

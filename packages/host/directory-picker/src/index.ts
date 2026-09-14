@@ -47,6 +47,8 @@ export interface DirectoryListing {
   crumbs: DirectoryEntry[]
   /** Direct child directories, name-sorted; symlinks to directories included. */
   entries: DirectoryEntry[]
+  /** Whether the service can create a child directory here. */
+  canCreate: boolean
   /**
    * True when the backend cut `entries` at its complete-result bound: the
    * level has more child directories than reported, and the missing rows are
@@ -64,7 +66,7 @@ export interface DirectoryPickerBrowseCapability {
   kind: 'browse'
   /**
    * List one directory level.
-   * @param path - absolute directory to list; absent lists the home directory.
+   * @param path - absolute directory to list; absent lists the backend's configured default directory.
    * @param signal - caller lifetime; abort stops the scan (a stalled network
    * directory must not outlive a disconnected caller) and rejects with the
    * abort reason.

@@ -220,6 +220,7 @@ const BROWSE_STUB: DirectoryPickerCapability = {
       home: '/home/user',
       crumbs: [{ name: '/', path: '/', hidden: false }],
       entries: [{ name: 'projects', path: `${target}/projects`, hidden: false }],
+      canCreate: true,
       truncated: false,
     }
   },

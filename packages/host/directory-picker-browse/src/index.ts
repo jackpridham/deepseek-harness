@@ -9,7 +9,7 @@
  * @module @deepseek-ai/dsh-host-directory-picker-browse
  */
 
-import { mkdir, opendir, stat } from 'node:fs/promises'
+import { access, constants, mkdir, opendir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join, posix, resolve, win32 } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -181,6 +181,8 @@ async function directoryRow(
 export interface Config {
   /** Complete-result bound of one listing level; see {@link BrowseDirectoryPicker.Config}. */
   maxEntries: number
+  /** Directory the first list opens. */
+  defaultDirectory: string
 }
 
 /** The `ctx.directoryPicker` browse implementation (stable capability object per service life). */
@@ -194,6 +196,7 @@ export default class BrowseDirectoryPicker extends DirectoryPicker {
    */
   static Config: z<Config> = z.object({
     maxEntries: z.natural().min(1).default(1000),
+    defaultDirectory: z.string().default(homedir()),
   })
 
   private readonly browseCapability: DirectoryPickerCapability = {
@@ -222,7 +225,7 @@ export default class BrowseDirectoryPicker extends DirectoryPicker {
     if (path !== undefined && !fullyQualified(path)) {
       throw new DirectoryPickerError('directory-unreadable', path, `cannot list "${path}": not a fully qualified path`)
     }
-    const target = resolve(path ?? home)
+    const target = resolve(path ?? this.config.defaultDirectory)
     // Stream the level (opendir, one dirent at a time) into a name-sorted
     // window of maxEntries + 1 candidates: memory stays bounded no matter how
     // many children the directory holds, the window keeps the name-sorted
@@ -293,7 +296,30 @@ export default class BrowseDirectoryPicker extends DirectoryPicker {
       }
       entries.push(row)
     }
-    return { path: target, home, crumbs: ancestryCrumbs(target), entries, truncated }
+    return {
+      path: target,
+      home,
+      crumbs: ancestryCrumbs(target),
+      entries,
+      canCreate: await this.canCreate(target),
+      truncated,
+    }
+  }
+
+  /**
+   * Whether this service view can create a directory in `path`. Both write and
+   * search permission are needed; access observes service mount and sandbox
+   * restrictions without changing the filesystem.
+   * @param path - listed directory to inspect.
+   * @returns whether a child directory may be created at this instant.
+   */
+  private async canCreate(path: string): Promise<boolean> {
+    try {
+      await access(path, constants.W_OK | constants.X_OK)
+    } catch {
+      return false
+    }
+    return true
   }
 
   private async createDirectory(path: string, name: string): Promise<string> {

@@ -133,6 +133,7 @@ export class TestWorkspaces implements IWorkspaces {
         { name: 'test', path: '/home/test', hidden: false },
       ],
       entries: [],
+      canCreate: true,
       truncated: false,
     }
   }

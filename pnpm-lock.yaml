@@ -5089,6 +5089,10 @@ importers:
         version: link:../../runtime-diagnostics/invariants
 
   packages/host/directory-picker-auto:
+    dependencies:
+      '@deepseek-ai/schemastery':
+        specifier: link:../../../vendor/schemastery
+        version: link:../../../vendor/schemastery
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: workspace:^
