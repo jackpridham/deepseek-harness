@@ -30,7 +30,7 @@ export interface ModelSelection {
   options?: Readonly<Record<string, ModelServingOption>>
   /** Per-request output preference, independent of the selected context tier. */
   outputLimit?: OutputLimit
-  /** Backend worker identity observed when this selection was accepted. */
+  /** Backend worker identity observed when this selection was accepted, for display only. */
   workerConfigIdentity?: string
 }
 
@@ -104,7 +104,6 @@ export function installModelSelection(agentCtx: Context, selection: ModelSelecti
         ...typeof selected.outputLimit === 'number'
           ? { maxTokens: selected.outputLimit }
           : hardMaxTokens === undefined ? {} : { maxTokens: hardMaxTokens },
-        ...selected.workerConfigIdentity === undefined ? {} : { workerConfigIdentity: selected.workerConfigIdentity },
       }
     },
   )
