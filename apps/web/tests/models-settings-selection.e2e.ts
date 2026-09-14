@@ -4,9 +4,18 @@ import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { SessionId } from '@deepseek-ai/dsh-session'
+import type { ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold } from './scaffold.ts'
 import { ZH_BROWSER_LOCALE, connectFreshWorkspaceZh } from './support.ts'
+
+interface HostModelReader {
+  sessions: {
+    models(request: { rpcId: unknown; payload: { sessionId: SessionId } }): Promise<{
+      result: { ok: boolean; value: { current: ModelSelection | null } }
+    }>
+  }
+}
 
 const MODE = webSnapshotMode()
 const OVERLAY = fileURLToPath(new URL('./default-model.overlay.yml', import.meta.url))
@@ -55,7 +64,7 @@ describe.skipIf(MODE === 'record')('web e2e: Models settings selection', () => {
     await expect.poll(async () => {
       const sessionId = scaffold.ctx.sessions.list()[0]?.id
       if (sessionId === undefined) return undefined
-      const response = await scaffold.ctx.apiProxy.sessions.models({
+      const response = await (scaffold.ctx.get('apiProxy') as unknown as HostModelReader).sessions.models({
         rpcId: 'models-settings-selection' as never,
         payload: { sessionId: SessionId(sessionId) },
       })

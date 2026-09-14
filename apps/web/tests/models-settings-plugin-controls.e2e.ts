@@ -6,9 +6,18 @@ import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { SessionId } from '@deepseek-ai/dsh-session'
+import type { ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { launchWebScaffold, watchConsole, type WebScaffold } from './scaffold.ts'
 import { ZH_BROWSER_LOCALE, connectFreshWorkspaceZh } from './support.ts'
+
+interface HostModelReader {
+  sessions: {
+    models(request: { rpcId: unknown; payload: { sessionId: SessionId } }): Promise<{
+      result: { ok: boolean; value: { current: ModelSelection | null } }
+    }>
+  }
+}
 
 const PLUGIN_ROOT = process.env.VORTEX_PLUGIN_ROOT
 const PLUGIN_ID = '@vortex/dsh-image-command'
@@ -121,7 +130,7 @@ describe.skipIf(PLUGIN_PATH === undefined)('web e2e: external Vortex model contr
     await expect.poll(async () => {
       const sessionId = scaffold.ctx.sessions.list()[0]?.id
       if (sessionId === undefined) return undefined
-      const response = await scaffold.ctx.apiProxy.sessions.models({ rpcId: 'plugin-controls-current' as never, payload: { sessionId: SessionId(sessionId) } })
+      const response = await (scaffold.ctx.get('apiProxy') as unknown as HostModelReader).sessions.models({ rpcId: 'plugin-controls-current' as never, payload: { sessionId: SessionId(sessionId) } })
       return response.result.ok ? response.result.value.current : undefined
     }).toMatchObject({ provider: 'inf01', model: 'resident', contextWindow: 131_072 })
 
@@ -141,7 +150,7 @@ describe.skipIf(PLUGIN_PATH === undefined)('web e2e: external Vortex model contr
     await expect.poll(() => controls.getByText('Off', { exact: false }).count(), { timeout: 8_000 }).toBeGreaterThan(0)
 
     const sessionId = scaffold.ctx.sessions.list()[0]?.id
-    const response = await scaffold.ctx.apiProxy.sessions.models({ rpcId: 'plugin-controls-preserved' as never, payload: { sessionId: SessionId(sessionId!) } })
+    const response = await (scaffold.ctx.get('apiProxy') as unknown as HostModelReader).sessions.models({ rpcId: 'plugin-controls-preserved' as never, payload: { sessionId: SessionId(sessionId!) } })
     expect(response.result.ok && response.result.value.current).toMatchObject({ provider: 'inf01', model: 'resident', contextWindow: 131_072 })
     await page.screenshot({ path: '/tmp/harness-settings-review.png', fullPage: true })
     expect(tripwire.pageErrors).toEqual([])
