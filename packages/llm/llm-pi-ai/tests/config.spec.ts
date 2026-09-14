@@ -25,6 +25,24 @@ describe('endpoint-owned catalog bootstrap', () => {
     expect(resolveProfiles(config.providers).get('acme-gateway')?.configuredMaxTokens.size).toBe(0)
   })
 
+  it('accepts route compatibility for the endpoint protocol before discovery', () => {
+    const config = routeWith({
+      models: [],
+      modelsFromEndpoint: true,
+      compat: { supportsDeveloperRole: false, maxTokensField: 'max_tokens' },
+    })() as Config
+    expect(() => { assertServiceable(config) }).not.toThrow()
+  })
+
+  it('still rejects compatibility the endpoint protocol cannot use before discovery', () => {
+    const config = routeWith({
+      models: [],
+      modelsFromEndpoint: true,
+      compat: { supportsTemperature: false },
+    })() as Config
+    expect(() => { assertServiceable(config) }).toThrow(/no model on the route speaks a protocol/)
+  })
+
   it('still rejects an empty custom catalog without discovery', () => {
     expect(() => { assertServiceable(routeWith({ models: [] })() as Config) }).toThrow(/resolves no models/)
   })

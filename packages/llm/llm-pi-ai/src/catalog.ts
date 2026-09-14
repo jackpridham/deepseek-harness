@@ -910,6 +910,7 @@ export function resolveRouteModels(request: RouteCatalogRequest): RouteCatalog {
   for (const [field] of configuredCompatEntries(request.compat)) {
     const takers = compatProtocols(field)
     if (models.some(model => takers.includes(model.api))) continue
+    if (request.modelsFromEndpoint === true && models.length === 0 && request.api !== undefined && takers.includes(request.api)) continue
     invalid(provider, `sets compat "${field}", but no model on the route speaks a protocol that takes it;`
       + ` it exists on ${takers.join(', ')}`)
   }
