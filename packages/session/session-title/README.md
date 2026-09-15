@@ -17,6 +17,8 @@ Automatic work never delays the main agent response. A provider starts only afte
 
 Forks inherit title events in their seed unchanged. The first-prompt cadence does not automatically retitle a child; the all-messages cadence may append a new revision after the child receives a later human prompt.
 
+The optional [projection registry](../session-projection/README.md) publishes the current title through live updates and list/history snapshots. Its `title` unit declares a nullable string state schema and an explicit client view; replaying persisted title events restores the same value, including user-pinned names.
+
 ## Configuration
 
 All limits are required; the library supplies no defaults.

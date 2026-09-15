@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url'
 import LlmRuntime, { createUserMessage, LlmAdapter  } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SessionTitleService from '@deepseek-ai/dsh-session-title'
 import * as providerPlugin from '@deepseek-ai/dsh-session-title-first-prompt-llm'
 
@@ -51,6 +52,7 @@ async function loadComposition(inheritRoute = false): Promise<Context> {
   await writeFile(configPath, [
     "- name: '@deepseek-ai/dsh-llm'",
     "- name: '@deepseek-ai/dsh-session'",
+    "- name: '@deepseek-ai/dsh-session-projection'",
     "- name: '@deepseek-ai/dsh-session-title'",
     '  config:',
     '    fallbackMaxWords: 5',
@@ -75,6 +77,7 @@ async function loadComposition(inheritRoute = false): Promise<Context> {
     ['@deepseek-ai/dsh-llm', LlmRuntime],
     ['@deepseek-ai/dsh-session', SessionStore],
     ['@deepseek-ai/dsh-session-title', SessionTitleService],
+    ['@deepseek-ai/dsh-session-projection', SessionProjectionRegistry],
     ['@deepseek-ai/dsh-session-title-first-prompt-llm', providerPlugin],
   ])
   context.loader.internal = {
@@ -117,6 +120,7 @@ describe('session-title Loader composition', () => {
     })
     await new Promise(resolve => setTimeout(resolve, 0))
 
+    expect(ctx.sessionProjections.snapshot(session).values.title).toBe('Loader composed title')
     expect(adapter.requests[0]).toMatchObject({ provider: 'title-route', model: 'title-model' })
     expect(ctx.sessionTitle.get(session)).toMatchObject({
       title: 'Loader composed title',
@@ -127,6 +131,19 @@ describe('session-title Loader composition', () => {
         model: { provider: 'title-route', model: 'title-model' },
       },
     })
+    const automatic = ctx.sessionProjections.snapshot(session).values.title
+    ctx.sessionTitle.rename(session, 'Pinned project title')
+    expect({
+      automatic,
+      manual: ctx.sessionProjections.snapshot(session).values.title,
+      reloaded: ctx.sessionProjections.restore({}, session.events, 0).snapshot.values.title,
+    }).toMatchInlineSnapshot(`
+      {
+        "automatic": "Loader composed title",
+        "manual": "Pinned project title",
+        "reloaded": "Pinned project title",
+      }
+    `)
   })
 
   it('keeps the 256K main route for automatic titles and refresh after later headers change', async () => {

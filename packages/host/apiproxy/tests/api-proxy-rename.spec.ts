@@ -13,6 +13,7 @@ import SessionStore from '@deepseek-ai/dsh-session'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentHandle, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SessionTitleService from '@deepseek-ai/dsh-session-title'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
@@ -30,6 +31,7 @@ function request<P>(payload: P): RpcRequest<P> {
 async function composed(withTitles = true): Promise<Context> {
   const ctx = new Context()
   await ctx.plugin(SessionStore)
+  await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(UserQuestionService)
   if (withTitles) {
@@ -75,13 +77,18 @@ describe('sessions.rename', () => {
     const ctx = await composed()
     const source = liveAgent(ctx, 'session-rename', 1)
 
-    const renamed = await api(ctx).sessions.rename(request({ sessionId: source.id, title: '  new   name  ' }))
+    const proxy = api(ctx)
+    const renamed = await proxy.sessions.rename(request({ sessionId: source.id, title: '  new   name  ' }))
     expect(renamed.result.ok).toBe(true)
     if (!renamed.result.ok) return
     expect(renamed.result.value.title).toBe('new name')
     const event = source.events.findLast(item => item.type === 'session/title')
     expect(event?.seq).toBe(renamed.result.value.seq)
     expect(event?.data).toMatchObject({ title: 'new name', source: { kind: 'user' } })
+    const history = await proxy.sessions.history(request({ sessionId: source.id }))
+    expect(history.result).toMatchObject({ ok: true, value: { projections: { values: { title: 'new name' } } } })
+    const listed = await proxy.sessions.list(request({}))
+    expect(listed.result).toMatchObject({ ok: true, value: { items: [{ projections: { values: { title: 'new name' } } }] } })
   })
 
   it('maps only an empty-normalizing title to title-invalid, with a presentable message', async () => {

@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, rm, stat, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, parse, relative, resolve, sep } from 'node:path'
+import { z as zod } from 'zod'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentHandle, LlmRequestLifecycle, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatus } from '@deepseek-ai/dsh-agent'
@@ -1596,10 +1597,10 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
   ctx.inject(['sessionProjections'], (projectionCtx) => {
     projectionCtx.sessionProjections.register<'sessionListMetadata', SessionListMetadata>({
       key: 'sessionListMetadata',
-      schema: sessionListMetadataProjectionSchema,
+      stateSchema: sessionListMetadataProjectionSchema,
       init: () => ({ blank: true, lastPromptAt: null }),
       apply: applySessionListMetadata,
-      view: state => state,
+      wire: { viewSchema: sessionListMetadataProjectionSchema, view: state => state },
       stateVersion: 1,
     })
   })
@@ -1620,10 +1621,10 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
   ctx.inject(['sessionProjections', 'attachments'], (projectionCtx) => {
     projectionCtx.sessionProjections.register<'imageLimits', null>({
       key: 'imageLimits',
-      schema: imageLimitsProjectionSchema,
+      stateSchema: zod.null(),
       init: () => null,
       apply: state => state,
-      view: () => projectionCtx.attachments.imageLimits,
+      wire: { viewSchema: imageLimitsProjectionSchema, view: () => projectionCtx.attachments.imageLimits },
       stateVersion: 1,
     })
   })
