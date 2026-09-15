@@ -57,6 +57,29 @@ beforeEach(() => {
 })
 
 describe('PiAiAdapter provider routing', () => {
+  it.each([
+    { contextWindow: 262_144, expected: 32_768 },
+    { contextWindow: 131_072, expected: 1 },
+  ])('budgets the wire output against context $contextWindow', async ({ contextWindow, expected }) => {
+    const server = await mockServer([{ events: textEvents }])
+    const adapter = adapterOf({
+      'acme-gateway': {
+        api: 'openai-completions',
+        baseURL: server.url,
+        models: [{ id: 'context-test', contextWindow: 131_072, maxTokens: 32_768 }],
+        compat: { maxTokensField: 'max_tokens' },
+      },
+    })
+    for await (const _chunk of adapter.stream({
+      provider: 'acme-gateway', model: 'context-test', contextWindow, maxTokens: 32_768,
+      messages: [createUserMessage({
+        content: [{ type: 'text', text: 'x'.repeat(150_888 * 4) }],
+        source: { kind: 'user' },
+      })],
+    })) { /* Drain the local provider response. */ }
+    expect(server.requests[0]).toMatchObject({ max_tokens: expected })
+  })
+
   it('resolves a catalog model dynamically and uses a private endpoint', async () => {
     const server = await mockServer([{ events: textEvents }])
     const ctx = await harness(server.url)

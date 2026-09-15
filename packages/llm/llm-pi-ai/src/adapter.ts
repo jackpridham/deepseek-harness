@@ -732,7 +732,7 @@ export class PiAiAdapter extends LlmAdapter {
           // Lifecycle observation cannot change model transport.
         }
       }
-      const events = snapshot.models.streamSimple(runtimeModel, context, {
+      const events = snapshot.models.streamSimple({ ...runtimeModel, contextWindow }, context, {
         ...profileOptions(profile, reasoning, apiKey),
         ...options.temperature === undefined ? {} : { temperature: options.temperature },
         ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
