@@ -7,6 +7,7 @@ Generic multi-provider adapter for the harness LLM seam backed by [`@earendil-wo
 The package root exposes the Cordis plugin contract, `PiAiAdapter`, and `supportedProtocols()`; profile resolution, catalog materialization, provider construction, replay conversion, and stream conversion remain package-internal.
 
 Managed worker telemetry enriches model metadata when ready; an unavailable or transitioning worker does not remove its catalog entry or other models from the picker. Inference dispatch still requires a fresh worker snapshot and rejects conflicting or unavailable worker state before calling the model.
+When that snapshot reports a scheduler transition, dispatch waits with cancellation support for readiness; if the transition ends with the worker stopped, the turn reports `WORKER_LOAD_FAILED` rather than silently starting another load. Catalog reads remain immediate, and a worker that was already stopped before dispatch retains normal cold-load behavior.
 
 ## Config
 

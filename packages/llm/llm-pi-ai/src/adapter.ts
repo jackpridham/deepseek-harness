@@ -22,6 +22,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { createModels, getSupportedThinkingLevels } from '@earendil-works/pi-ai'
 import type {
   Api,
@@ -232,6 +233,9 @@ interface ReadyWorker {
   identity: string
 }
 
+/** An internal marker: only scheduler transitions may be waited out. */
+class WorkerTransitionError extends LlmError {}
+
 function object(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -294,7 +298,10 @@ async function readyWorker(
   const worker = rows.find(row => row.state === 'ready')
   if (worker === undefined) {
     if (rows.length === 0 || rows.every(row => row.state === 'stopped' || row.state === 'idle')) return undefined
-    throw new LlmError('managed worker state is transitioning; refusing to use catalog defaults', 'WORKER_STATE_UNAVAILABLE')
+    if (rows.some(row => row.state === 'starting' || row.state === 'stopping')) {
+      throw new WorkerTransitionError('managed worker state is transitioning', 'WORKER_STATE_UNAVAILABLE')
+    }
+    throw new LlmError('managed worker state is unavailable; refusing to use catalog defaults', 'WORKER_STATE_UNAVAILABLE')
   }
   const observed = object(worker.observed)
   const contextWindow = observed?.context
@@ -311,6 +318,36 @@ async function readyWorker(
     mode: mode as string,
     ...options === undefined ? {} : { options },
     identity: identity as string,
+  }
+}
+
+/** Wait only for a scheduler transition; the first ready snapshot is dispatched. */
+async function waitForReadyWorker(
+  profile: ResolvedPiAiProviderProfile,
+  model: string,
+  apiKey: string | undefined,
+  signal: AbortSignal | undefined,
+): Promise<ReadyWorker | undefined> {
+  try {
+    return await readyWorker(profile, model, apiKey, signal)
+  } catch (error: unknown) {
+    if (!(error instanceof WorkerTransitionError)) throw error
+  }
+  while (true) {
+    try {
+      await sleep(250, undefined, signal === undefined ? undefined : { signal })
+    } catch (error: unknown) {
+      if (signal?.aborted) throw new LlmError('managed worker wait aborted by caller', 'ABORTED', { cause: error })
+      throw error
+    }
+    try {
+      const worker = await readyWorker(profile, model, apiKey, signal)
+      if (worker === undefined) throw new LlmError('managed worker stopped while loading', 'WORKER_LOAD_FAILED')
+      return worker
+    } catch (error: unknown) {
+      if (error instanceof WorkerTransitionError) continue
+      throw error
+    }
   }
 }
 
@@ -521,7 +558,7 @@ export class PiAiAdapter extends LlmAdapter {
     const profile = this.profileOf(snapshot, options.provider)
     const model = this.modelOf(snapshot, options.provider, options.model)
     const apiKey = await this.config.resolveApiKey(options.provider, profile)
-    const loaded = await readyWorker(profile, options.model, apiKey, options.signal)
+    const loaded = await waitForReadyWorker(profile, options.model, apiKey, options.signal)
     if (loaded !== undefined) {
       if ((options.contextWindow !== undefined && options.contextWindow !== loaded.contextWindow)
         || (options.mode !== undefined && options.mode !== loaded.mode)
