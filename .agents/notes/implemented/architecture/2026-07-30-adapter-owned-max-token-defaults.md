@@ -31,3 +31,5 @@ The native DeepSeek adapter exposes `maxTokens` in Cordis config with a 256,000-
 DeepSeek conversations send `max_tokens: 256000` by default, and the session request header records both the value and that the adapter supplied it. Deployments can change the adapter default through `llm-deepseek.config.maxTokens`; per-agent and per-request values override it. Changing the route rematerializes the new exact adapter's default instead of carrying DeepSeek's derived value forward. Other adapters retain their existing behavior until they intentionally publish `defaultMaxTokens`.
 
 The 256,000-token output budget reserves a large part of the one-million-token context on endpoints that pre-allocate requested output. Deployments whose gateway or model supports a smaller budget must lower `maxTokens`; the explicit configuration is preferable to an undocumented provider fallback.
+
+Output-budget admission remeasures after deterministic tool-result pruning and skips LLM summarization when the remaining input plus the requested output and safety margin fits the selected context, including an exact fit. Cancelling a later summary retains any pruning already committed.

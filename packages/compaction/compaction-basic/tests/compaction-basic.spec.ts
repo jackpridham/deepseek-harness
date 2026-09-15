@@ -803,6 +803,25 @@ describe('optional model-free tool-result pruning', () => {
     expect(session.surface.replaceGeneration).toBe(1)
   })
 
+  it.each([5_500, 4_000])('output budget rechecks the pruned input against %i tokens', async (threshold) => {
+    const ctx = createContext(10_000)
+    void new ToolResultPruner(ctx, pruneConfig)
+    const compact = new TestCompactionEngine(ctx, {
+      auto: false,
+      retainTokens: 50,
+      compactionRetries: 0,
+    })
+    const session = toolConversation()
+    const header = session.requestHeader()!
+    expect(ctx.tokenMeter.measure(session, header).totalTokens).toBeGreaterThan(threshold)
+
+    await compact.compactForOutputBudget(agent(session, MODEL), header, 10_000, 10_000 - threshold, SIGNAL)
+
+    expect(compact.calls).toHaveLength(threshold === 5_500 ? 0 : 1)
+    expect(ctx.tokenMeter.measure(session, header).totalTokens).toBeLessThan(threshold)
+    expect(session.surface.replaceGeneration).toBe(threshold === 5_500 ? 3 : 4)
+  })
+
   it('summarizes the pruned surface when pruning is insufficient', async () => {
     const ctx = createContext(2_000)
     void new ToolResultPruner(ctx, pruneConfig)

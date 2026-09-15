@@ -354,20 +354,21 @@ export class BasicCompactionEngine extends CompactionEngine {
     if (threshold <= 0) return null
     const meter = this.ctx.tokenMeter
     let measurement = meter.measure(agent.session, header)
-    if (measurement.totalTokens < threshold) return null
+    if (measurement.totalTokens <= threshold) return null
     assertNoActiveCompaction(agent.session, 'output budget compaction')
     const prune = this.ctx.get('toolResultPruner')
     if (prune !== undefined) {
       prune.pruneSession(agent.session)
       measurement = meter.measure(agent.session, header)
     }
+    if (measurement.totalTokens <= threshold) return null
     let result: CompactionResult | null = null
     for (let attempt = 0; attempt <= spec.compactionRetries; attempt += 1) {
       const range = selectCompactableRange(agent.session, measurement, spec.retainTokens)
       if (range === null) return result
       result = await this.compactRegion(range.start, range.end, agent, signal)
       measurement = meter.measure(agent.session, header)
-      if (measurement.totalTokens < threshold) return result
+      if (measurement.totalTokens <= threshold) return result
     }
     return result
   }
