@@ -37,7 +37,9 @@ function expectedFailure(error: ManualCompactionError): CommandResult {
     case 'summary':
       return {
         kind: 'error',
-        text: 'Compaction could not produce a useful summary. The conversation is unchanged; the attempt is recorded in the session log.',
+        text: error.cause instanceof Error && 'code' in error.cause && error.cause.code === 'COMPACTION_SUMMARY_TRUNCATED'
+          ? `${error.cause.message} The conversation is unchanged.`
+          : 'Compaction could not produce a useful summary. The conversation is unchanged; the attempt is recorded in the session log.',
       }
     case 'commit':
       return {

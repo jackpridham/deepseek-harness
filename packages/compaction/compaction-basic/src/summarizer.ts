@@ -1,15 +1,16 @@
 /**
- * Default one-shot summarization and durable checkpoint framing.
+ * Bounded summarization and durable checkpoint framing.
  *
  * @module @deepseek-ai/dsh-compaction-basic/summarizer
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { contentHasImage, createUserMessage, BlockAssembler, LlmError } from '@deepseek-ai/dsh-llm'
+import { contentHasImage, createUserMessage, BlockAssembler, LlmError, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {
   ContentBlock, FinishReason, GenerateOptions, Message, TokenUsage, ToolSchema,
 } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type {} from '@deepseek-ai/dsh-token-meter'
 
 interface SummaryConfig {
   readonly summarizationProvider: string
@@ -31,7 +32,7 @@ const SUMMARY_CLOSE_TAG = '</compacted-summary>'
 const COMPACTION_INSTRUCTION = [
   'You are now acting as a compaction engine for this AI coding assistant. Condense the conversation ABOVE into a structured checkpoint that lets another model resume the work with no loss of essential context.',
   '',
-  'Output EXACTLY the Markdown structure below: keep every section, in order. Use terse bullets, not prose paragraphs. Write "(none)" for an empty section — never drop a section.',
+  'Output EXACTLY the Markdown structure below: keep every section, in order. Use one to three terse bullets per section, no prose paragraphs, and at most about 1000 words total. Write "(none)" for an empty section — never drop a section.',
   '',
   '## Primary Request and Intent',
   "- [the user's original and evolving goals; quote verbatim where the exact wording matters]",
@@ -64,6 +65,23 @@ const COMPACTION_INSTRUCTION = [
   '- Output only the checkpoint text: do not call any tool or take any other action.',
   `- If the conversation already contains a ${SUMMARY_OPEN_TAG} block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts, drop stale ones, and merge newer information into a single consolidated summary under the same structure.`,
 ].join('\n')
+
+/** Retry directive after the first summary reached its output cap. */
+const CONCISE_COMPACTION_INSTRUCTION = [
+  'Write a complete, terse engineering checkpoint for the conversation above.',
+  'Output exactly these Markdown headings, in order. Put one to three short bullets under each; retain only goals, exact paths, identifiers, decisions, errors, constraints, current work, and next action. Use "(none)" when empty. Do not explain compaction or call tools.',
+  '## Primary Request and Intent',
+  '## Key Technical Concepts',
+  '## Files and Code',
+  '## Errors and Fixes',
+  '## Pending Jobs',
+  '## Current Work',
+  '## Next Step',
+  '## Critical Context',
+].join('\n')
+
+/** Reserve framing and adapter accounting beyond the metered replay input. */
+const SUMMARY_HEADROOM_MARGIN = 256
 
 /** Framing that makes the replacement user message established context. */
 const CHECKPOINT_PREAMBLE =
@@ -107,6 +125,13 @@ export type SummaryResult = {
   }
 )
 
+/** Complete usable output from one summary stream, or `undefined` at its token cap. */
+interface SummaryStreamResult {
+  readonly summary: Array<Extract<ContentBlock, { type: 'text' }>>
+  readonly rawOutput: ContentBlock[]
+  readonly usage?: TokenUsage
+}
+
 /**
  * Run the default cache-reusing `ctx.llm.stream()` summarization call: replay
  * the conversation prefix, then append the compaction instruction as the final
@@ -143,38 +168,85 @@ export async function summarizeWithLlm(
   }
 
   const inherited = configured === undefined ? latest : undefined
-  const assembler = new BlockAssembler()
-  const messages: Message[] = [
+  const info = await ctx.llm.resolveModelInfo(target.provider, target.model, signal)
+  const reasoningEffort = info.reasoning?.efforts.find(effort => effort.id === ReasoningEffortId('off'))?.id
+    ?? info.reasoning?.efforts[0]?.id
+  const selectedContextWindow = inherited?.contextWindow ?? info.loaded?.contextWindow
+  const contextWindow = selectedContextWindow
+    ?? info.context?.contextWindow
+    ?? info.contextOptions?.defaultContextWindow
+  const messagesFor = (instruction: string): Message[] => [
     ...input.messages,
     createUserMessage({
-      content: [{ type: 'text', text: COMPACTION_INSTRUCTION }],
+      content: [{ type: 'text', text: instruction }],
       source: { kind: 'plugin', plugin: 'dsh-compaction-basic' },
     }),
   ]
-  const options: GenerateOptions = {
+  const capFor = (requested: number, messages: readonly Message[]): number => {
+    if (contextWindow === undefined) return info.maxTokens === undefined ? requested : Math.min(requested, info.maxTokens)
+    const measurement = ctx.tokenMeter.measure(agent.session)
+    const replayTokens = messages.reduce((total, message) => total + ctx.tokenMeter.estimateMessage(message), 0)
+    const headerTokens = Math.max(0, measurement.totalTokens - measurement.surfaceTokens)
+    const headroom = contextWindow - headerTokens - replayTokens - SUMMARY_HEADROOM_MARGIN
+    return Math.min(requested, info.maxTokens ?? requested, headroom)
+  }
+  const optionsFor = (messages: Message[], maxTokens: number): GenerateOptions => ({
     provider: target.provider,
     model: target.model,
-    // The auxiliary summary stays on the accepted conversation worker when
-    // no dedicated summarizer route was configured. Its own output cap remains
-    // independent below.
-    ...inherited?.contextWindow === undefined ? {} : { contextWindow: inherited.contextWindow },
+    ...selectedContextWindow === undefined ? {} : { contextWindow: selectedContextWindow },
     ...inherited?.bestTryContext === undefined ? {} : { bestTryContext: inherited.bestTryContext },
-    ...inherited?.reasoningEffort === undefined ? {} : { reasoningEffort: inherited.reasoningEffort },
-    ...inherited?.mode === undefined ? {} : { mode: inherited.mode },
-    ...inherited?.options === undefined ? {} : { options: inherited.options },
-    ...inherited?.workerConfigIdentity === undefined ? {} : { workerConfigIdentity: inherited.workerConfigIdentity },
+    ...reasoningEffort === undefined ? {} : { reasoningEffort },
+    ...inherited?.mode === undefined
+      ? info.loaded?.mode === undefined ? {} : { mode: info.loaded.mode }
+      : { mode: inherited.mode },
+    ...inherited?.options === undefined
+      ? info.loaded?.options === undefined ? {} : { options: info.loaded.options }
+      : { options: inherited.options },
+    ...info.loaded?.identity === undefined ? {} : { workerConfigIdentity: info.loaded.identity },
     messages,
     ...input.system === undefined ? {} : { system: input.system },
     ...input.tools === undefined ? {} : { tools: [...input.tools] },
-    maxTokens: config.maxTokens,
+    maxTokens,
     sessionId: agent.session.id,
     purpose: 'compaction',
     ...signal === undefined ? {} : { signal },
+  })
+  const firstMessages = messagesFor(COMPACTION_INSTRUCTION)
+  const firstCap = capFor(config.maxTokens, firstMessages)
+  if (firstCap <= 0) throw noHeadroomError()
+  const first = await streamSummary(ctx, optionsFor(firstMessages, firstCap))
+  if (first !== undefined) return {
+    ...first,
+    llmStreamCall: true,
+    provider: target.provider,
+    model: target.model,
+    maxTokens: firstCap,
   }
+
+  const retryMessages = messagesFor(CONCISE_COMPACTION_INSTRUCTION)
+  const retryRequested = contextWindow !== undefined && info.maxTokens !== undefined
+    ? Math.max(firstCap, config.maxTokens * 2)
+    : firstCap
+  const retryCap = capFor(retryRequested, retryMessages)
+  if (retryCap <= 0) throw noHeadroomError()
+  signal?.throwIfAborted()
+  const retry = await streamSummary(ctx, optionsFor(retryMessages, retryCap))
+  if (retry === undefined) throw truncatedError(retryCap)
+  return {
+    ...retry,
+    provider: target.provider,
+    model: target.model,
+    maxTokens: retryCap,
+  }
+}
+
+/** Stream one complete text-only summary, returning `undefined` only for a token-cap finish. */
+async function streamSummary(ctx: Context, options: GenerateOptions): Promise<SummaryStreamResult | undefined> {
+  const assembler = new BlockAssembler()
   for await (const chunk of ctx.llm.stream(options)) assembler.push(chunk)
+  if (assembler.finish.kind === 'max-tokens') return undefined
   const error = finishError(assembler.finish)
   if (error !== undefined) throw error
-
   const rawOutput = assembler.blocks()
   const summary = summaryText(rawOutput)
   if (!summary.some(block => block.text.trim().length > 0)) {
@@ -183,12 +255,24 @@ export async function summarizeWithLlm(
   return {
     summary,
     rawOutput,
-    llmStreamCall: true,
-    provider: options.provider,
-    model: options.model,
-    maxTokens: config.maxTokens,
     ...(assembler.usage === undefined ? {} : { usage: assembler.usage }),
   }
+}
+
+/** Surface a terminal checkpoint truncation without accepting its partial output. */
+function truncatedError(maxTokens: number): LlmError {
+  return new LlmError(
+    `compaction summary truncated after two attempts at token cap ${maxTokens}; no checkpoint was committed. Use a larger supported context or a dedicated summarizer.`,
+    'COMPACTION_SUMMARY_TRUNCATED',
+  )
+}
+
+/** Report that the replay input leaves no usable generation reserve. */
+function noHeadroomError(): LlmError {
+  return new LlmError(
+    'compaction summary has no output headroom; no checkpoint was committed. Use a larger supported context or a dedicated summarizer.',
+    'COMPACTION_SUMMARY_TRUNCATED',
+  )
 }
 
 /**
@@ -213,11 +297,7 @@ function finishError(finish: FinishReason): Error | undefined {
       error.code = finish.failure.code
       return error
     }
-    case 'max-tokens': {
-      const error = new Error('summarization truncated at the token cap (incomplete checkpoint)') as Error & { code?: string }
-      error.code = 'MAX_TOKENS'
-      return error
-    }
+    case 'max-tokens': return undefined
     default:
       return undefined
   }

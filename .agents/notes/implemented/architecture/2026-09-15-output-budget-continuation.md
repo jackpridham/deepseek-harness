@@ -12,6 +12,8 @@ Image pressure uses the attachment's pixel dimensions with a coarse 16×16 spati
 
 The agent loop measures the actual durable surface with its provisional header before dispatch, reserves the configured safety margin, and resolves isolated preset compaction through the agent-presets service, falling back to the ordinary scoped service. Pressure and output admission share range selection, which declines a candidate made only of existing compaction checkpoints. It gives the compaction provider bounded opportunities to reduce new history, then sends the smaller effective cap or fails without dispatch. `output/budget` records that admission.
 
+Summary truncation has its own bounded recovery and typed `COMPACTION_SUMMARY_TRUNCATED` failure. Output admission catches only that failure, remeasures the preserved surface, and sends a reduced response allowance if space remains. Cancellation takes precedence, and an exhausted context preserves the specific summary diagnostic. This behavior applies to resumed sessions with old failed compaction records without changing their event format or replacing incomplete checkpoints.
+
 A capped response retains text and reasoning, drops every tool call from the assembled message, and appends one durable continuation input. At most three additional requests are scheduled per turn. A repeated or empty text/reasoning result, continuation error, direct `AgentOptions.maxTokens` cap, or exhausted continuation bound ends recovery. `output/continuation` records the outcome. A successful continuation is a completed turn; an unrecovered cap remains `max-tokens`.
 
 ## Alternatives considered

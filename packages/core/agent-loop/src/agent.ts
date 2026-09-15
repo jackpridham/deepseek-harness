@@ -687,13 +687,21 @@ export class ReactLoopAgent implements Agent {
             reserveTokens: number, signal: AbortSignal,
           ): Promise<unknown>
         } | undefined
+        let summaryTruncated: LlmError | undefined
         if (compaction !== undefined) {
-          await compaction.compactForOutputBudget(
-            this, header, contextWindow, config.maxTokens + this.loopCtx.agentLoop.config.outputSafetyMargin, signal,
-          )
+          try {
+            await compaction.compactForOutputBudget(
+              this, header, contextWindow, config.maxTokens + this.loopCtx.agentLoop.config.outputSafetyMargin, signal,
+            )
+          } catch (error: unknown) {
+            signal.throwIfAborted()
+            if (!(error instanceof LlmError) || error.code !== 'COMPACTION_SUMMARY_TRUNCATED') throw error
+            summaryTruncated = error
+          }
         }
         measurement = meter.measure(session, header)
         available = contextWindow - measurement.totalTokens - this.loopCtx.agentLoop.config.outputSafetyMargin
+        if (available <= 0 && summaryTruncated !== undefined) throw summaryTruncated
       }
       if (available <= 0) {
         throw new LlmError('no output space remains after context budgeting', 'OUTPUT_BUDGET_EXCEEDED')
