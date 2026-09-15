@@ -107,6 +107,21 @@ export interface PiAiAdapterOptions {
     outcome?: 'completed' | 'failed' | 'cancelled'
     signal: AbortSignal
   }) => void
+  /** Report actual scheduler load progress while an ordinary chat waits. */
+  onWorkerWait?: (detail: {
+    provider: string
+    model: string
+    sessionId?: string
+    phase: 'started' | 'progress' | 'settled'
+    progress?: {
+      stage: 'weights' | 'checkpoint_shards' | 'initializing'
+      completed?: number
+      total?: number
+      percent?: number
+    }
+    outcome?: 'completed' | 'failed' | 'cancelled'
+    signal: AbortSignal
+  }) => void
 }
 
 /** Copy profile stream knobs into pi-ai's common option vocabulary. */
@@ -233,8 +248,14 @@ interface ReadyWorker {
   identity: string
 }
 
+type WorkerProgress = NonNullable<Parameters<NonNullable<PiAiAdapterOptions['onWorkerWait']>>[0]['progress']>
+
 /** An internal marker: only scheduler transitions may be waited out. */
-class WorkerTransitionError extends LlmError {}
+class WorkerTransitionError extends LlmError {
+  constructor(readonly progress: WorkerProgress | undefined) {
+    super('managed worker state is transitioning', 'WORKER_STATE_UNAVAILABLE')
+  }
+}
 
 function object(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -249,6 +270,23 @@ function scalarOptions(value: unknown): Readonly<Record<string, string | number 
     ? [[key, entry] as const]
     : [])
   return entries.length === 0 ? undefined : Object.fromEntries(entries)
+}
+
+function workerProgress(value: unknown): WorkerProgress | undefined {
+  const progress = object(value)
+  if (progress === undefined) return undefined
+  const stage = progress.stage
+  if (stage !== 'weights' && stage !== 'checkpoint_shards' && stage !== 'initializing') return undefined
+  const number = (entry: unknown): number | undefined => typeof entry === 'number' && Number.isFinite(entry) ? entry : undefined
+  const completed = number(progress.completed)
+  const total = number(progress.total)
+  const percent = number(progress.percent)
+  return {
+    stage,
+    ...completed === undefined ? {} : { completed },
+    ...total === undefined ? {} : { total },
+    ...percent === undefined ? {} : { percent },
+  }
 }
 
 function snapshotUrl(baseURL: string, model: string): string {
@@ -299,7 +337,7 @@ async function readyWorker(
   if (worker === undefined) {
     if (rows.length === 0 || rows.every(row => row.state === 'stopped' || row.state === 'idle')) return undefined
     if (rows.some(row => row.state === 'starting' || row.state === 'stopping')) {
-      throw new WorkerTransitionError('managed worker state is transitioning', 'WORKER_STATE_UNAVAILABLE')
+      throw new WorkerTransitionError(workerProgress(rows.find(row => row.state === 'starting' || row.state === 'stopping')?.progress))
     }
     throw new LlmError('managed worker state is unavailable; refusing to use catalog defaults', 'WORKER_STATE_UNAVAILABLE')
   }
@@ -327,27 +365,48 @@ async function waitForReadyWorker(
   model: string,
   apiKey: string | undefined,
   signal: AbortSignal | undefined,
+  onWait: ((detail: Omit<Parameters<NonNullable<PiAiAdapterOptions['onWorkerWait']>>[0], 'provider' | 'model' | 'sessionId' | 'signal'>) => void) | undefined,
 ): Promise<ReadyWorker | undefined> {
+  let transition: WorkerTransitionError
   try {
     return await readyWorker(profile, model, apiKey, signal)
   } catch (error: unknown) {
     if (!(error instanceof WorkerTransitionError)) throw error
+    transition = error
   }
-  while (true) {
-    try {
-      await sleep(250, undefined, signal === undefined ? undefined : { signal })
-    } catch (error: unknown) {
-      if (signal?.aborted) throw new LlmError('managed worker wait aborted by caller', 'ABORTED', { cause: error })
-      throw error
+  const notify = (detail: Omit<Parameters<NonNullable<PiAiAdapterOptions['onWorkerWait']>>[0], 'provider' | 'model' | 'sessionId' | 'signal'>): void => {
+    try { onWait?.(detail) } catch { /* Observation cannot change dispatch. */ }
+  }
+  notify({ phase: 'started', ...transition.progress === undefined ? {} : { progress: transition.progress } })
+  let previous = JSON.stringify(transition.progress)
+  let outcome: 'completed' | 'failed' | 'cancelled' = 'failed'
+  try {
+    while (true) {
+      try {
+        await sleep(250, undefined, signal === undefined ? undefined : { signal })
+      } catch (error: unknown) {
+        if (signal?.aborted) throw new LlmError('managed worker wait aborted by caller', 'ABORTED', { cause: error })
+        throw error
+      }
+      try {
+        const worker = await readyWorker(profile, model, apiKey, signal)
+        if (worker === undefined) throw new LlmError('managed worker stopped while loading', 'WORKER_LOAD_FAILED')
+        outcome = 'completed'
+        return worker
+      } catch (error: unknown) {
+        if (!(error instanceof WorkerTransitionError)) throw error
+        const current = JSON.stringify(error.progress)
+        if (current !== previous) {
+          notify({ phase: 'progress', ...error.progress === undefined ? {} : { progress: error.progress } })
+          previous = current
+        }
+      }
     }
-    try {
-      const worker = await readyWorker(profile, model, apiKey, signal)
-      if (worker === undefined) throw new LlmError('managed worker stopped while loading', 'WORKER_LOAD_FAILED')
-      return worker
-    } catch (error: unknown) {
-      if (error instanceof WorkerTransitionError) continue
-      throw error
-    }
+  } catch (error: unknown) {
+    outcome = signal?.aborted ? 'cancelled' : 'failed'
+    throw error
+  } finally {
+    notify({ phase: 'settled', outcome })
   }
 }
 
@@ -558,7 +617,25 @@ export class PiAiAdapter extends LlmAdapter {
     const profile = this.profileOf(snapshot, options.provider)
     const model = this.modelOf(snapshot, options.provider, options.model)
     const apiKey = await this.config.resolveApiKey(options.provider, profile)
-    const loaded = await waitForReadyWorker(profile, options.model, apiKey, options.signal)
+    const waitController = new AbortController()
+    const waitSignal = options.signal === undefined
+      ? waitController.signal
+      : AbortSignal.any([options.signal, waitController.signal])
+    const loaded = await waitForReadyWorker(
+      profile,
+      options.model,
+      apiKey,
+      waitSignal,
+      options.purpose === undefined
+        ? detail => this.config.onWorkerWait?.({
+          provider: options.provider,
+          model: options.model,
+          ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
+          ...detail,
+          signal: waitSignal,
+        })
+        : undefined,
+    ).finally(() => waitController.abort('managed worker wait completed'))
     if (loaded !== undefined) {
       if ((options.contextWindow !== undefined && options.contextWindow !== loaded.contextWindow)
         || (options.mode !== undefined && options.mode !== loaded.mode)

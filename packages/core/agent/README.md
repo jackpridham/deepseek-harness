@@ -6,6 +6,8 @@ Agent interface, registry, process-local initiator scope, and `agent/*` event vo
 
 The optional `@deepseek-ai/dsh-agent/invariant` companion registers this package's agent-status transition checks with `ctx.invariants`. The root agent service does not load diagnostics implicitly.
 
+`LlmRequestLifecycle` and durable `model/lifecycle` events carry optional backend-reported `ModelLoadProgress`: weight or checkpoint-shard stage counters and percentage, or indeterminate initialization. Observers omit progress when loading settles; the agent contract does not estimate total loading time.
+
 ## Service: `AgentRegistry` (ctx key: `agents`)
 
 Tracks live agents and carries the initiating Agent through asynchronous driver work without importing the concrete loop package.

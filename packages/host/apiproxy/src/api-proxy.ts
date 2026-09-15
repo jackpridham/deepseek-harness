@@ -1566,6 +1566,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           outcome: event.outcome ?? (event.phase === 'completed' ? 'succeeded' : event.phase === 'failed' ? 'failed' : 'pending'),
           ...event.reason === undefined ? {} : { reason: event.reason },
           ...event.swap === undefined ? {} : { swap: event.swap },
+          ...event.progress === undefined ? {} : { progress: event.progress },
         })
       } catch {
         // Lifecycle rendering must never alter the request result.
@@ -2636,15 +2637,16 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                   ? { reason: operation.reason as { code?: string; message?: string } }
                   : {},
                 ...operation.swap === undefined ? {} : { swap: operation.swap },
+                ...operation.progress === undefined ? {} : { progress: operation.progress },
               })
-              let lastLifecycle = `${operation.phase}:${operation.outcome}`
+              let lastLifecycle = `${operation.phase}:${operation.outcome}:${JSON.stringify(operation.progress)}`
               const terminal = (value: typeof operation) =>
                 ['ready', 'unloaded', 'failed', 'rejected', 'cancelled', 'expired'].includes(value.phase)
                 || ['failed', 'rejected', 'cancelled', 'expired'].includes(value.outcome)
               while (operation.operationId !== undefined && !terminal(operation)) {
                 await new Promise<void>(resolve => setTimeout(resolve, 250))
                 operation = await controls.operationStatus({ operationId: operation.operationId })
-                const lifecycle = `${operation.phase}:${operation.outcome}`
+                const lifecycle = `${operation.phase}:${operation.outcome}:${JSON.stringify(operation.progress)}`
                 if (lifecycle !== lastLifecycle) {
                   found.agent.session.append('model/lifecycle', {
                     ...operation.operationId === undefined ? {} : { operationId: operation.operationId },
@@ -2654,6 +2656,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                       ? { reason: operation.reason as { code?: string; message?: string } }
                       : {},
                     ...operation.swap === undefined ? {} : { swap: operation.swap },
+                    ...operation.progress === undefined ? {} : { progress: operation.progress },
                   })
                   lastLifecycle = lifecycle
                 }
@@ -3871,6 +3874,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             outcome: operation.outcome,
             ...typeof operation.reason === 'object' && operation.reason !== null ? { reason: operation.reason as { code?: string; message?: string } } : {},
             ...operation.swap === undefined ? {} : { swap: operation.swap },
+            ...operation.progress === undefined ? {} : { progress: operation.progress },
           })
           return ok(request, operation)
         },

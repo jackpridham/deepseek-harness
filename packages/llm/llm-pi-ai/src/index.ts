@@ -55,6 +55,7 @@
  * @module @deepseek-ai/dsh-llm-pi-ai
  */
 
+import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
@@ -107,6 +108,12 @@ type ModelOperationStatus = {
     outcome: string
     reason?: unknown
     swap?: unknown
+    progress?: {
+      stage: 'weights' | 'checkpoint_shards' | 'initializing'
+      completed?: number
+      total?: number
+      percent?: number
+    }
   }>
 }
 type RequestLifecycle = {
@@ -123,7 +130,48 @@ type RequestLifecycle = {
     operationId?: string
     reason?: { code?: string; message?: string }
     swap?: unknown
+    progress?: {
+      stage: 'weights' | 'checkpoint_shards' | 'initializing'
+      completed?: number
+      total?: number
+      percent?: number
+    }
   }): Promise<void>
+}
+
+type WorkerWait = {
+  provider: string
+  model: string
+  sessionId?: string
+  phase: 'started' | 'progress' | 'settled'
+  progress?: {
+    stage: 'weights' | 'checkpoint_shards' | 'initializing'
+    completed?: number
+    total?: number
+    percent?: number
+  }
+  outcome?: 'completed' | 'failed' | 'cancelled'
+  signal: AbortSignal
+}
+
+/** Forward real snapshot load progress with a local display identity only. */
+function workerWaitObserver(ctx: Context): (detail: WorkerWait) => void {
+  const displayIds = new WeakMap<AbortSignal, string>()
+  return (detail) => {
+    if (detail.sessionId === undefined) return
+    const lifecycle = ctx.get('llmRequestLifecycle' as never) as RequestLifecycle | undefined
+    if (lifecycle === undefined) return
+    const operationId = displayIds.get(detail.signal) ?? `wait:${randomUUID()}`
+    if (detail.phase !== 'settled') displayIds.set(detail.signal, operationId)
+    void lifecycle.observe({
+      ...detail,
+      operationId,
+      phase: detail.phase === 'settled' ? detail.outcome ?? 'cancelled' : 'loading',
+      outcome: detail.phase === 'settled' ? detail.outcome ?? 'cancelled' : 'pending',
+      ...detail.phase === 'settled' || detail.progress === undefined ? {} : { progress: detail.progress },
+    })
+    if (detail.phase === 'settled') displayIds.delete(detail.signal)
+  }
 }
 
 /** Poll a backend-owned inference operation only while its local stream is alive. */
@@ -182,7 +230,7 @@ function inferenceLifecycleObserver(ctx: Context): (detail: InferenceOperation) 
           const reason = typeof status.reason === 'object' && status.reason !== null
             ? status.reason as { code?: string; message?: string }
             : undefined
-          const current = `${status.phase}:${status.outcome}:${JSON.stringify(status.reason)}:${JSON.stringify(status.swap)}`
+          const current = `${status.phase}:${status.outcome}:${JSON.stringify(status.reason)}:${JSON.stringify(status.swap)}:${JSON.stringify(status.progress)}`
           if (current !== previous) {
             await lifecycle.observe({
               ...detail,
@@ -191,6 +239,7 @@ function inferenceLifecycleObserver(ctx: Context): (detail: InferenceOperation) 
               outcome: status.outcome,
               ...reason === undefined ? {} : { reason },
               ...status.swap === undefined ? {} : { swap: status.swap },
+              ...status.progress === undefined ? {} : { progress: status.progress },
             })
             previous = current
           }
@@ -392,6 +441,7 @@ export function apply(ctx: Context, config: Config): void {
     refreshModels,
     resolveAttachments: () => ctx.get('attachments'),
     onInferenceOperation: inferenceLifecycleObserver(ctx),
+    onWorkerWait: workerWaitObserver(ctx),
     onReplayDegrade: ({ provider, model, reason }) => {
       ctx.logger.warn(
         `llm-pi-ai: unusable replay state on assistant history for route "${provider}/${model}";`

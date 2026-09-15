@@ -19,3 +19,5 @@ The Models page reads `llm.models` independently from provider settings. It rend
 ## Consequences
 
 The catalog uses the existing host-scoped RPC and remains independent of session state. It deliberately shows an unreported runtime state as unavailable rather than unloaded; Lifecycle controls are plugin-owned catalog-row actions; Settings supplies their typed row facts without taking provider lifecycle ownership.
+
+ModelControls snapshots and operations preserve backend `progress` for the current load stage. The host forwards the same optional data through durable `model/lifecycle` events so Settings and chat can present measured counters consistently. Readiness waits use local display IDs without issuing backend operation polls, and settlement clears their loading state. Percentages describe weight or checkpoint-shard stages; initialization has no estimated percentage or completion time.

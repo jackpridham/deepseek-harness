@@ -7,6 +7,14 @@
 import type { UserMessage } from '@deepseek-ai/dsh-llm/types'
 import type { ModelSelection } from './model-selection.ts'
 
+/** Backend-reported progress while a managed worker loads. */
+export interface ModelLoadProgress {
+  stage: 'weights' | 'checkpoint_shards' | 'initializing'
+  completed?: number
+  total?: number
+  percent?: number
+}
+
 /** Actual request-stream milestones that a host may persist for its session UI. */
 export interface LlmRequestLifecycle {
   observe(event: {
@@ -25,6 +33,7 @@ export interface LlmRequestLifecycle {
     operationId?: string
     reason?: { code?: string; message?: string }
     swap?: unknown
+    progress?: ModelLoadProgress
   }): Promise<void>
 }
 
@@ -51,6 +60,7 @@ declare module '@deepseek-ai/dsh-session/types' {
       outcome: string
       reason?: { code?: string; message?: string }
       swap?: unknown
+      progress?: ModelLoadProgress
     }
     /**
      * One normalized mutation of an agent's durable pending-message lists.

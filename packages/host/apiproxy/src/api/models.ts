@@ -2,6 +2,14 @@
 
 import type { RpcRequest, RpcResponse } from './rpc.ts'
 
+/** Backend-reported progress while a managed worker loads. */
+export interface ModelLoadProgress {
+  stage: 'weights' | 'checkpoint_shards' | 'initializing'
+  completed?: number
+  total?: number
+  percent?: number
+}
+
 /** Generic normalized lifecycle result returned by the managed-model provider. */
 export interface ModelControlEnvelope {
   operationId?: string
@@ -14,6 +22,7 @@ export interface ModelControlEnvelope {
   observedAt?: unknown
   allowedActions?: unknown
   swap?: unknown
+  progress?: ModelLoadProgress
   workers?: unknown
 }
 

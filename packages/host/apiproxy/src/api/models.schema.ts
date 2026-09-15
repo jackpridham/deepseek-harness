@@ -16,6 +16,12 @@ const envelope = z.object({
   observedAt: z.unknown().optional(),
   allowedActions: z.unknown().optional(),
   swap: z.unknown().optional(),
+  progress: z.object({
+    stage: z.enum(['weights', 'checkpoint_shards', 'initializing']),
+    completed: z.number().nonnegative().optional(),
+    total: z.number().positive().optional(),
+    percent: z.number().min(0).max(100).optional(),
+  }).optional(),
   workers: z.unknown().optional(),
 }) satisfies z.ZodType<Wire<ModelControlEnvelope>>
 
