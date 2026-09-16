@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
@@ -49,19 +49,47 @@ function state(overrides: Partial<ModelDirectoryState> = {}): ModelDirectoryStat
 afterEach(cleanup)
 
 describe('ModelSelect reasoning effort', () => {
-  it('dismisses a worker conflict without changing settings and offers it again in the menu', () => {
+  it('marks saved choices and loaded settings independently without a conflict popup', () => {
+    const context = {
+      defaultContextWindow: 131_072,
+      contextWindows: [65_536, 131_072].map(contextWindow => ({ contextWindow, available: true })),
+    }
     const directory = createSnapshotStore<ModelDirectoryState>(state({
-      conflict: { loaded: { contextWindow: 65_536, identity: 'small-worker', mode: 'default' } },
+      current: { provider: 'deepseek-official', model: 'deepseek-v4-flash', contextWindow: 131_072, mode: 'text' },
+      conflict: { loaded: { contextWindow: 65_536, identity: 'small-worker', mode: 'image' } },
+      groups: [{ id: 'deepseek-official', name: 'DeepSeek', models: [{
+        id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', context, reasoning, active: true,
+        loaded: { contextWindow: 65_536, identity: 'small-worker', mode: 'image' },
+        loadModes: [{ id: 'text', name: 'Text' }, { id: 'image', name: 'Text and image' }],
+      }] }],
     }))
     const select = vi.fn().mockResolvedValue(true)
     render(<ModelSelect locked={false} available directory={directory} load={vi.fn()} select={select} t={t} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Dismiss loaded worker notice' }))
-    expect(screen.queryByText(/Loaded worker differs/)).toBeNull()
-    expect(select).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /DeepSeek-V4-Flash/ }))
-    expect(screen.getByText(/Loaded worker differs/)).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Adopt loaded settings' }))
-    expect(select).toHaveBeenCalledWith(directory.getSnapshot().current, 'adopt-loaded', 'small-worker')
+    const model = screen.getByRole('menuitemradio', { name: /DeepSeek-V4-Flash/ })
+    expect(model.getAttribute('aria-checked')).toBe('true')
+    expect(within(model).getByTitle('Currently loaded')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '选择上下文，当前 128K' }))
+    const saved = screen.getByRole('menuitemradio', { name: /128K/ })
+    const loaded = screen.getByRole('menuitemradio', { name: /64K/ })
+    expect(saved.getAttribute('aria-checked')).toBe('true')
+    expect(within(saved).queryByTitle('Currently loaded')).toBeNull()
+    expect(loaded.getAttribute('aria-checked')).toBe('false')
+    expect(within(loaded).getByTitle('Currently loaded')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Serving mode' }))
+    expect(screen.getByRole('menuitemradio', { name: 'Text' }).getAttribute('aria-checked')).toBe('true')
+    expect(within(screen.getByRole('menuitemradio', { name: /Text and image/ })).getByTitle('Currently loaded')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Output allowance' }))
+    expect(screen.getByRole('menuitemradio', { name: 'Auto' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.queryByTitle('Currently loaded')).toBeNull()
+    expect(screen.queryByText(/Loaded worker differs/)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Adopt loaded settings' })).toBeNull()
+    expect(select).not.toHaveBeenCalled()
+    act(() => { directory.update((s) => { s.groups[0]!.models[0]!.active = false }) })
+    fireEvent.click(screen.getByRole('button', { name: '选择上下文，当前 128K' }))
+    expect(screen.queryByTitle('Currently loaded')).toBeNull()
+    expect(screen.getByRole('menuitemradio', { name: /128K/ }).getAttribute('aria-checked')).toBe('true')
   })
 
   it('renders endpoint-owned context choices and submits the chosen tier with the model', async () => {
@@ -103,7 +131,7 @@ describe('ModelSelect reasoning effort', () => {
     />)
 
     expect(screen.getAllByRole('button').filter(button => button.getAttribute('aria-haspopup') === 'menu')
-      .map(button => button.textContent)).toEqual(['DeepSeek-V4-Flash', '128K', 'High'])
+      .map(button => button.textContent)).toEqual(['DeepSeek-V4-Flash', '128K', 'High', 'Output Auto'])
     const trigger = screen.getByRole('button', { name: '选择上下文，当前 128K' })
     fireEvent.click(trigger)
     expect(screen.getAllByRole('menuitemradio').map(item => item.textContent))
@@ -115,6 +143,7 @@ describe('ModelSelect reasoning effort', () => {
         provider: 'deepseek-official',
         model: 'deepseek-v4-flash',
         contextWindow: 65_536,
+        bestTryContext: false,
         reasoningEffort: 'high',
       })
       expect(trigger.getAttribute('aria-label')).toBe('选择上下文，当前 64K')
@@ -346,6 +375,7 @@ describe('ModelSelect reasoning effort', () => {
         provider: 'inf01',
         model: 'chat',
         contextWindow: 65_536,
+        bestTryContext: false,
       })
     })
   })
@@ -418,7 +448,7 @@ describe('ModelSelect reasoning effort', () => {
     />)
 
     fireEvent.click(screen.getByRole('button', { name: /选择模型/ }))
-    expect(screen.getByRole<HTMLButtonElement>('menuitemradio', { name: '/image' }).disabled).toBe(true)
+    expect(screen.getByRole<HTMLButtonElement>('menuitemradio', { name: /Currently loaded.*\/image/ }).disabled).toBe(true)
     expect(screen.getByRole<HTMLButtonElement>('menuitemradio', { name: '/video' }).disabled).toBe(true)
     expect(container.querySelectorAll('[data-state="done"]')).toHaveLength(1)
   })
@@ -469,7 +499,7 @@ describe('ModelSelect reasoning effort', () => {
     fireEvent.click(trigger)
     expect(screen.queryByRole('button', { name: /选择推理等级/ })).toBeNull()
     expect(screen.queryByText('removed-model')).toBeNull()
-    expect(screen.getByRole('menuitemradio', { name: 'DeepSeek-V4-Flash' })).toBeTruthy()
+    expect(screen.getByRole('menuitemradio', { name: /DeepSeek-V4-Flash/ })).toBeTruthy()
   })
 
   it('announces a rejected selection as a transient toast and keeps the in-menu strip for loads', async () => {

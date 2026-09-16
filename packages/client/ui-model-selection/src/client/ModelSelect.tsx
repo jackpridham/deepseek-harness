@@ -52,8 +52,6 @@ export function ModelSelect(
     () => directory.getSnapshot(),
   )
   const [open, setOpen] = useState(false)
-  const [dismissedConflict, setDismissedConflict] = useState<string>()
-  const [resolutionPending, setResolutionPending] = useState<'adopt-loaded' | 'switch-worker'>()
   const [customOutput, setCustomOutput] = useState('')
   const [pane, setPane] = useState<Pane>('model')
   const [menuLayout, setMenuLayout] = useState({ below: false, maxHeight: 360 })
@@ -123,10 +121,8 @@ export function ModelSelect(
       })),
     ], [reasoning, t])
   const busy = state.status === 'selecting' || state.status === 'loading'
-  const loaded = state.conflict?.loaded ?? currentChoice?.model.loaded
+  const loaded = currentChoice?.model.active === true ? currentChoice.model.loaded : undefined
   const effectiveMode = state.current?.mode ?? currentChoice?.model.defaultLoadMode
-  const conflict = state.conflict !== null && state.conflict !== undefined
-  const conflictKey = JSON.stringify([state.current, state.conflict])
 
   const reload = (): void => {
     lastActionRef.current = 'load'
@@ -280,13 +276,6 @@ export function ModelSelect(
     void select(selection).then(settleSelection)
   }
 
-  const resolveConflict = (resolution: 'adopt-loaded' | 'switch-worker'): void => {
-    if (state.current === null || loaded === undefined || resolutionPending !== undefined) return
-    lastActionRef.current = 'select'
-    setResolutionPending(resolution)
-    void select(state.current, resolution, loaded.identity).then(settleSelection).finally(() => setResolutionPending(undefined))
-  }
-
   const chooseOption = (id: string, value: string | number | boolean | undefined): void => {
     if (state.current === null) return
     const options = Object.fromEntries(Object.entries(state.current.options ?? {}).filter(([key]) => key !== id))
@@ -372,7 +361,7 @@ export function ModelSelect(
       )}
 
       {currentChoice?.model.loadModes !== undefined && currentChoice.model.loadModes.length > 0 && (
-        <button type="button" className={css.trigger} disabled={locked || busy} aria-label="Serving mode" aria-haspopup="menu" aria-expanded={open && pane === 'mode'} onClick={event => show('mode', event.currentTarget)}>
+        <button type="button" className={css.trigger} disabled={locked || busy} aria-label="Serving mode" aria-haspopup="menu" aria-expanded={open && pane === 'mode'} onClick={(event) =>{  show('mode', event.currentTarget) }}>
           {currentChoice.model.loadModes.find(mode => mode.id === effectiveMode)?.name ?? 'Mode'}<IconChevronDownOutline14 />
         </button>
       )}
@@ -396,25 +385,29 @@ export function ModelSelect(
           {pane === 'mode' && currentChoice?.model.loadModes?.map(mode => (
             <button key={mode.id} ref={itemRef()} type="button" role="menuitemradio" aria-checked={effectiveMode === mode.id} className={css.option} disabled={busy}
               onClick={() => { if (state.current !== null) { lastActionRef.current = 'select'; void select({ ...state.current, mode: mode.id, options: {} }).then(settleSelection) } }}>
-              {mode.name}
+              <span className={css.optionCopy}><span className={css.modelName}>
+                {loaded?.mode === mode.id && <span className={css.activity} title="Currently loaded" role="img" aria-label="Currently loaded"><StateDot state="done" size={8} /></span>}
+                {mode.name}
+              </span></span>
+              <span className={css.check}>{effectiveMode === mode.id ? <IconCheckOutline16 /> : null}</span>
             </button>
           ))}
           {pane === 'mode' && currentChoice?.model.loadModes?.find(mode => mode.id === effectiveMode)?.options?.map(option => (
             <label key={option.id} className={css.outputForm}>
-              <input type="checkbox" checked={option.id in (state.current?.options ?? {})} disabled={busy} aria-label={`Include ${option.name}`} onChange={event => chooseOption(option.id, event.target.checked ? option.default ?? (option.type === 'boolean' ? false : option.type === 'string' ? '' : 0) : undefined)} />
+              <input type="checkbox" checked={option.id in (state.current?.options ?? {})} disabled={busy} aria-label={`Include ${option.name}`} onChange={(event) =>{  chooseOption(option.id, event.target.checked ? option.default ?? (option.type === 'boolean' ? false : option.type === 'string' ? '' : 0) : undefined) }} />
               {option.name}
               {option.id in (state.current?.options ?? {}) && (option.choices !== undefined
                 ? <select
                   aria-label={option.name}
                   disabled={busy}
                   value={String(state.current?.options?.[option.id])}
-                  onChange={event => chooseOption(option.id, option.choices?.find(value => String(value) === event.target.value))}
+                  onChange={(event) =>{  chooseOption(option.id, option.choices?.find(value => String(value) === event.target.value)) }}
                 >
                   {option.choices.map(value => <option key={String(value)} value={String(value)}>{String(value)}</option>)}
                 </select>
                 : option.type === 'boolean'
-                  ? <input type="checkbox" aria-label={option.name} disabled={busy} checked={state.current?.options?.[option.id] === true} onChange={event => chooseOption(option.id, event.target.checked)} />
-                  : <input aria-label={option.name} disabled={busy} type={option.type === 'string' ? 'text' : 'number'} step={option.type === 'integer' ? 1 : 'any'} value={String(state.current?.options?.[option.id] ?? '')} onChange={event => chooseOption(option.id, option.type === 'string' ? event.target.value : Number(event.target.value))} />)}
+                  ? <input type="checkbox" aria-label={option.name} disabled={busy} checked={state.current?.options?.[option.id] === true} onChange={(event) =>{  chooseOption(option.id, event.target.checked) }} />
+                  : <input aria-label={option.name} disabled={busy} type={option.type === 'string' ? 'text' : 'number'} step={option.type === 'integer' ? 1 : 'any'} value={String(state.current?.options?.[option.id] ?? '')} onChange={(event) =>{  chooseOption(option.id, option.type === 'string' ? event.target.value : Number(event.target.value)) }} />)}
             </label>
           ))}
           {pane === 'output' && (
@@ -424,14 +417,15 @@ export function ModelSelect(
                 <button ref={itemRef()} key={value} type="button" role="menuitemradio"
                   aria-checked={(state.current?.outputLimit ?? 'auto') === value} className={css.option} disabled={busy}
                   onClick={() => { if (state.current !== null) { lastActionRef.current = 'select'; void select({ ...state.current, outputLimit: value }).then(settleSelection) } }}>
-                  {value === 'auto' ? 'Auto' : value.toLocaleString()}
+                  <span className={css.optionCopy}>{value === 'auto' ? 'Auto' : value.toLocaleString()}</span>
+                  <span className={css.check}>{(state.current?.outputLimit ?? 'auto') === value ? <IconCheckOutline16 /> : null}</span>
                 </button>
               ))}
               <form className={css.outputForm} onSubmit={(event) => {
                 event.preventDefault()
                 if (state.current !== null) { lastActionRef.current = 'select'; void select({ ...state.current, outputLimit: Number(customOutput) }).then(settleSelection) }
               }}>
-                <label>Custom tokens<input type="number" min={1} step={1} max={currentChoice?.model.maxTokens} required value={customOutput} onChange={event => setCustomOutput(event.target.value)} /></label>
+                <label>Custom tokens<input type="number" min={1} step={1} max={currentChoice?.model.maxTokens} required value={customOutput} onChange={(event) =>{  setCustomOutput(event.target.value) }} /></label>
                 <button className={css.retry} disabled={busy}>Apply</button>
               </form>
             </div>
@@ -480,7 +474,7 @@ export function ModelSelect(
                             <span className={css.optionCopy}>
                               <span className={css.modelName}>
                                 {model.active === true && (
-                                  <StateDot className={css.activity} state="done" size={8} />
+                                  <span className={css.activity} title="Currently loaded" role="img" aria-label="Currently loaded"><StateDot state="done" size={8} /></span>
                                 )}
                                 {model.name}
                               </span>
@@ -537,6 +531,7 @@ export function ModelSelect(
                       >
                         <span className={css.optionCopy}>
                           <span className={css.modelName}>
+                            {loaded?.contextWindow === value && <span className={css.activity} title="Currently loaded" role="img" aria-label="Currently loaded"><StateDot state="done" size={8} /></span>}
                             {label}
                             {warning !== undefined && (
                               <span className={css.warningIcon} aria-hidden="true">⚠︎</span>
@@ -595,15 +590,6 @@ export function ModelSelect(
               </div>
             </>
           )}
-        </div>
-      )}
-      {conflict && (open || dismissedConflict !== conflictKey) && loaded !== undefined && state.current !== null && (
-        <div className={css.conflict} role="alert" aria-busy={resolutionPending !== undefined}>
-          {resolutionPending !== undefined && <span role="status"><StateDot state="ongoing" /> {resolutionPending === 'switch-worker' ? 'Switching worker…' : 'Adopting loaded settings…'}</span>}
-          <button type="button" className={css.retry} aria-label="Dismiss loaded worker notice" onClick={() => { setDismissedConflict(conflictKey); setOpen(false) }}>Dismiss</button>
-          <span>Loaded worker differs: {loaded.contextWindow === undefined ? 'context unknown' : `${loaded.contextWindow / 1024}K`} · {loaded.mode ?? 'mode unknown'}. Choose settings for the next request.</span>
-          <button type="button" className={css.retry} disabled={busy || locked} onClick={() => resolveConflict('adopt-loaded')}>Adopt loaded settings</button>
-          <button type="button" className={css.retry} disabled={busy || locked} onClick={() => resolveConflict('switch-worker')}>Switch worker</button>
         </div>
       )}
       {toast !== null && (
