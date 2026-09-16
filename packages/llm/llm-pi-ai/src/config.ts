@@ -21,7 +21,7 @@ import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { resolveRetryPolicy, RetryPolicySchema } from '@deepseek-ai/dsh-llm'
 import type { ResolvedRetryPolicy, RetryPolicyConfig } from '@deepseek-ai/dsh-llm'
-import type { LlmLoadMode, LlmLoadRoute, LlmLoadedWorker } from '@deepseek-ai/dsh-llm'
+import type { LlmLoadMode, LlmLoadRoute, LlmLoadedWorker, LlmModelReasoningInfo } from '@deepseek-ai/dsh-llm'
 import {
   CACHE_CONTROL_FORMATS,
   CHAT_TEMPLATE_VARS,
@@ -215,6 +215,8 @@ export interface ResolvedPiAiProviderProfile
   }>
   /** Endpoint-owned default reasoning effort by logical model id. */
   reasoningDefaults: ReadonlyMap<string, ModelThinkingLevel>
+  /** Endpoint-owned reasoning choices, preserving exact names and display order. */
+  reasoningCatalog: ReadonlyMap<string, LlmModelReasoningInfo>
 }
 
 /** Plugin configuration: the provider routes this instance owns. */
@@ -456,6 +458,7 @@ export function resolveProfiles(
       modelStates: new Map(),
       loadModes: new Map(),
       reasoningDefaults: new Map(),
+      reasoningCatalog: new Map(),
       piProvider: buildProvider({
         provider,
         displayName,

@@ -106,6 +106,7 @@ describe('request-level dynamic profiles', () => {
   it('uses an endpoint-owned model catalog without storing its membership', async () => {
     const dir = await home()
     await writeFile(join(dir, '.credentials.yaml'), 'INF01_KEY: live-key\n', { mode: 0o600 })
+    const stoppedWorker = { body: JSON.stringify({ workers: [] }) }
     const server = await mockServer([
       {
         body: JSON.stringify({
@@ -124,11 +125,13 @@ describe('request-level dynamic profiles', () => {
               },
             ],
             reasoning: {
-              format: 'qwen-chat-template',
-              default_effort: 'high',
+              format: 'qwen-chat-template-effort',
+              default_effort: 'xhigh',
               efforts: [
                 { id: 'off', name: 'Off', wire_value: null },
-                { id: 'high', name: 'High', wire_value: 'high' },
+                { id: 'low', name: 'Low', wire_value: 'low-native' },
+                { id: 'medium', name: 'Balanced', wire_value: 'medium-native' },
+                { id: 'xhigh', name: 'Maximum', wire_value: 'xhigh-native' },
               ],
             },
             architecture: { input_modalities: ['text'] },
@@ -149,9 +152,10 @@ describe('request-level dynamic profiles', () => {
           ],
         }),
       },
-      { events: textEvents },
-      { events: textEvents },
-      { events: textEvents },
+      stoppedWorker,
+      ...Array.from({ length: 4 }, () => [stoppedWorker, stoppedWorker, stoppedWorker, { events: textEvents }]).flat(),
+      stoppedWorker,
+      stoppedWorker, stoppedWorker, stoppedWorker, { events: textEvents },
     ])
     const ctx = await boot(dir, {
       providers: {
@@ -172,6 +176,7 @@ describe('request-level dynamic profiles', () => {
       inputModalities: ['text'],
       selectable: true,
       active: true,
+      maxTokens: 32_768,
       contextOptions: {
         defaultContextWindow: 65_536,
         contextWindows: [
@@ -187,6 +192,7 @@ describe('request-level dynamic profiles', () => {
       inputModalities: ['text'],
       selectable: false,
       active: false,
+      maxTokens: 32_768,
     }])
     const resolved = await ctx.llm.resolveModelInfo('inf01', 'qwen-next')
     expect(resolved.context).toEqual({ contextWindow: 65_536 })
@@ -199,27 +205,51 @@ describe('request-level dynamic profiles', () => {
       ],
     })
     expect(resolved.reasoning).toEqual({
-      defaultEffort: 'high',
-      efforts: [{ id: 'off', name: 'Off' }, { id: 'high', name: 'High' }],
+      defaultEffort: 'xhigh',
+      efforts: [
+        { id: 'off', name: 'Off' },
+        { id: 'low', name: 'Low' },
+        { id: 'medium', name: 'Balanced' },
+        { id: 'xhigh', name: 'Maximum' },
+      ],
     })
     const prepared = await ctx.llm.resolveCallConfig({
       provider: 'inf01', model: 'qwen-next', contextWindow: 32_768,
     })
     const result = await assemble(ctx, { ...prepared, messages: [] })
+    expect(result.finish).toEqual({ kind: 'stop' })
     expect(result.message.content).toEqual([{ type: 'text', text: 'hello' }])
-    expect(server.paths).toEqual(['/v1/models', '/running', '/v1/chat/completions'])
-    expect(server.requests[2]).toMatchObject({ model: 'qwen-next--ctx-32768' })
-    expect(server.requests[2]).toMatchObject({
+    let chatRequests = server.requests.filter((_, index) => server.paths[index] === '/v1/chat/completions')
+    expect(chatRequests[0]).toMatchObject({ model: 'qwen-next--ctx-32768' })
+    expect(chatRequests[0]).toMatchObject({
       chat_template_kwargs: { enable_thinking: true, preserve_thinking: true },
+      reasoning_effort: 'xhigh-native',
     })
     const withoutReasoning = await ctx.llm.resolveCallConfig({
       provider: 'inf01', model: 'qwen-next', contextWindow: 32_768, reasoningEffort: ReasoningEffortId('off'),
     })
     await assemble(ctx, { ...withoutReasoning, messages: [] })
-    expect(server.requests[3]).toMatchObject({
+    chatRequests = server.requests.filter((_, index) => server.paths[index] === '/v1/chat/completions')
+    expect(chatRequests[1]).toMatchObject({
       model: 'qwen-next--ctx-32768',
       chat_template_kwargs: { enable_thinking: false, preserve_thinking: true },
     })
+    expect(chatRequests[1]).not.toHaveProperty('reasoning_effort')
+    for (const [index, id, wire] of [
+      [2, 'low', 'low-native'],
+      [3, 'medium', 'medium-native'],
+    ] as const) {
+      const call = await ctx.llm.resolveCallConfig({
+        provider: 'inf01', model: 'qwen-next', contextWindow: 32_768, reasoningEffort: ReasoningEffortId(id),
+      })
+      await assemble(ctx, { ...call, messages: [] })
+      chatRequests = server.requests.filter((_, requestIndex) => server.paths[requestIndex] === '/v1/chat/completions')
+      expect(chatRequests[index]).toMatchObject({
+        model: 'qwen-next--ctx-32768',
+        chat_template_kwargs: { enable_thinking: true, preserve_thinking: true },
+        reasoning_effort: wire,
+      })
+    }
     await expect(ctx.llm.resolveCallConfig({
       provider: 'inf01', model: 'qwen-next', contextWindow: 262_144,
     })).rejects.toMatchObject({ code: 'UNAVAILABLE_CONTEXT_WINDOW' })
@@ -227,10 +257,92 @@ describe('request-level dynamic profiles', () => {
       provider: 'inf01', model: 'qwen-next', contextWindow: 262_144, bestTryContext: true,
     })
     await assemble(ctx, { ...bestTry, messages: [] })
-    expect(server.requests[4]).toMatchObject({ model: 'qwen-next--ctx-262144-best-try' })
-    expect(server.headers.map(headers => headers.authorization)).toEqual([
-      'Bearer live-key', 'Bearer live-key', 'Bearer live-key', 'Bearer live-key', 'Bearer live-key',
+    chatRequests = server.requests.filter((_, index) => server.paths[index] === '/v1/chat/completions')
+    expect(chatRequests[4]).toMatchObject({ model: 'qwen-next--ctx-262144-best-try' })
+    expect(server.headers.every(headers => headers.authorization === 'Bearer live-key')).toBe(true)
+  })
+
+  it('keeps binary template reasoning to one exact Off and On request', async () => {
+    vi.stubEnv('BINARY_KEY', 'test-key')
+    const stoppedWorker = { body: JSON.stringify({ workers: [] }) }
+    const server = await mockServer([
+      { body: JSON.stringify({ data: [{
+        id: 'hybrid-model',
+        context_length: 4096,
+        reasoning: {
+          format: 'qwen-chat-template',
+          default_effort: 'high',
+          efforts: [
+            { id: 'off', name: 'Off', wire_value: null },
+            { id: 'high', name: 'On', wire_value: 'enabled' },
+          ],
+        },
+      }] }) },
+      { body: JSON.stringify({ running: [] }) },
+      stoppedWorker,
+      ...Array.from({ length: 2 }, () => [stoppedWorker, stoppedWorker, { events: textEvents }]).flat(),
     ])
+    const ctx = await boot(await home(), { providers: { local: {
+      apiKeyEnv: 'BINARY_KEY', api: 'openai-completions', baseURL: `${server.url}/v1`, modelsFromEndpoint: true,
+    } } })
+
+    await expect(ctx.llm.resolveModelInfo('local', 'hybrid-model')).resolves.toMatchObject({
+      reasoning: {
+        defaultEffort: 'high',
+        efforts: [{ id: 'off', name: 'Off' }, { id: 'high', name: 'On' }],
+      },
+    })
+    for (const effort of ['off', 'high'] as const) {
+      const result = await assemble(ctx, {
+        provider: 'local', model: 'hybrid-model', reasoningEffort: ReasoningEffortId(effort), messages: [],
+      })
+      expect(result.finish).toEqual({ kind: 'stop' })
+    }
+    const requests = server.requests.filter((_, index) => server.paths[index] === '/v1/chat/completions')
+    expect(requests[0]).toMatchObject({
+      chat_template_kwargs: { enable_thinking: false, preserve_thinking: true },
+    })
+    expect(requests[0]).not.toHaveProperty('reasoning_effort')
+    expect(requests[1]).toMatchObject({
+      chat_template_kwargs: { enable_thinking: true, preserve_thinking: true },
+    })
+    expect(requests[1]).not.toHaveProperty('reasoning_effort')
+  })
+
+  it('does not let local model settings invent endpoint reasoning metadata', async () => {
+    const server = await mockServer([
+      { body: JSON.stringify({ data: [{ id: 'plain', context_length: 4096 }] }) },
+      { body: JSON.stringify({ running: [] }) },
+    ])
+    const ctx = await boot(await home(), { providers: { local: {
+      api: 'openai-completions',
+      baseURL: server.url,
+      modelsFromEndpoint: true,
+      models: [{ id: 'plain', reasoningEfforts: { high: 'locally-invented' } }],
+    } } })
+
+    await expect(ctx.llm.resolveModelInfo('local', 'plain')).resolves.not.toHaveProperty('reasoning')
+  })
+
+  it('rejects multiple enabled choices for a binary endpoint reasoning format', async () => {
+    const server = await mockServer([{
+      body: JSON.stringify({ data: [{
+        id: 'inert',
+        reasoning: {
+          format: 'qwen-chat-template',
+          default_effort: 'medium',
+          efforts: [
+            { id: 'low', name: 'Low', wire_value: 'fast' },
+            { id: 'medium', name: 'Medium', wire_value: 'thorough' },
+          ],
+        },
+      }] }),
+    }])
+    const ctx = await boot(await home(), { providers: { local: {
+      api: 'openai-completions', baseURL: server.url, modelsFromEndpoint: true,
+    } } })
+
+    await expect(ctx.llm.listModels('local')).rejects.toMatchObject({ code: 'INVALID_CATALOG' })
   })
 
   it.each([

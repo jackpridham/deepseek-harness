@@ -67,26 +67,43 @@ interface ListingEntry {
   architecture?: { input_modalities?: unknown } | null
 }
 
-/** Bounded reasoning metadata from an endpoint-owned listing row. */
-function reasoning(value: unknown): LlmDiscoveredModel['reasoning'] {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+/** Valid reasoning metadata from an endpoint-owned listing row. */
+function reasoning(value: unknown, model: string): LlmDiscoveredModel['reasoning'] {
+  if (value === undefined) return undefined
+  const invalid = (detail: string): never => {
+    throw new LlmError(`endpoint model "${model}" has invalid reasoning metadata: ${detail}`, 'INVALID_CATALOG')
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    invalid('reasoning must be an object')
+  }
   const entry = value as { format?: unknown; default_effort?: unknown; efforts?: unknown }
   const format = label(entry.format)
-  if (format === undefined || !Array.isArray(entry.efforts)) return undefined
+  if (format === undefined) return invalid('format must be a non-empty string')
+  const rawEfforts = entry.efforts
+  if (!Array.isArray(rawEfforts) || rawEfforts.length === 0) return invalid('efforts must be a non-empty array')
   const seen = new Set<string>()
-  const efforts = entry.efforts.flatMap((raw) => {
+  const names = new Set<string>()
+  const wireValues = new Set<string | null>()
+  const efforts = rawEfforts.map((raw: unknown, index: number) => {
     const effort = raw as { id?: unknown; name?: unknown; wire_value?: unknown } | null
     const id = label(effort?.id)
     const name = label(effort?.name)
     const wireValue = effort?.wire_value
-    if (id === undefined || name === undefined || seen.has(id)
-      || !(typeof wireValue === 'string' && wireValue.length > 0) && wireValue !== null) return []
+    if (id === undefined || name === undefined) return invalid(`efforts[${index}] needs non-empty id and name strings`)
+    if (seen.has(id)) return invalid(`effort id "${id}" is duplicated`)
+    if (names.has(name)) return invalid(`effort name "${name}" is duplicated`)
+    if (!(typeof wireValue === 'string' && wireValue.length > 0) && wireValue !== null) {
+      return invalid(`effort "${id}" needs a non-empty string wire_value, or null for an explicit off mode`)
+    }
+    if (wireValues.has(wireValue)) return invalid(`effort "${id}" duplicates wire_value ${JSON.stringify(wireValue)}`)
     seen.add(id)
-    return [{ id: ReasoningEffortId(id), name, wireValue }]
+    names.add(name)
+    wireValues.add(wireValue)
+    return { id: ReasoningEffortId(id), name, wireValue }
   })
-  if (efforts.length === 0) return undefined
   const defaultEffort = label(entry.default_effort)
-  if (defaultEffort !== undefined && !seen.has(defaultEffort)) return undefined
+  if (entry.default_effort !== undefined && defaultEffort === undefined) return invalid('default_effort must be a non-empty string')
+  if (defaultEffort !== undefined && !seen.has(defaultEffort)) return invalid(`default_effort "${defaultEffort}" is not declared`)
   return {
     format,
     ...defaultEffort === undefined ? {} : { defaultEffort: ReasoningEffortId(defaultEffort) },
@@ -284,7 +301,7 @@ function readListing(body: unknown): LlmDiscoveredModel[] {
     const name = label(entry?.name, entry?.display_name)
     const contextWindow = capacity(entry?.context_window, entry?.context_length)
     const contexts = contextWindows(entry?.context_windows)
-    const reasoningInfo = reasoning(entry?.reasoning)
+    const reasoningInfo = reasoning(entry?.reasoning, id)
     const maxTokens = capacity(entry?.max_output_tokens, entry?.max_tokens)
     const input = inputModalities(entry?.architecture?.input_modalities)
     const defaultLoadMode = label(entry?.default_load_mode)

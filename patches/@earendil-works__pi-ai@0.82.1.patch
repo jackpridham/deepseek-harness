@@ -1,5 +1,5 @@
 diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
-index ed81baa3860fa20cf9d38885f9dd4b6b2f639045..f60e58515703f5e44ae1ee8212e1bdeb80f9b2d0 100644
+index ed81baa3860fa20cf9d38885f9dd4b6b2f639045..343f6bf05b839429e7616568e724748dcba89aed 100644
 --- a/dist/api/openai-completions.js
 +++ b/dist/api/openai-completions.js
 @@ -450,6 +450,17 @@ export const stream = (model, context, options) => {
@@ -20,8 +20,27 @@ index ed81baa3860fa20cf9d38885f9dd4b6b2f639045..f60e58515703f5e44ae1ee8212e1bdeb
              // Some providers via OpenRouter give additional information in this field.
              // normalizeProviderError already stringifies the parsed body (error.error)
              // into errorMessage, so only append the raw metadata when it is not already
+@@ -573,12 +584,18 @@ function buildParams(model, context, options, compat = getCompat(model), cacheRe
+     }
+     else if (compat.thinkingFormat === "qwen" && model.reasoning) {
+         params.enable_thinking = !!options?.reasoningEffort;
++        if (options?.reasoningEffort && compat.supportsReasoningEffort) {
++            params.reasoning_effort = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
++        }
+     }
+     else if (compat.thinkingFormat === "qwen-chat-template" && model.reasoning) {
+         params.chat_template_kwargs = {
+             enable_thinking: !!options?.reasoningEffort,
+             preserve_thinking: true,
+         };
++        if (options?.reasoningEffort && compat.supportsReasoningEffort) {
++            params.reasoning_effort = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
++        }
+     }
+     else if (compat.thinkingFormat === "chat-template" && model.reasoning) {
+         const chatTemplateKwargs = buildChatTemplateKwargs(model, options, compat);
 diff --git a/dist/types.d.ts b/dist/types.d.ts
-index 0a1b76919766126f1c8c4a306b24e8096a5e02d0..535ab18b4167e9f2622fb571734f64599ae04c87 100644
+index 0a1b76919766126f1c8c4a306b24e8096a5e02d0..03930a04dc70a9a7df9e9a6a09aa527da80b0dde 100644
 --- a/dist/types.d.ts
 +++ b/dist/types.d.ts
 @@ -288,6 +288,11 @@ export interface AssistantMessage {

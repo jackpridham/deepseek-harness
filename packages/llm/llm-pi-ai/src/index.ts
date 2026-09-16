@@ -65,7 +65,7 @@ import { deepEqualJson, installSettingsSection, settingsNamespace } from '@deeps
 import { PiAiAdapter } from './adapter.ts'
 import { catalogProviderIds, catalogProviderTakesApiKey, THINKING_LEVELS } from './catalog.ts'
 import { assertServiceable, Config, resolveProfiles } from './config.ts'
-import type { ResolvedPiAiProviderProfile } from './config.ts'
+import type { PiAiThinkingFormat, ResolvedPiAiProviderProfile } from './config.ts'
 import { discoverModels } from './discovery.ts'
 
 export { PiAiAdapter } from './adapter.ts'
@@ -87,6 +87,36 @@ export const name = 'llm-pi-ai'
 export const inject = ['llm']
 
 const NS = settingsNamespace('llm-pi-ai')
+
+/** Endpoint reasoning formats and the distinct request shapes they can express. */
+const ENDPOINT_REASONING_FORMATS: Readonly<Record<string, {
+  thinkingFormat: PiAiThinkingFormat
+  selector: 'binary' | 'graded'
+  supportsReasoningEffort: boolean
+  offWire: 'null' | 'string' | 'either' | 'unsupported'
+}>> = {
+  'openai': { thinkingFormat: 'openai', selector: 'graded', supportsReasoningEffort: true, offWire: 'string' },
+  'deepseek': { thinkingFormat: 'deepseek', selector: 'graded', supportsReasoningEffort: true, offWire: 'null' },
+  'openrouter': { thinkingFormat: 'openrouter', selector: 'graded', supportsReasoningEffort: false, offWire: 'either' },
+  'together': { thinkingFormat: 'together', selector: 'graded', supportsReasoningEffort: true, offWire: 'null' },
+  'zai': { thinkingFormat: 'zai', selector: 'graded', supportsReasoningEffort: true, offWire: 'null' },
+  'qwen': { thinkingFormat: 'qwen', selector: 'binary', supportsReasoningEffort: false, offWire: 'null' },
+  'qwen-effort': { thinkingFormat: 'qwen', selector: 'graded', supportsReasoningEffort: true, offWire: 'null' },
+  'qwen-chat-template': {
+    thinkingFormat: 'qwen-chat-template',
+    selector: 'binary',
+    supportsReasoningEffort: false,
+    offWire: 'null',
+  },
+  'qwen-chat-template-effort': {
+    thinkingFormat: 'qwen-chat-template',
+    selector: 'graded',
+    supportsReasoningEffort: true,
+    offWire: 'null',
+  },
+  'string-thinking': { thinkingFormat: 'string-thinking', selector: 'graded', supportsReasoningEffort: false, offWire: 'either' },
+  'ant-ling': { thinkingFormat: 'ant-ling', selector: 'graded', supportsReasoningEffort: false, offWire: 'unsupported' },
+}
 
 type InferenceOperation = {
   operationId: string
@@ -382,7 +412,10 @@ export function apply(ctx: Context, config: Config): void {
     }, () => resolveApiKey(provider, profile), { includeRuntimeState: true })
     const configured = new Map((source.models ?? []).map(model => [model.id, model]))
     const models = advertised.map((model) => {
-      if (model.reasoning !== undefined && model.reasoning.format !== 'qwen-chat-template') {
+      const reasoningFormat = model.reasoning === undefined
+        ? undefined
+        : ENDPOINT_REASONING_FORMATS[model.reasoning.format]
+      if (model.reasoning !== undefined && reasoningFormat === undefined) {
         throw new LlmError(
           `pi-ai provider "${provider}" model "${model.id}" advertises unsupported reasoning format "${model.reasoning.format}"`,
           'INVALID_CATALOG',
@@ -397,17 +430,61 @@ export function apply(ctx: Context, config: Config): void {
           'INVALID_CATALOG',
         )
       }
+      if (reasoningFormat?.selector === 'binary') {
+        const enabled = model.reasoning?.efforts.filter(effort => effort.wireValue !== null) ?? []
+        const disabled = model.reasoning?.efforts.filter(effort => effort.wireValue === null) ?? []
+        if (enabled.length > 1 || disabled.length > 1) {
+          throw new LlmError(
+            `pi-ai provider "${provider}" model "${model.id}" reasoning format "${model.reasoning?.format}" can expose at most one disabled and one enabled choice`,
+            'INVALID_CATALOG',
+          )
+        }
+      }
+      const nullEffort = model.reasoning?.efforts.find(effort => effort.wireValue === null && effort.id !== 'off')
+      if (nullEffort !== undefined) {
+        throw new LlmError(
+          `pi-ai provider "${provider}" model "${model.id}" reasoning effort "${nullEffort.id}" has no distinct wire value`,
+          'INVALID_CATALOG',
+        )
+      }
+      const offEffort = model.reasoning?.efforts.find(effort => effort.id === 'off')
+      if (offEffort !== undefined && (
+        reasoningFormat?.offWire === 'unsupported'
+        || reasoningFormat?.offWire === 'null' && offEffort.wireValue !== null
+        || reasoningFormat?.offWire === 'string' && offEffort.wireValue === null
+      )) {
+        throw new LlmError(
+          `pi-ai provider "${provider}" model "${model.id}" reasoning format "${model.reasoning?.format}" cannot distinguish its advertised off wire value`,
+          'INVALID_CATALOG',
+        )
+      }
+      const endpointCompat = reasoningFormat === undefined ? undefined : {
+        thinkingFormat: reasoningFormat.thinkingFormat,
+        supportsReasoningEffort: reasoningFormat.supportsReasoningEffort,
+      }
+      const configuredModel = configured.get(model.id)
+      const {
+        reasoningEfforts: _configuredReasoning,
+        compat: configuredCompat,
+        ...configuredFields
+      } = configuredModel ?? {}
       return {
         id: model.id,
         ...model.name === undefined ? {} : { name: model.name },
         ...model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow },
         ...model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens },
         ...model.inputModalities === undefined ? {} : { input: [...model.inputModalities] },
-        ...model.reasoning === undefined ? {} : {
+        ...configuredFields,
+        ...model.reasoning === undefined ? {
+          reasoningEfforts: false as const,
+          ...configuredCompat === undefined ? {} : { compat: configuredCompat },
+        } : {
           reasoningEfforts: Object.fromEntries(model.reasoning.efforts.map(effort => [effort.id, effort.wireValue])),
-          compat: { thinkingFormat: 'qwen-chat-template' as const },
+          compat: {
+            ...configuredCompat,
+            ...endpointCompat,
+          },
         },
-        ...configured.get(model.id),
       }
     })
     const refreshed = resolveProfiles({ [provider]: { ...source, models } }).get(provider)
@@ -432,7 +509,13 @@ export function apply(ctx: Context, config: Config): void {
     const reasoningDefaults = new Map<string, ModelThinkingLevel>(advertised.flatMap(model => model.reasoning?.defaultEffort === undefined
       ? []
       : [[model.id, model.reasoning.defaultEffort as ModelThinkingLevel] as const]))
-    return { ...refreshed, contextRoutes, modelStates, loadModes, reasoningDefaults }
+    const reasoningCatalog = new Map(advertised.flatMap(model => model.reasoning === undefined
+      ? []
+      : [[model.id, {
+        efforts: model.reasoning.efforts.map(effort => ({ id: effort.id, name: effort.name })),
+        ...model.reasoning.defaultEffort === undefined ? {} : { defaultEffort: model.reasoning.defaultEffort },
+      }] as const]))
+    return { ...refreshed, contextRoutes, modelStates, loadModes, reasoningDefaults, reasoningCatalog }
   }
 
   const adapter = new PiAiAdapter({

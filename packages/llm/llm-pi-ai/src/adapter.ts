@@ -43,6 +43,7 @@ import {
 import type {
   GenerateOptions,
   LlmModelInfo,
+  LlmModelReasoningInfo,
   LlmProviderInfo,
   LlmResolvedModelInfo,
   ReasoningEffortId as ReasoningEffortIdType,
@@ -200,7 +201,9 @@ function resolveReasoningLevel(
 function reasoningInfo(
   model: Model<Api>,
   defaultLevel: ModelThinkingLevel | undefined,
+  advertised?: LlmModelReasoningInfo,
 ): Pick<LlmResolvedModelInfo, 'reasoning'> | Record<string, never> {
+  if (advertised !== undefined) return { reasoning: advertised }
   if (!model.reasoning) return {}
   const levels = getSupportedThinkingLevels(model)
   return {
@@ -596,7 +599,7 @@ export class PiAiAdapter extends LlmAdapter {
           },
         },
         ...configuredMaxTokens === undefined ? {} : { defaultMaxTokens: configuredMaxTokens },
-        ...reasoningInfo(resolvedModel, defaultLevel),
+        ...reasoningInfo(resolvedModel, defaultLevel, profile.reasoningCatalog.get(model)),
       }
     })
   }
