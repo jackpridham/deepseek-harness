@@ -47,6 +47,8 @@ export interface HostApi {
    * canOpenPath = whether this deployment can hand a path to a user-visible native desktop.
    */
   describe(request: RpcRequest<{}>): Promise<RpcResponse<{
+    /** Supported session instruction schema versions; absent means unsupported. */
+    instructionVersions?: number[]
     version: string
     cwd: string
     provider?: string

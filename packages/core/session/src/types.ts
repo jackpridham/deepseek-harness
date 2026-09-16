@@ -104,6 +104,8 @@ export interface SessionHeader {
  * store folds into a {@link SessionHeader}.
  */
 export interface CreateSessionOptions {
+  /** Instructions committed before session publication; absent preserves the preset. */
+  readonly instructions?: SessionInstructions
   /** Initial replay or fork history supplied at construction. */
   readonly seed?: readonly SessionEvent[]
   /**
@@ -240,7 +242,9 @@ export interface SessionEventMap {
    * step; otherwise the following identified `user/message` event or batch
    * records the messages entering the step.
    */
-  'turn/start': { turn: number }
+  'turn/start': { turn: number; instructionsRevision?: number }
+  /** Exact accepted configuration, independent of compacted message history. */
+  'session/instructions': { revision: number; instructions: SessionInstructions }
   /**
    * Closes turn `turn` with the {@link TurnEndReason} that ended it. A turn
    * with no entered step has no `step/start` or `step/end`. The loop does not await a
@@ -438,3 +442,31 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
     surfaceOp?: SurfaceOp
   } : object)
 }[T]
+
+/** A named literal instruction block; array order is authoritative. */
+export interface InstructionBlock { id: string; text: string }
+
+/** Automatic model-context sources; off affects injection, never explicit tools. */
+export interface InstructionContextSources {
+  harnessInstructions?: 'inherit' | 'off'
+  workspaceInstructions?: 'inherit' | 'off'
+  skillCatalog?: 'inherit' | 'off'
+  runtimeFacts?: 'inherit' | 'off'
+}
+
+/** Session-owned instructions, fixed before the first turn in version 1. */
+export interface SessionInstructions {
+  version: 1
+  systemPrompt?: {
+    base?: { mode: 'inherit' } | { mode: 'replace'; text: string }
+    prepend?: InstructionBlock[]
+    append?: InstructionBlock[]
+  }
+  contextSources?: InstructionContextSources
+}
+
+/** Latest accepted input, or revision zero for an unconfigured session. */
+export interface SessionInstructionState {
+  revision: number
+  instructions: SessionInstructions | null
+}

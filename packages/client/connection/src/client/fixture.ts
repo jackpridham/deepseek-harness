@@ -2265,6 +2265,8 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
 
   const api: ApiProxy = {
     sessions: {
+      configureInstructions: request => err(request, { code: 'internal', message: 'Instruction configuration needs a live DSH host', details: {} }),
+      getInstructions: request => err(request, { code: 'internal', message: 'Instruction inspection needs a live DSH host', details: {} }),
       list: request => ok(request, { items: [...sessions].sort((a, b) => b.updatedAt - a.updatedAt) }),
       search: (request, signal) => {
         if (signal.aborted) {
@@ -3224,6 +3226,8 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'session.list': return this.api.sessions.list(request)
       case 'session.search': return this.api.sessions.search(request, signal)
       case 'session.create': return this.api.sessions.create(request)
+      case 'session.configureInstructions': return this.api.sessions.configureInstructions(request)
+      case 'session.getInstructions': return this.api.sessions.getInstructions(request)
       case 'session.history': return this.api.sessions.history(request)
       case 'session.models': return this.api.sessions.models(request)
       case 'session.selectModel': return this.api.sessions.selectModel(request)

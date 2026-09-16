@@ -92,6 +92,10 @@ Every `SessionEvent` carries three optional top-level fields (structural metadat
 - Replay/fork: `create(id, { seed })` validates and freezes a contiguous current-format log and rebuilds its surface; request headers require provider/model, and assistant messages require provider/model provenance. Persistence owns read compatibility before constructing this current-format seed. `fork(source, boundary?, childSessionId?)` selects a completed-turn prefix and records lineage.
 - Compaction: `dsh-compaction-basic` appends a `user/message` replacement for summary checkpoints, while `dsh-compaction-tool-result-pruner` appends a content-only `tool/result` replacement. Tool-pairing boundary policy and its cache belong to the [`dsh-compaction` seam](../../compaction/compaction/README.md), while this package owns ordered surface membership, replacement validation, and `replaceGeneration`.
 
+## Session instructions
+
+`Session.configureInstructions(input)` commits literal version-1 instruction configuration in `session/instructions`; `getInstructions()` folds the complete log, including records outside compacted conversation history. `SessionStore.prepare/create` and agent creation accept `instructions` before publication. The revision starts at one, increments for a changed configuration on a fresh session, and stays unchanged for identical retries. A changed write after the first `turn/start` fails. Absence preserves existing session behavior; configuration is not a user/task message. See the [instruction API](../../host/apiproxy/README.md#session-instruction-api).
+
 ## Model Experience
 
 ### Derived message history

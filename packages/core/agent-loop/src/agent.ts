@@ -309,7 +309,8 @@ export class ReactLoopAgent implements Agent {
     signal.throwIfAborted()
     const turn = phase.turn + 1
     try {
-      this.session.append('turn/start', { turn })
+      const instructionsRevision = this.session.getInstructions().revision
+      this.session.append('turn/start', { turn, ...instructionsRevision === 0 ? {} : { instructionsRevision } })
     } catch (error: unknown) {
       this.throwError(error)
     }

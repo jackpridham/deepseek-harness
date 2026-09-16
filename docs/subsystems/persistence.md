@@ -104,6 +104,8 @@ Creating a `Session` through the store takes a `seed` (initial replay or fork hi
  * store folds into a {@link SessionHeader}.
  */
 interface CreateSessionOptions {
+  /** Instructions committed before session publication; absent preserves the preset. */
+  readonly instructions?: SessionInstructions
   /** Initial replay or fork history supplied at construction. */
   readonly seed?: readonly SessionEvent[]
   /**

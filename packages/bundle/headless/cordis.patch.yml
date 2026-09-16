@@ -33,3 +33,4 @@
       inject: [headlessStartup]
       config:
         task: !!js ctx.headlessStartup.task
+        instructions: !!js ctx.headlessStartup.instructions

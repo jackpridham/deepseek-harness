@@ -16,6 +16,10 @@ const RESERVED_PATH_SEGMENTS = new Set(['', '.', '..'])
 
 /** User-facing workspace instruction loader configuration. */
 export interface Config {
+  /** Load the Harness-home AGENTS file by default. */
+  includeHarnessInstructions?: boolean
+  /** Load workspace baseline and nested instructions by default. */
+  includeWorkspaceInstructions?: boolean
   /** Harness home containing the fixed user-global `AGENTS.md`; defaults to `$DSH_HOME` or `~/.dsh`. */
   dshHome?: string
   /** Directory entries that identify the project root while walking upward from the session cwd. */
@@ -37,6 +41,8 @@ export interface Config {
 }
 
 export const Config: z<Config> = z.object({
+  includeHarnessInstructions: z.boolean().default(true),
+  includeWorkspaceInstructions: z.boolean().default(true),
   dshHome: z.string(),
   projectRootMarkers: z.array(z.string()).default([...DEFAULT_PROJECT_ROOT_MARKERS]),
   maxBytes: z.number().required(),
@@ -47,6 +53,8 @@ export const Config: z<Config> = z.object({
 
 /** Normalized instruction discovery configuration. */
 export interface ResolvedDiscoveryConfig {
+  includeHarnessInstructions: boolean
+  includeWorkspaceInstructions: boolean
   dshHome: string
   projectRootMarkers: string[]
   instructionFileCandidates: string[]
@@ -72,6 +80,8 @@ export function workspaceBaselineIdentity(
   projectRoot: string,
 ): string {
   return JSON.stringify({
+    ...config.includeHarnessInstructions ? {} : { includeHarnessInstructions: false },
+    ...config.includeWorkspaceInstructions ? {} : { includeWorkspaceInstructions: false },
     projectRoot: relative(cwd, projectRoot),
     projectRootMarkers: config.projectRootMarkers,
     maxBytes: config.maxBytes,
@@ -100,9 +110,11 @@ export function resolveConfig(config: Config): ResolvedConfig {
  * @returns normalized home, root markers, and instruction candidates.
  */
 export function resolveDiscoveryConfig(
-  config: Pick<Config, 'dshHome' | 'projectRootMarkers' | 'instructionFileCandidates' | 'localInstructionFileCandidates'>,
+  config: Pick<Config, 'includeHarnessInstructions' | 'includeWorkspaceInstructions' | 'dshHome' | 'projectRootMarkers' | 'instructionFileCandidates' | 'localInstructionFileCandidates'>,
 ): ResolvedDiscoveryConfig {
   return {
+    includeHarnessInstructions: config.includeHarnessInstructions ?? true,
+    includeWorkspaceInstructions: config.includeWorkspaceInstructions ?? true,
     dshHome: resolveDshHome(config.dshHome),
     projectRootMarkers: config.projectRootMarkers ?? [...DEFAULT_PROJECT_ROOT_MARKERS],
     instructionFileCandidates: resolveInstructionFileCandidates(

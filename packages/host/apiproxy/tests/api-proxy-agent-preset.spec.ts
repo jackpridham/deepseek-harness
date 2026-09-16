@@ -30,7 +30,7 @@ function request<P>(payload: P): RpcRequest<P> {
 
 /** Minimal live agent; the gateway only needs identity and its session. */
 function stubAgent(session: Session): Agent {
-  return { id: session.id, session, status: 'idle' } as unknown as Agent
+  return { id: session.id, session, status: 'idle', options: {} } as unknown as Agent
 }
 
 /**
@@ -149,7 +149,7 @@ describe('session.create with an agent preset', () => {
 
     const created = await api.sessions.create(request({ sessionId: SessionId('s1'), agentPreset: 'minimal' }))
 
-    expect(created.result.ok).toBe(true)
+    expect(created.result.ok, JSON.stringify(created.result)).toBe(true)
     expect(ctx.sessions.get(SessionId('s1'))?.header.agentPreset).toBe('minimal')
   })
 

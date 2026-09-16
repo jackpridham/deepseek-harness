@@ -5,6 +5,8 @@
  * @module @deepseek-ai/dsh-headless/startup
  */
 
+import { instructionsFromFlags, type InstructionFlags } from './instructions.ts'
+import type { SessionInstructions } from '@deepseek-ai/dsh-session'
 import { Command } from 'commander'
 import type { Context } from '@deepseek-ai/cordis'
 import { parseCmdline } from '@deepseek-ai/dsh-cmdline'
@@ -22,6 +24,8 @@ export const HEADLESS_STARTUP_SERVICE = 'headlessStartup'
 export interface HeadlessStartupValues {
   /** The task text this invocation asked for. */
   task: string
+  /** Resolved caller-local text, using the ordinary session API input. */
+  instructions?: SessionInstructions
 }
 
 /**
@@ -33,6 +37,12 @@ function headlessCommand(): Command {
     .name('dsh --profile headless')
     .description('Answer one task, print the final assistant message, and exit.')
     .helpOption('-h, --help', 'show this help')
+    .option('--instructions-file <file>', 'session instruction JSON input')
+    .option('--system-prompt <text>', 'replace the inherited system prompt')
+    .option('--system-prompt-file <file>', 'replace with local UTF-8 file contents')
+    .option('--prepend-system-prompt-file <file>', 'prepend a literal block (repeatable)', (value: string, previous: string[] = []) => [...previous, value])
+    .option('--append-system-prompt-file <file>', 'append a literal block (repeatable)', (value: string, previous: string[] = []) => [...previous, value])
+    .option('--context-source <name=inherit|off>', 'control an automatic context source (repeatable)', (value: string, previous: string[] = []) => [...previous, value])
     .argument('[task...]', 'the task text; multiple words are joined by spaces')
     .addHelpText('after', `
 Examples:
@@ -51,7 +61,8 @@ export function apply(ctx: Context): void {
   program.action(() => {
     const task = program.args.join(' ')
     if (task.trim() === '') program.error('error: a task is required, for example: dsh --profile headless "run the tests"')
-    ctx.provide(HEADLESS_STARTUP_SERVICE, { task } satisfies HeadlessStartupValues)
+    const instructions = instructionsFromFlags(program.opts<InstructionFlags>())
+    ctx.provide(HEADLESS_STARTUP_SERVICE, { task, ...instructions === undefined ? {} : { instructions } } satisfies HeadlessStartupValues)
   })
   parseCmdline(ctx, program)
 }

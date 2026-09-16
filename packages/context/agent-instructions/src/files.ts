@@ -47,6 +47,8 @@ export interface ProbedInstructionFile extends InstructionFile {
 }
 
 interface DiscoverOptions {
+  includeHarnessInstructions?: boolean
+  includeWorkspaceInstructions?: boolean
   cwd: string
   dshHome?: string
   projectRootMarkers?: string[]
@@ -277,24 +279,27 @@ async function discoverInstructionFiles(
     files.push(file)
   }
 
-  const userGlobal = join(config.dshHome, USER_GLOBAL_FILE)
-  const userGlobalProbe = await statFile(userGlobal, fileSystem, options.signal)
-  switch (userGlobalProbe.kind) {
-    case 'present':
-      addFile({
-        absolutePath: userGlobal,
-        displayPath: userGlobalDisplayPath(config.dshHome),
-        ...userGlobalProbe.info,
-      })
-      break
-    case 'absent':
-    case 'unavailable':
-      break
-    /* v8 ignore next 2 -- StatFileProbe is closed; this arm only makes adding a kind a compile error. */
-    default:
-      assertNever(userGlobalProbe, 'StatFileProbe')
-  }
+  if (config.includeHarnessInstructions) {
+    const userGlobal = join(config.dshHome, USER_GLOBAL_FILE)
+    const userGlobalProbe = await statFile(userGlobal, fileSystem, options.signal)
+    switch (userGlobalProbe.kind) {
+      case 'present':
+        addFile({
+          absolutePath: userGlobal,
+          displayPath: userGlobalDisplayPath(config.dshHome),
+          ...userGlobalProbe.info,
+        })
+        break
+      case 'absent':
+      case 'unavailable':
+        break
+      /* v8 ignore next 2 -- StatFileProbe is closed; this arm only makes adding a kind a compile error. */
+      default:
+        assertNever(userGlobalProbe, 'StatFileProbe')
+    }
 
+  }
+  if (!config.includeWorkspaceInstructions) return files
   const cwd = resolve(options.cwd)
   const projectRoot = options.projectRoot
     ?? await findProjectRoot(cwd, config.projectRootMarkers, fileSystem, options.signal)

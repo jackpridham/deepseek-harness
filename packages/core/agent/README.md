@@ -82,6 +82,10 @@ The handle every plugin programs against:
 - Event listeners: all `agent/*` events are declared here — no dependency on the loop package needed.
 - Subagent delegation is not an `Agent` method; providers create or drive ordinary handles through the factory API, so delegation transports stay outside the core agent interface.
 
+## Instruction configuration at creation
+
+`agents.create({..., instructions})` passes session-owned instruction configuration to the session store before publication. `assembleContextFor(agent)` carries that session into each prompt assembly. Resume reads configuration from the complete session log; it does not reapply CLI flags. The [session instruction API](../../host/apiproxy/README.md#session-instruction-api) defines composition, source switches, revisions, and the fresh-session write restriction.
+
 ## Model Experience
 
 ### User, steering, and injected messages

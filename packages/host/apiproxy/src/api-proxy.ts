@@ -9,7 +9,8 @@ import { homedir } from 'node:os'
 import { dirname, isAbsolute, parse, relative, resolve, sep } from 'node:path'
 import { z as zod } from 'zod'
 import type { Context } from '@deepseek-ai/cordis'
-import { installModelSelection } from '@deepseek-ai/dsh-agent'
+import { renderPrompt, renderContextSections } from '@deepseek-ai/dsh-system-prompt'
+import { installModelSelection, assembleContextFor } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentHandle, LlmRequestLifecycle, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatus } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-presets/types'
 import { AttachmentError, admitEncodedImages } from '@deepseek-ai/dsh-attachment'
@@ -18,7 +19,7 @@ import { contentHasImage, createUserMessage, freezeMessage, ReasoningEffortId } 
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, LlmModelInfo, MessageSource } from '@deepseek-ai/dsh-llm'
 import { isAppendSurfaceEvent, isJsonValue } from '@deepseek-ai/dsh-session'
-import type { JsonValue, Session, SessionEvent, SessionEventMap, SessionHeader, SessionId, UserMessage } from '@deepseek-ai/dsh-session'
+import type { SessionInstructions, JsonValue, Session, SessionEvent, SessionEventMap, SessionHeader, SessionId, UserMessage } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { SessionQueryError, type SessionSearchCursor } from '@deepseek-ai/dsh-session-query'
 import { SubagentError } from '@deepseek-ai/dsh-subagent'
@@ -1926,6 +1927,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     cwd: string,
     checkPersistedIdentity: boolean,
     presetId?: string,
+    instructions?: SessionInstructions,
   ): Promise<Agent> {
     let creation = sessionCreations.get(sessionId)
     if (creation === undefined) {
@@ -1981,6 +1983,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             ...composition.agentPreset === undefined ? {} : { agentPreset: composition.agentPreset },
           },
           setup: composition.setup,
+          ...instructions === undefined ? {} : { instructions },
         }))
       })().catch((error: unknown) => {
         // Another Host entry path may have published the same identity while
@@ -2009,6 +2012,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     if (agent.session.header.cwd !== cwd) {
       throw new SessionCwdConflict(sessionId, cwd, agent.session.header.cwd)
     }
+    if (instructions !== undefined) agent.session.configureInstructions(instructions)
     return agent
   }
 
@@ -2462,7 +2466,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           const cwd = workspace?.path ?? request.payload.cwd ?? defaults.cwd
           const requestedPreset = request.payload.agentPreset
           try {
-            await ensureSession(sessionId, cwd, request.payload.sessionId !== undefined, requestedPreset)
+            await ensureSession(sessionId, cwd, request.payload.sessionId !== undefined, requestedPreset, request.payload.instructions)
           } catch (error: unknown) {
             if (error instanceof AgentPresetConflict) {
               return err(request, {
@@ -2518,8 +2522,47 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           // allowed and the row `session.list` serves for the same session.
           const created = ctx.agents.get(sessionId)
           const createdPreset = created === undefined ? undefined : resolveSessionPreset(created.session)
-          return ok(request, { sessionId, ...createdPreset === undefined ? {} : { agentPreset: createdPreset } })
+          let instructionsRevision: number | undefined
+          if (request.payload.instructions !== undefined) {
+            if (created === undefined) throw new Error('Configured session was not published')
+            await ctx.sessions.flush(created.session)
+            instructionsRevision = created.session.getInstructions().revision
+          }
+          return ok(request, {
+            sessionId,
+            ...instructionsRevision === undefined ? {} : { instructionsRevision },
+            ...createdPreset === undefined ? {} : { agentPreset: createdPreset },
+          })
         })
+      },
+
+      async configureInstructions(request) {
+        const found = await agentFor(request.payload.sessionId)
+        if ('error' in found) return err(request, found.error)
+        try {
+          const revision = found.agent.session.configureInstructions(request.payload.instructions)
+          await ctx.sessions.flush(found.agent.session)
+          return ok(request, { revision })
+        } catch (error) {
+          return err(request, { code: 'agent-busy', message: String(error), details: { reason: String(error) } })
+        }
+      },
+
+      async getInstructions(request) {
+        const found = await agentFor(request.payload.sessionId)
+        if ('error' in found) return err(request, found.error)
+        const state = found.agent.session.getInstructions()
+        const assembly = await ctx.systemPrompt.assemble(assembleContextFor(found.agent))
+        return ok(request, { ...state, effective: {
+          enabledContextSources: {
+            harnessInstructions: false, workspaceInstructions: false, skillCatalog: false, runtimeFacts: false,
+            ...assembly.contextSourceStatus,
+          },
+          systemPrompt: renderPrompt(assembly),
+          sections: assembly.sections.map(section => ({ name: section.name, text: renderPrompt({ ...assembly, sections: [section] }) })),
+          contexts: renderContextSections(assembly),
+          contextSources: { harnessInstructions: 'inherit', workspaceInstructions: 'inherit', skillCatalog: 'inherit', runtimeFacts: 'inherit', ...state.instructions?.contextSources },
+        } })
       },
 
       async history(request) {
@@ -3351,6 +3394,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         const selection = defaults.defaultModelSelection()
         return Promise.resolve(ok(request, {
           version: '0.0.1',
+          instructionVersions: [1],
           // Same source as session.create's fallback: the UI's default project
           // must match where an unspecified-cwd session actually lands.
           cwd: defaults.cwd,

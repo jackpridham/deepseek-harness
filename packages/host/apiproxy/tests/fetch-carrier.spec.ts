@@ -17,6 +17,8 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
   }
   return {
     sessions: {
+      async configureInstructions() { throw new Error('Unused fixture method') },
+      async getInstructions() { throw new Error('Unused fixture method') },
       async list(request) {
         if (overrides.crashOn === 'session.list') throw new Error('impl crashed')
         return { rpcId: request.rpcId, result: { ok: true, value: { items: [] } } }

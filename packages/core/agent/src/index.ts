@@ -78,6 +78,8 @@ export type AgentSetup = (
  * lineage); the factory creates the session and agent under that identity.
  */
 export interface CreateAgentOptions {
+  /** Session configuration committed before publication and the first turn. */
+  readonly instructions?: import('@deepseek-ai/dsh-session').SessionInstructions
   /** The live agent/session identity. */
   readonly sessionId: SessionId
   /**

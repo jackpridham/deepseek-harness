@@ -30,6 +30,10 @@ An unresolved name reports that the skill is unknown or no longer available. Inv
 
 Tool execution does not add a synthetic context message. Its freshly loaded result is already recorded as the tool result and becomes available to the next model step without duplicating the body. Only the catalog projection adds replacement summaries.
 
+## Session catalogue control
+
+`contextSources.skillCatalog: off` in session instructions suppresses automatic catalogue messages before model steps. It does not disable the `skill` tool or explicit user skill invocation. Missing or `inherit` uses normal catalogue behavior. Configure before the first turn; the session instruction API refuses later changes that would leave older catalogue messages in history.
+
 ## Model Experience
 
 ### Session catalog

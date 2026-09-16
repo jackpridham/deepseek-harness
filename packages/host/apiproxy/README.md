@@ -62,6 +62,14 @@ The `settings.*`, `credentials.*`, and `llm.*` domains are the configuration-pag
 
 `AbstractApiClient` holds every protocol invariant — rpcId minting, envelope wrap/unwrap, zod parsing, SSE frame decoding, unary timeout, microtask-batched envelope observation (`subscribeEnvelopes`) — while platform subclasses supply only the `doFetch` transport aspect. `InProcessApiClient` over `toFetchHandler(api)` remains the isomorphic point for callers and carrier tests that need the full wire serialization/validation path without a network. Product `dsh --profile headless` is a direct core entry point and does not mount this package.
 
+## Session instruction API
+
+`host.describe` advertises `instructionVersions: [1]`. Independently shipped callers must check support before sending overrides; absence is unsupported. `session.create({..., instructions})` commits configuration before session publication and returns `instructionsRevision`. `session.configureInstructions({sessionId, instructions})` writes the complete desired configuration on an existing fresh session and returns `revision`. Both use `Session.configureInstructions`; identical retries retain the revision without adding another event. Changed writes after the first turn fail. Turn events record `instructionsRevision` when configured.
+
+`session.getInstructions({sessionId})` restores the session when needed and returns exact `instructions` (null when absent), `revision` (zero when absent), and `effective`: rendered `systemPrompt`, named `sections`, resolved `contexts`, source modes in `contextSources`, and plugin-reported booleans in `enabledContextSources`. Inspection runs assembly without appending prompts or starting model work. The ordinary history API retains configuration and request headers.
+
+Version 1 accepts `systemPrompt.base` as `{mode:"inherit"}` or `{mode:"replace",text:"..."}`, ordered `prepend` and `append` arrays of `{id,text}`, and `contextSources` switches for `harnessInstructions`, `workspaceInstructions`, `skillCatalog`, and `runtimeFacts`. Each switch is `inherit` or `off`. Fields other than `version:1` are optional. Block ids must be unique across both lists. Text and ids survive persistence exactly. The API accepts resolved text, never caller file paths. Replacement changes system text only; source suppression and tool enforcement are independent. The first version has no live updates or turn overrides: future versions must explicitly define next-turn/whole-turn application without mutating running turns.
+
 ## Model Experience
 
 None, as the package defines the client↔host wire contract and carriers; nothing here reaches a model request.

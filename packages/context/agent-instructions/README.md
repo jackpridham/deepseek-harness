@@ -77,6 +77,10 @@ Rendering preserves the most specific instruction files first. It drops whole br
 
 Instruction content is read through `streamText()` under `maxSourceBytes`, even when provider metadata omits size or a file grows after its metadata probe. An oversized file is ignored; during dynamic reconciliation it is temporarily unavailable rather than removed. The plugin keeps no process-wide cache and never caches instruction prose. Its session-local scope cache uses provider versions only as a fast invalidation signal; after invalidation, SHA-1 over the bounded read remains the cross-provider content identity stored in the structured message source.
 
+## Session source controls
+
+The session's `contextSources.harnessInstructions: off` disables automatic Harness-home AGENTS loading. `workspaceInstructions: off` independently disables workspace baseline, nested, and refreshed instructions, including those discovered after explicit file-tool calls. Missing or `inherit` switches retain the plugin defaults, controlled by `includeHarnessInstructions` and `includeWorkspaceInstructions` (both default true). Disabling both avoids filesystem discovery entirely. The switches do not restrict explicit file reads. Configuration is accepted only before the first turn because existing instruction messages and compaction summaries cannot be erased by changing prompt text.
+
 ## Model Experience
 
 ### Baseline context

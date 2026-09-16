@@ -10,6 +10,7 @@ import z from '@deepseek-ai/schemastery'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { sessionInstructionState } from '@deepseek-ai/dsh-session'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
 import {
   escapeText,
@@ -203,6 +204,14 @@ export function apply(ctx: Context, config: Config = {}): void {
     return { kind: 'enter', messages: [...decision.messages, ...injections] }
   })
 
+  ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
+    const assembly = await next()
+    return { ...assembly, contextSourceStatus: { ...assembly.contextSourceStatus,
+      skillCatalog: context.session?.getInstructions().instructions?.contextSources?.skillCatalog !== 'off'
+        && ctx.tools.get(skillTool.name, context.scope) === skillTool,
+    } }
+  })
+
   // Register after the tool so reverse teardown removes guidance first. Exact definition
   // identity prevents a scoped shadow merely named `skill` from inheriting this catalog.
   //
@@ -217,6 +226,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     const decision = await next()
     if (decision.kind === 'reject') return decision
     signal.throwIfAborted()
+    if (sessionInstructionState(agent.session.events).instructions?.contextSources?.skillCatalog === 'off') return decision
     const toolVisible = ctx.tools.get(skillTool.name, agent) === skillTool
     const snapshot = toolVisible
       ? await ctx.skills.snapshot({ cwd: agent.session.header.cwd, signal, scope: agent })

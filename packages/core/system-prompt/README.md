@@ -46,6 +46,12 @@ Merge-extensible: plugins can declare extra fields on `PromptAssembly` and `Asse
 
 Design rationale: [the prompt-variables Agent Note](../../../.agents/notes/implemented/architecture/2026-07-05-prompt-variables-and-tool-guidance-ownership.md).
 
+## Session-owned composition
+
+`assembleContextFor(agent)` supplies the session to prompt assembly. After all plugin waterfalls and preset complete-section resolution, session instructions compose ordered `prepend` blocks, an inherited or replacement base, then ordered `append` blocks. Caller blocks are literal text: `{{...}}` remains unchanged. Empty replacement and empty lists yield no system text. Repeated assemblies never append to prior rendered output. Replacement excludes every inherited system section, including executor guidance; it does not change tools or their enforcement.
+
+Automatic context is independent of the system role. `runtimeFacts: off` suppresses assembled contexts; AGENTS and skill-catalog switches are enforced by their owning loaders. `contextSourceStatus` reports the automatic sources enabled by the assembled plugins. Exact configuration persists in the session log and remains effective after resume/compaction. See the [instruction API](../../host/apiproxy/README.md#session-instruction-api).
+
 ## Model Experience
 
 ### System prompt

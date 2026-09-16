@@ -6,6 +6,11 @@
  * @module @deepseek-ai/dsh-session
  */
 
+import { isDeepStrictEqual } from 'node:util'
+import { parseSessionInstructions, sessionInstructionState } from './instructions.ts'
+import type { SessionInstructions, SessionInstructionState } from './types.ts'
+export { parseSessionInstructions, sessionInstructionState } from './instructions.ts'
+
 import { Context, Service } from '@deepseek-ai/cordis'
 import { isAbsolute } from 'node:path'
 import { deepFreeze } from '@deepseek-ai/dsh-llm'
@@ -552,6 +557,27 @@ export class Session {
     }
   }
 
+  /**
+   * Read session-owned instructions independently of the conversation surface.
+   * @returns the accepted instruction configuration derived from the complete log.
+   */
+  getInstructions(): SessionInstructionState { return sessionInstructionState(this.events) }
+
+  /**
+   * Commit instructions on a fresh session; identical retries retain their revision.
+   * @param instructions - complete desired configuration, not an incremental append.
+   * @returns the accepted configuration revision.
+   */
+  configureInstructions(instructions: SessionInstructions): number {
+    parseSessionInstructions(instructions)
+    const current = this.getInstructions()
+    if (isDeepStrictEqual(current.instructions, instructions)) return current.revision
+    if (this.events.some(event => event.type === 'turn/start')) throw new Error('Instructions are fixed after the first turn; create a fresh session')
+    const revision = current.revision + 1
+    this.append('session/instructions', { revision, instructions })
+    return revision
+  }
+
   /** Cached immutable public snapshot of the private append-only log. */
   private eventsSnapshot: readonly SessionEvent[] | undefined
 
@@ -890,7 +916,9 @@ export class SessionStore extends Service {
       ...meta?.delegationDepth === undefined ? {} : { delegationDepth: meta.delegationDepth },
       ...meta?.agentPreset === undefined ? {} : { agentPreset: meta.agentPreset },
     }
-    return Session.create(sessionId, seed, header)
+    const session = Session.create(sessionId, seed, header)
+    if (options?.instructions !== undefined) session.configureInstructions(options.instructions)
+    return session
   }
 
   /**

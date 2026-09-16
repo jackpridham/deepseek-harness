@@ -13,6 +13,8 @@ Source: [`packages/core/system-prompt/src/index.ts`](../../packages/core/system-
 ```ts type-equiv
 /** Merge-extensible context for one prompt assembly. */
 interface AssembleContext {
+  /** Session whose durable instructions apply; diagnostics may omit it. */
+  session?: Session
   /**
    * Scope whose providers and waterfall listeners participate. When absent,
    * only global providers and subject-less listeners participate.

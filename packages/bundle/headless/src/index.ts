@@ -31,10 +31,13 @@ export const inject = ['agentDefaultModel', 'agents', 'sessions']
 export interface Config {
   /** The prompt text for the single run. */
   task: string
+  /** Session-owned instructions resolved before the first turn. */
+  instructions?: import('@deepseek-ai/dsh-session').SessionInstructions
 }
 
 export const Config: z<Config> = z.object({
   task: z.string().required(),
+  instructions: z.any(),
 })
 
 /** Outcome of one owned run interval. */
@@ -93,7 +96,7 @@ function fail(io: HeadlessIo, error: unknown): void {
  * @param task - one-shot task text.
  * @param io - process-facing effects.
  */
-async function run(ctx: Context, task: string, io: HeadlessIo): Promise<void> {
+async function run(ctx: Context, task: string, io: HeadlessIo, instructions?: Config['instructions']): Promise<void> {
   // Loader siblings mount concurrently. Await the complete application before
   // creating an Agent so its scoped tools and adapters are not half-composed.
   await ctx.get('loader')?.await()
@@ -111,6 +114,7 @@ async function run(ctx: Context, task: string, io: HeadlessIo): Promise<void> {
   const { agent } = await agents.create({
     sessionId: SessionId(`session-${randomUUID()}`),
     meta: { cwd: process.cwd() },
+    ...instructions === undefined ? {} : { instructions },
     agentOptions: { provider: selection.provider, model: selection.model },
     setup: (agentCtx) => {
       const selected: ModelSelectionRef = { current: selection, assembled: undefined }
@@ -146,5 +150,5 @@ export function apply(ctx: Context, config: Config): void {
     throw new Error('headless-runner: the launcher must provide ctx.appExit before the tree mounts')
   }
   const io: HeadlessIo = { stdout: internals.stdout, stderr: internals.stderr, exit }
-  void run(ctx, config.task, io).catch((error: unknown) => { fail(io, error) })
+  void run(ctx, config.task, io, config.instructions).catch((error: unknown) => { fail(io, error) })
 }

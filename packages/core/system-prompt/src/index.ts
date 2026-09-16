@@ -8,6 +8,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { AnonymousEntries, NamedEntries, ScopedLayers, scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { ScopeKey, ScopeLayer, Scoped } from '@deepseek-ai/dsh-scope'
+import type { Session, InstructionContextSources } from '@deepseek-ai/dsh-session'
 import type { ContextSnapshotSection, ToolSchema } from '@deepseek-ai/dsh-llm'
 
 declare module '@deepseek-ai/cordis' {
@@ -40,6 +41,8 @@ declare module '@deepseek-ai/cordis' {
 
 /** Merge-extensible context for one prompt assembly. */
 export interface AssembleContext {
+  /** Session whose durable instructions apply; diagnostics may omit it. */
+  session?: Session
   /**
    * Scope whose providers and waterfall listeners participate. When absent,
    * only global providers and subject-less listeners participate.
@@ -86,6 +89,8 @@ export interface PromptContext {
 
 /** One section of an assembly: {@link PromptSection} with its text resolved. */
 export interface AssembledSection {
+  /** Caller-authored literal text bypasses preset template interpolation. */
+  literal?: boolean
   /** The contributing section's unique name. */
   name: string
   /** The resolved (but not yet interpolated) section text. */
@@ -113,6 +118,8 @@ export interface ToolProviderResult {
  * uninterpolated until rendered; tools are already in canonical order.
  */
 export interface PromptAssembly {
+  /** Automatic source availability reported by their owning plugins. */
+  contextSourceStatus?: Partial<Record<keyof InstructionContextSources, boolean>>
   sections: AssembledSection[]
   contexts: AssembledContext[]
   tools: ToolSchema[]
@@ -211,7 +218,7 @@ export interface Config {
  */
 export function renderPrompt(assembly: PromptAssembly): string {
   return assembly.sections
-    .map(section => interpolate(section, assembly.variables, 'section'))
+    .map(section => section.literal ? section.text : interpolate(section, assembly.variables, 'section'))
     .filter(text => text.length > 0)
     .join('\n\n')
 }
@@ -533,11 +540,28 @@ export class SystemPrompt extends Service {
       scopeTarget(this, scope), 'system-prompt/assemble', assembly, context,
       () => Promise.resolve(assembly),
     )
-    if (completeSection === undefined && !runtimeContextSuppressed) return transformed
-    return {
+    const inherited: PromptAssembly = {
       ...transformed,
       sections: completeSection === undefined ? transformed.sections : [completeSection],
       contexts: runtimeContextSuppressed ? [] : transformed.contexts,
+      contextSourceStatus: { ...transformed.contextSourceStatus, runtimeFacts: !runtimeContextSuppressed },
+    }
+    const instructions = context.session?.getInstructions().instructions
+    if (instructions == null) return inherited
+    const prompt = instructions.systemPrompt
+    const blocks = (side: 'prepend' | 'append'): AssembledSection[] => (prompt?.[side] ?? [])
+      .map(block => ({ name: `session:${side}:${block.id}`, text: block.text, literal: true }))
+    return {
+      ...inherited,
+      sections: [
+        ...blocks('prepend'),
+        ...prompt?.base?.mode === 'replace'
+          ? [{ name: 'session:base', text: prompt.base.text, literal: true }]
+          : inherited.sections,
+        ...blocks('append'),
+      ],
+      contexts: instructions.contextSources?.runtimeFacts === 'off' ? [] : inherited.contexts,
+      contextSourceStatus: { ...inherited.contextSourceStatus, runtimeFacts: !runtimeContextSuppressed && instructions.contextSources?.runtimeFacts !== 'off' },
     }
   }
 }

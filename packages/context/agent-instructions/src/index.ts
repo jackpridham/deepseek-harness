@@ -13,6 +13,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { isDeepStrictEqual } from 'node:util'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { sessionInstructionState } from '@deepseek-ai/dsh-session'
 import type { Session, UserMessage } from '@deepseek-ai/dsh-session'
 import type { ToolExecution, ToolExecutionResult, ToolExecutionToken } from '@deepseek-ai/dsh-tools'
 import { Config, resolveConfig, workspaceBaselineIdentity, type ResolvedConfig } from './config.ts'
@@ -79,6 +80,14 @@ function filePathFromExecution(exec: ToolExecution): string | undefined {
 
 export function apply(ctx: Context, config: Config): void {
   const resolved: ResolvedConfig = resolveConfig(config)
+  ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
+    const assembly = await next()
+    const switches = context.session?.getInstructions().instructions?.contextSources
+    return { ...assembly, contextSourceStatus: { ...assembly.contextSourceStatus,
+      harnessInstructions: resolved.includeHarnessInstructions && switches?.harnessInstructions !== 'off',
+      workspaceInstructions: resolved.includeWorkspaceInstructions && switches?.workspaceInstructions !== 'off',
+    } }
+  })
   const instructionVersions: InstructionVersionCache = new WeakMap()
   const baselinePreparations = new WeakMap<Session, {
     identity: string
@@ -110,6 +119,13 @@ export function apply(ctx: Context, config: Config): void {
     touchedPaths: readonly string[] = [],
   ): Promise<UserMessage | undefined> => {
     signal.throwIfAborted()
+    const switches = sessionInstructionState(agent.session.events).instructions?.contextSources
+    const effective = {
+      ...resolved,
+      includeHarnessInstructions: resolved.includeHarnessInstructions && switches?.harnessInstructions !== 'off',
+      includeWorkspaceInstructions: resolved.includeWorkspaceInstructions && switches?.workspaceInstructions !== 'off',
+    }
+    if (!effective.includeHarnessInstructions && !effective.includeWorkspaceInstructions) return undefined
     if (resolved.maxBytes <= 0 || !Number.isFinite(resolved.maxBytes)) {
       return undefined
     }
@@ -122,8 +138,9 @@ export function apply(ctx: Context, config: Config): void {
     const authorityMessages = [...claimed]
     /* v8 ignore next -- normal agents carry an absolute session cwd. */
     const cwd = agent.session.header.cwd ?? process.cwd()
-    const projectRoot = await findProjectRoot(cwd, resolved.projectRootMarkers, fileSystem, signal)
-    const identity = workspaceBaselineIdentity(resolved, cwd, projectRoot)
+    const projectRoot = effective.includeWorkspaceInstructions
+      ? await findProjectRoot(cwd, resolved.projectRootMarkers, fileSystem, signal) : cwd
+    const identity = workspaceBaselineIdentity(effective, cwd, projectRoot)
     const visibleBaseline = visibleBaselineSource(agent, authorityMessages)
     const baselinePresent = visibleBaseline !== undefined
     const keepVisibleBaseline = visibleBaseline?.baselineIdentity === identity
@@ -135,6 +152,8 @@ export function apply(ctx: Context, config: Config): void {
     if (!baselinePresent || !keepVisibleBaseline || excludedBaselineScopes === undefined) {
       const replacePreviousBaseline = baselinePresent && !keepVisibleBaseline
       const instructions = await loadBaselineInstructionSet({
+        includeHarnessInstructions: effective.includeHarnessInstructions,
+        includeWorkspaceInstructions: effective.includeWorkspaceInstructions,
         cwd,
         dshHome: resolved.dshHome,
         projectRootMarkers: resolved.projectRootMarkers,
@@ -186,7 +205,7 @@ export function apply(ctx: Context, config: Config): void {
     }
     const update = await reconcileInstructionContext(
       agent,
-      resolved,
+      effective,
       instructionVersions,
       fileSystem,
       {

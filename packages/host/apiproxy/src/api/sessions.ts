@@ -8,7 +8,7 @@ import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { AttachmentIdType, ImageAttachmentLimits, ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type { ModelModality } from '@deepseek-ai/dsh-llm/types'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionEvent, SessionId, SessionInstructions, SessionInstructionState, InstructionContextSources } from '@deepseek-ai/dsh-session/types'
 // The pure-type outlet: api/ is browser-importable, and the package root's
 // cordis Context merge (via dsh-agent) must not enter client aggregates.
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
@@ -336,8 +336,29 @@ export interface SessionsApi {
    * id fails with `agent-preset-not-found`, and a preset whose composition
    * cannot be mounted fails with `agent-preset-invalid`.
    */
-  create(request: RpcRequest<{ workspaceId?: WorkspaceId; cwd?: string; sessionId?: SessionId; agentPreset?: string }>):
-  Promise<RpcResponse<{ sessionId: SessionId; agentPreset?: string }>>
+  create(request: RpcRequest<{
+    workspaceId?: WorkspaceId
+    cwd?: string
+    sessionId?: SessionId
+    agentPreset?: string
+    instructions?: SessionInstructions
+  }>):
+  Promise<RpcResponse<{ sessionId: SessionId; agentPreset?: string; instructionsRevision?: number }>>
+
+  /** Set the complete configuration before the first turn; identical retries are idempotent. */
+  configureInstructions(request: RpcRequest<{ sessionId: SessionId; instructions: SessionInstructions }>):
+  Promise<RpcResponse<{ revision: number }>>
+
+  /** Inspect exact inputs and current model-facing composition without running a turn. */
+  getInstructions(request: RpcRequest<{ sessionId: SessionId }>): Promise<RpcResponse<SessionInstructionState & {
+    effective: {
+      enabledContextSources: Record<keyof InstructionContextSources, boolean>
+      systemPrompt: string
+      sections: Array<{ name: string; text: string }>
+      contextSources: InstructionContextSources
+      contexts: Array<{ name: string; text: string }>
+    }
+  }>>
 
   /**
    * Reads a window of history events; page boundaries align to append-origin message

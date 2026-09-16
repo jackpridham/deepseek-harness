@@ -98,8 +98,45 @@ export const sessionSearchValueSchema = z.object({
   hasMore: z.boolean(),
 }) satisfies z.ZodType<Wire<ResponseValue<'session.search'>>>
 
+/** Session-owned literal instruction inputs, shared by create and configure. */
+export const sessionInstructionsSchema = z.object({
+  version: z.literal(1),
+  systemPrompt: z.object({
+    base: z.discriminatedUnion('mode', [z.object({ mode: z.literal('inherit') }).strict(), z.object({ mode: z.literal('replace'), text: z.string() }).strict()]).optional(),
+    prepend: z.array(z.object({ id: z.string().min(1), text: z.string() }).strict()).optional(),
+    append: z.array(z.object({ id: z.string().min(1), text: z.string() }).strict()).optional(),
+  }).strict().optional(),
+  contextSources: z.object({
+    harnessInstructions: z.enum(['inherit', 'off']).optional(),
+    workspaceInstructions: z.enum(['inherit', 'off']).optional(),
+    skillCatalog: z.enum(['inherit', 'off']).optional(),
+    runtimeFacts: z.enum(['inherit', 'off']).optional(),
+  }).strict().optional(),
+}).strict()
+
+/** Fresh-session instruction write. */
+export const sessionConfigureInstructionsRequestSchema = z.object({ sessionId: sessionIdSchema, instructions: sessionInstructionsSchema })
+/** Accepted configuration revision. */
+export const sessionConfigureInstructionsValueSchema = z.object({ revision: z.number() })
+/** Instruction inspection request. */
+export const sessionGetInstructionsRequestSchema = z.object({ sessionId: sessionIdSchema })
+/** Exact inputs and effective prompt/context contribution diagnostics. */
+export const sessionGetInstructionsValueSchema = z.object({
+  revision: z.number(), instructions: sessionInstructionsSchema.nullable(),
+  effective: z.object({
+    enabledContextSources: z.object({
+      harnessInstructions: z.boolean(), workspaceInstructions: z.boolean(), skillCatalog: z.boolean(), runtimeFacts: z.boolean(),
+    }),
+    systemPrompt: z.string(),
+    sections: z.array(z.object({ name: z.string(), text: z.string() })),
+    contextSources: sessionInstructionsSchema.shape.contextSources.unwrap(),
+    contexts: z.array(z.object({ name: z.string(), text: z.string() })),
+  }),
+})
+
 /** session.create request payload (at most one of workspaceId / cwd). */
 export const sessionCreateRequestSchema = z.object({
+  instructions: sessionInstructionsSchema.optional(),
   workspaceId: workspaceIdSchema.optional(),
   cwd: z.string().optional(),
   sessionId: sessionIdSchema.optional(),
@@ -111,6 +148,7 @@ export const sessionCreateRequestSchema = z.object({
 
 /** session.create response value. */
 export const sessionCreateValueSchema = z.object({
+  instructionsRevision: z.number().optional(),
   sessionId: sessionIdSchema,
   agentPreset: z.string().optional(),
 }) satisfies z.ZodType<Wire<ResponseValue<'session.create'>>>

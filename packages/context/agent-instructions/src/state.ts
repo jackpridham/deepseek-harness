@@ -298,6 +298,10 @@ export async function reconcileInstructionContext(
     for (const dir of descendantDirsBetween(cwd, touchedPath)) addProjectScopes(scopes, dir)
   }
 
+  for (const scope of scopes) {
+    const harness = decodeScopeKey(scope).directory === USER_GLOBAL_DIRECTORY
+    if (harness ? !resolved.includeHarnessInstructions : !resolved.includeWorkspaceInstructions) scopes.delete(scope)
+  }
   const versions = versionStatesFor(session, versionCache)
   const seenAbsolutePaths = new Set<string>()
   // Per-directory trimmed-content identities kept so far this pass, iterated in

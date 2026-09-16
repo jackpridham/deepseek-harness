@@ -31,7 +31,9 @@ interface SessionEventMap {
    * step; otherwise the following identified `user/message` event or batch
    * records the messages entering the step.
    */
-  'turn/start': { turn: number }
+  'turn/start': { turn: number; instructionsRevision?: number }
+  /** Exact accepted configuration, independent of compacted message history. */
+  'session/instructions': { revision: number; instructions: SessionInstructions }
   /**
    * Closes turn `turn` with the {@link TurnEndReason} that ended it. A turn
    * with no entered step has no `step/start` or `step/end`. The loop does not await a
@@ -429,6 +431,19 @@ declare class Session {
    * @returns a restored detached session.
    */
   static fromRestore(id: SessionId, seed: readonly SessionEvent[], header: SessionHeader): Session;
+  /**
+   * Read session-owned instructions independently of the conversation surface.
+   * @returns the accepted instruction configuration derived from the complete log.
+   */
+  getInstructions(): SessionInstructionState;
+
+  /**
+   * Commit instructions on a fresh session; identical retries retain their revision.
+   * @param instructions - complete desired configuration, not an incremental append.
+   * @returns the accepted configuration revision.
+   */
+  configureInstructions(instructions: SessionInstructions): number;
+
   /**
    * An immutable snapshot of the append-only event log. The snapshot is reused
    * until the next append; a previously returned array does not grow later.

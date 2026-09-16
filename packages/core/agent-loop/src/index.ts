@@ -618,6 +618,7 @@ export class AgentLoop extends Service implements AgentFactory {
    */
   async createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle> {
     const preparation = SessionPreparation.create(this.runtime.ctx.sessions.prepare(options.sessionId, {
+      ...options.instructions === undefined ? {} : { instructions: options.instructions },
       ...options.seed === undefined ? {} : { seed: options.seed },
       ...options.meta === undefined ? {} : { meta: options.meta },
     }))

@@ -84,6 +84,10 @@ Everything that goes beyond "call the model, run the tools, repeat" belongs to p
 - Persistence: eager write-behind from `session/event`; `session/flush` is an explicit observation barrier
 - UI: `session/event` (assistant token stream, boundaries, tool activity) + `agent/*` control events (`agent/status`, `agent/created`/`agent/disposed`)
 
+## Instruction revisions
+
+Each configured session's `turn/start` records its accepted `instructionsRevision`. Instructions are frozen before the first turn; each model step assembles the current durable configuration without appending duplicate instruction messages. Resume and compaction retain that configuration independently of the visible conversation surface. See the [session instruction API](../../host/apiproxy/README.md#session-instruction-api).
+
 ## Model Experience
 
 ### Complete conversation request
