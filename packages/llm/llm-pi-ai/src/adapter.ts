@@ -220,6 +220,7 @@ function requestHeaders(
   expectedWorkerConfigIdentity: string | undefined,
   capacitySwap: boolean,
   requestId: string | undefined,
+  switchWorker: boolean,
 ): Record<string, string> {
   const attribution = attributionHeaders()
   const reserved = new Set(Object.keys(attribution).map(name => name.toLowerCase()))
@@ -229,14 +230,10 @@ function requestHeaders(
       ? {}
       : { 'X-Inf01-Expected-Worker-Identity': expectedWorkerConfigIdentity },
     ...capacitySwap ? { 'X-Inf01-Capacity-Swap': '1' } : {},
+    ...switchWorker ? { 'X-Inf01-Switch-Worker': '1' } : {},
     ...requestId === undefined ? {} : { 'X-Inf01-Request-ID': requestId },
     ...attribution,
   }
-}
-
-/** Compute the backend admission identity when the catalog has a worker mode. */
-function expectedWorkerIdentity(options: GenerateOptions): string | undefined {
-  return options.workerConfigIdentity
 }
 
 /** A verified ready worker, read immediately before its managed request. */
@@ -636,14 +633,11 @@ export class PiAiAdapter extends LlmAdapter {
         })
         : undefined,
     ).finally(() => waitController.abort('managed worker wait completed'))
-    if (loaded !== undefined) {
-      if ((options.contextWindow !== undefined && options.contextWindow !== loaded.contextWindow)
-        || (options.mode !== undefined && options.mode !== loaded.mode)
-        || (options.options !== undefined && !sameOptions(options.options, loaded.options))
-        || (options.workerConfigIdentity !== undefined && options.workerConfigIdentity !== loaded.identity)) {
-        throw new LlmError('managed worker configuration changed; adopt loaded settings or switch worker', 'WORKER_CONFIG_CONFLICT')
-      }
-    }
+    const switchWorker = loaded !== undefined && (
+      (options.contextWindow !== undefined && options.contextWindow !== loaded.contextWindow)
+      || (options.mode !== undefined && options.mode !== loaded.mode)
+      || (options.options !== undefined && !sameOptions(options.options, loaded.options))
+    )
     const contextWindow = options.contextWindow ?? loaded?.contextWindow ?? model.contextWindow
     const contextRoute = profile.contextRoutes.get(options.model)?.get(contextWindow)
     const runtime = profile.loadModes.get(options.model)
@@ -655,8 +649,8 @@ export class PiAiAdapter extends LlmAdapter {
     }
     // The ready worker is already serving this capacity. Its static catalog
     // route may be best-try for a cold admission, but adopting it needs no
-    // best-try opt-in and remains protected by the exact worker check above.
-    if (contextRoute?.available === false && loaded?.contextWindow !== contextWindow && options.bestTryContext !== true) {
+    // best-try opt-in and remains protected by the observed worker identity at admission.
+    if (contextRoute?.available === false && (switchWorker || loaded?.contextWindow !== contextWindow) && options.bestTryContext !== true) {
       throw new LlmError(
         contextRoute.unavailableReason
           ?? `pi-ai provider "${options.provider}" model "${options.model}" context window ${contextWindow} requires best-try mode`,
@@ -671,18 +665,19 @@ export class PiAiAdapter extends LlmAdapter {
     const loadRoute = runtime?.loadRoutes?.find(route => route.contextWindow === contextWindow
       && route.mode === mode
       && sameOptions(route.options, servingOptions))
-    if (loaded === undefined && runtime?.loadRoutes !== undefined && loadRoute === undefined) {
+    if ((loaded === undefined || switchWorker) && runtime?.loadRoutes !== undefined && loadRoute === undefined) {
       throw new LlmError(
         `pi-ai provider "${options.provider}" model "${options.model}" has no runtime route for the requested serving configuration`,
         'UNSUPPORTED_SERVING_CONFIGURATION',
       )
     }
-    const runtimeModel = loaded === undefined && loadRoute === undefined
+    const matchingWorker = switchWorker ? undefined : loaded
+    const runtimeModel = matchingWorker === undefined && loadRoute === undefined
       ? contextRoute === undefined || contextRoute.model === model.id ? model : { ...model, id: contextRoute.model }
-      : { ...model, id: loaded?.model ?? loadRoute?.model ?? model.id }
+      : { ...model, id: matchingWorker?.model ?? loadRoute?.model ?? model.id }
     const operationId = profile.modelsFromEndpoint === true ? randomUUID() : undefined
     const observeOperation = operationId !== undefined && options.purpose === undefined
-    const workerConfigIdentity = loaded?.identity ?? expectedWorkerIdentity(options)
+    const workerConfigIdentity = loaded?.identity
     let operationOutcome: 'completed' | 'failed' | 'cancelled' | undefined
     const reasoning = resolveReasoningLevel(
       model,
@@ -745,6 +740,7 @@ export class PiAiAdapter extends LlmAdapter {
           workerConfigIdentity,
           profile.modelsFromEndpoint === true,
           operationId,
+          switchWorker,
         ),
       })
       const iterator = toStreamChunks(events, contextWindow)[Symbol.asyncIterator]()

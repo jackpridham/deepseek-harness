@@ -50,6 +50,59 @@ async function boot(dir: string, config: LlmPiAi.Config): Promise<Context> {
 }
 
 describe('request-level dynamic profiles', () => {
+  it.each([
+    { name: 'stopped worker with stale saved identity', contextWindow: 32_768, mode: 'default', options: {}, switchWorker: false, stopped: true },
+    { name: 'capacity rejection', contextWindow: 32_768, mode: 'default', options: {}, switchWorker: true, rejected: true },
+    { name: 'smaller context', contextWindow: 32_768, mode: 'default', options: {}, switchWorker: true },
+    { name: 'larger context', contextWindow: 131_072, mode: 'default', options: {}, switchWorker: true },
+    { name: 'different mode', contextWindow: 65_536, mode: 'text', options: {}, switchWorker: true },
+    { name: 'different options', contextWindow: 65_536, mode: 'default', options: { cache: true }, switchWorker: true },
+    { name: 'matching settings with stale saved identity', contextWindow: 65_536, mode: 'default', options: {}, switchWorker: false },
+  ])('automatically admits $name using the fresh worker identity', async (selection) => {
+    const route = selection.switchWorker || selection.stopped ? 'requested-route' : 'loaded-route'
+    const server = await mockServer([
+      { body: JSON.stringify({ data: [{
+        id: 'managed-model', context_length: 65_536,
+        context_windows: [32_768, 65_536, 131_072].map(context_window => ({ context_window, model: 'requested-route' })),
+        load_routes: [{ model: route, context_window: selection.contextWindow, mode: selection.mode,
+          options: selection.options, worker_config_identity: 'requested-config' }],
+      }] }) },
+      { body: JSON.stringify({ running: [] }) },
+      { body: JSON.stringify({ workers: selection.stopped ? [] : [{ configured: { model: 'managed-model' }, state: 'ready',
+        observed: { route: 'loaded-route', context: 65_536, mode: 'default', worker_config_identity: 'loaded-config@2' },
+      }] }) },
+      { body: JSON.stringify({ workers: selection.stopped ? [] : [{ configured: { model: 'managed-model' }, state: 'ready',
+        observed: { route: 'loaded-route', context: 65_536, mode: 'default', worker_config_identity: 'loaded-config@2' },
+      }] }) },
+      selection.rejected
+        ? { status: 507, body: JSON.stringify({ error: { message: 'GPU capacity is insufficient; existing workers were retained' } }) }
+        : { events: textEvents },
+    ])
+    vi.stubEnv('INF01_TEST_KEY', 'test-key')
+    const ctx = await boot(await home(), { providers: { inf01: {
+      apiKeyEnv: 'INF01_TEST_KEY', api: 'openai-completions', baseURL: `${server.url}/v1`, modelsFromEndpoint: true,
+    } } })
+    const result = await assemble(ctx, {
+      provider: 'inf01', model: 'managed-model', messages: [],
+      contextWindow: selection.contextWindow, mode: selection.mode, options: selection.options,
+      workerConfigIdentity: 'stale-config@1',
+    })
+    if (selection.rejected) {
+      expect(result.finish.kind).toBe('error')
+      if (result.finish.kind !== 'error') throw new Error('Expected capacity rejection')
+      expect(result.finish.failure.message).toContain('GPU capacity is insufficient')
+    } else {
+      expect(result.finish).toEqual({ kind: 'stop' })
+    }
+    expect(server.requests.at(-1)).toMatchObject({ model: route })
+    expect(server.headers.at(-1)).toMatchObject({
+      'x-inf01-capacity-swap': '1',
+    })
+    expect(server.headers.at(-1)?.['x-inf01-expected-worker-identity']).toBe(selection.stopped ? undefined : 'loaded-config@2')
+    expect(server.paths.filter(path => path === '/v1/chat/completions')).toHaveLength(1)
+    expect(server.headers.at(-1)?.['x-inf01-switch-worker']).toBe(selection.switchWorker ? '1' : undefined)
+  })
+
   it('uses an endpoint-owned model catalog without storing its membership', async () => {
     const dir = await home()
     await writeFile(join(dir, '.credentials.yaml'), 'INF01_KEY: live-key\n', { mode: 0o600 })

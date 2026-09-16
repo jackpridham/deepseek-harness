@@ -20,7 +20,7 @@ The notice can be dismissed without changing session preferences or loading a wo
 
 ## Consequences
 
-Adoption can recover an existing session without raising context. Worker changes require a refreshed selection, and dismissal alone does not resolve a mismatch. No host deployment is implied by the source change.
+Adoption can recover an existing session without raising context. Worker changes require a refreshed selection, and dismissal alone does not change settings. [Automatic worker switching](2026-09-16-automatic-worker-switch.md) resolves the mismatch during subsequent inference admission. No host deployment is implied by the source change.
 
 ## Validation
 
