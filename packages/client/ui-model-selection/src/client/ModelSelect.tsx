@@ -52,6 +52,7 @@ export function ModelSelect(
     () => directory.getSnapshot(),
   )
   const [open, setOpen] = useState(false)
+  const [dismissedConflict, setDismissedConflict] = useState<string>()
   const [resolutionPending, setResolutionPending] = useState<'adopt-loaded' | 'switch-worker'>()
   const [customOutput, setCustomOutput] = useState('')
   const [pane, setPane] = useState<Pane>('model')
@@ -125,6 +126,7 @@ export function ModelSelect(
   const loaded = state.conflict?.loaded ?? currentChoice?.model.loaded
   const effectiveMode = state.current?.mode ?? currentChoice?.model.defaultLoadMode
   const conflict = state.conflict !== null && state.conflict !== undefined
+  const conflictKey = JSON.stringify([state.current, state.conflict])
 
   const reload = (): void => {
     lastActionRef.current = 'load'
@@ -280,6 +282,7 @@ export function ModelSelect(
 
   const resolveConflict = (resolution: 'adopt-loaded' | 'switch-worker'): void => {
     if (state.current === null || loaded === undefined || resolutionPending !== undefined) return
+    lastActionRef.current = 'select'
     setResolutionPending(resolution)
     void select(state.current, resolution, loaded.identity).then(settleSelection).finally(() => setResolutionPending(undefined))
   }
@@ -594,9 +597,10 @@ export function ModelSelect(
           )}
         </div>
       )}
-      {conflict && loaded !== undefined && state.current !== null && (
+      {conflict && (open || dismissedConflict !== conflictKey) && loaded !== undefined && state.current !== null && (
         <div className={css.conflict} role="alert" aria-busy={resolutionPending !== undefined}>
           {resolutionPending !== undefined && <span role="status"><StateDot state="ongoing" /> {resolutionPending === 'switch-worker' ? 'Switching worker…' : 'Adopting loaded settings…'}</span>}
+          <button type="button" className={css.retry} aria-label="Dismiss loaded worker notice" onClick={() => { setDismissedConflict(conflictKey); setOpen(false) }}>Dismiss</button>
           <span>Loaded worker differs: {loaded.contextWindow === undefined ? 'context unknown' : `${loaded.contextWindow / 1024}K`} · {loaded.mode ?? 'mode unknown'}. Choose settings for the next request.</span>
           <button type="button" className={css.retry} disabled={busy || locked} onClick={() => resolveConflict('adopt-loaded')}>Adopt loaded settings</button>
           <button type="button" className={css.retry} disabled={busy || locked} onClick={() => resolveConflict('switch-worker')}>Switch worker</button>

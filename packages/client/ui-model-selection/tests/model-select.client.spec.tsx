@@ -49,6 +49,21 @@ function state(overrides: Partial<ModelDirectoryState> = {}): ModelDirectoryStat
 afterEach(cleanup)
 
 describe('ModelSelect reasoning effort', () => {
+  it('dismisses a worker conflict without changing settings and offers it again in the menu', () => {
+    const directory = createSnapshotStore<ModelDirectoryState>(state({
+      conflict: { loaded: { contextWindow: 65_536, identity: 'small-worker', mode: 'default' } },
+    }))
+    const select = vi.fn().mockResolvedValue(true)
+    render(<ModelSelect locked={false} available directory={directory} load={vi.fn()} select={select} t={t} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss loaded worker notice' }))
+    expect(screen.queryByText(/Loaded worker differs/)).toBeNull()
+    expect(select).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: /DeepSeek-V4-Flash/ }))
+    expect(screen.getByText(/Loaded worker differs/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Adopt loaded settings' }))
+    expect(select).toHaveBeenCalledWith(directory.getSnapshot().current, 'adopt-loaded', 'small-worker')
+  })
+
   it('renders endpoint-owned context choices and submits the chosen tier with the model', async () => {
     const context = {
       defaultContextWindow: 131_072,

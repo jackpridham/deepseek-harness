@@ -1440,6 +1440,8 @@ interface ReasoningChunkStormState {
 
 /** Deterministic fixture branches used by keyless Web assembly tests. */
 export interface FixtureOptions {
+  /** Show a restored session whose saved context differs from the ready worker. */
+  modelConflict?: boolean
   /** Start with no real Workspace or Session. */
   empty?: boolean
   /** Reject every prompt before appending its user event. */
@@ -2472,6 +2474,9 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
         routable: true,
         groups: fixtureModelGroups(),
         failures: [],
+        ...options.modelConflict === true ? {
+          conflict: { loaded: { contextWindow: 65_536, mode: 'default', identity: 'fixture-small-worker' } },
+        } : {},
       }),
       selectModel: (request) => {
         const selected: ModelSelection = {
@@ -3332,6 +3337,7 @@ function fixtureOptionsFromLocation(): FixtureOptions {
   const query = new URLSearchParams(location.search)
   return {
     empty: query.get('fixture') === 'empty',
+    modelConflict: query.get('fixtureModel') === 'conflict',
     rejectPrompt: query.get('fixturePrompt') === 'reject',
     failWorkspaceAttach: query.get('fixtureAttach') === 'fail',
     dropSessionCreateResponse: query.get('fixtureSessionCreate') === 'drop-response',

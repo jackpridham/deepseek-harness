@@ -2622,25 +2622,40 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         if ('error' in found) return err(request, found.error)
         return serializeImageAdmission(found.agent, async () => {
           try {
+            const observed = resolution === 'adopt-loaded'
+              ? (await ctx.llm.resolveModelInfo(provider, model)).loaded
+              : undefined
+            if (resolution === 'adopt-loaded'
+              && (observed === undefined || expectedWorkerConfigIdentity !== observed.identity)) {
+              return err(request, {
+                code: 'model-unavailable',
+                message: 'The loaded worker changed. Refresh the model menu and try again.',
+                details: { provider, model },
+              })
+            }
+            const requestedContext = observed === undefined ? contextWindow : observed.contextWindow
+            const effectiveMode = observed === undefined ? mode : observed.mode
+            const effectiveOptions = observed === undefined ? options : observed.options
+            const effectiveBestTry = observed === undefined ? bestTryContext : false
             const resolved = await ctx.llm.resolveCallConfig({
               provider,
               model,
-              ...contextWindow === undefined ? {} : { contextWindow },
-              ...bestTryContext === undefined ? {} : { bestTryContext },
+              ...requestedContext === undefined ? {} : { contextWindow: requestedContext },
+              ...effectiveBestTry === undefined ? {} : { bestTryContext: effectiveBestTry },
               ...reasoningEffort === undefined
                 ? {}
                 : { reasoningEffort: ReasoningEffortId(reasoningEffort) },
-              ...mode === undefined ? {} : { mode },
-              ...options === undefined ? {} : { options },
+              ...effectiveMode === undefined ? {} : { mode: effectiveMode },
+              ...effectiveOptions === undefined ? {} : { options: effectiveOptions },
               ...typeof outputLimit !== 'number' ? {} : { maxTokens: outputLimit },
               ...expectedWorkerConfigIdentity === undefined ? {} : { workerConfigIdentity: expectedWorkerConfigIdentity },
             })
             const info = await ctx.llm.resolveModelInfo(resolved.provider, resolved.model)
-            validateServingSelection(info, mode, options)
+            validateServingSelection(info, effectiveMode, effectiveOptions)
             const pendingImage = [...found.agent.inbox.nextTurn, ...found.agent.inbox.nextStep]
               .some(message => contentHasImage(message.content))
             if (pendingImage || messagesHaveImage(found.agent.session.deriveMessages())) {
-              const selectedMode = info.loadModes?.find(candidate => candidate.id === (mode ?? info.defaultLoadMode))
+              const selectedMode = info.loadModes?.find(candidate => candidate.id === (effectiveMode ?? info.defaultLoadMode))
               const modalities = selectedMode?.inputModalities ?? info.inputModalities
               if (modalities !== undefined && !modalities.includes('image')) {
                 return err(request, {
@@ -2731,10 +2746,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                 })
               }
             }
-            const observed = resolution === 'adopt-loaded'
-              ? (await ctx.llm.resolveModelInfo(resolved.provider, resolved.model)).loaded
-              : undefined
-            const effectiveContextWindow = observed?.contextWindow ?? resolved.contextWindow
+            const effectiveContextWindow = resolved.contextWindow
             const workerConfigIdentity = switchedWorkerConfigIdentity
               ?? observed?.identity
             const selected: ModelSelection = {
@@ -2745,12 +2757,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
               ...reasoningEffort === undefined
                 ? {}
                 : { reasoningEffort: ReasoningEffortId(reasoningEffort) },
-              ...observed?.mode === undefined
-                ? mode === undefined ? {} : { mode }
-                : { mode: observed.mode },
-              ...observed?.options === undefined
-                ? options === undefined ? {} : { options: { ...options } }
-                : { options: { ...observed.options } },
+              ...effectiveMode === undefined ? {} : { mode: effectiveMode },
+              ...effectiveOptions === undefined ? {} : { options: { ...effectiveOptions } },
               outputLimit: outputLimit ?? 'auto',
               ...workerConfigIdentity === undefined ? {} : { workerConfigIdentity },
             }

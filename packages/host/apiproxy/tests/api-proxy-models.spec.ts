@@ -130,6 +130,45 @@ function registerTextOnly(ctx: Context): void {
 }
 
 describe('Web session model selection', () => {
+  it.each([false, true])('adopts the smaller loaded worker before validating a stale unavailable context (best-try %s)', async (bestTryContext) => {
+    const { ctx, sessionId } = await harness()
+    ctx.llm.registerAdapter(['context-provider'], new class extends CatalogAdapter {
+      override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+        return Promise.resolve({
+          provider, id: model, name: model,
+          loaded: { contextWindow: 65_536, mode: 'default', identity: 'loaded-small' },
+          loadModes: [{ id: 'default', name: 'Default' }],
+          contextOptions: {
+            defaultContextWindow: 65_536,
+            contextWindows: [
+              { contextWindow: 65_536, available: true },
+              { contextWindow: 262_144, available: false, unavailableReason: 'requires best try' },
+            ],
+          },
+        })
+      }
+    }('Context', []))
+    const api = createApiProxy(ctx, {
+      defaultModelSelection: () => ({ provider: 'context-provider', model: 'logical', contextWindow: 262_144 }),
+      cwd: '/tmp',
+    })
+    const selection = {
+      sessionId, provider: 'context-provider', model: 'logical', contextWindow: 262_144,
+      mode: 'old-mode', options: { obsolete: true }, bestTryContext,
+      resolution: 'adopt-loaded' as const, expectedWorkerConfigIdentity: 'loaded-small',
+    }
+    expect(expectValue(await api.sessions.selectModel(request(selection))).selected).toMatchObject({
+      contextWindow: 65_536, mode: 'default', workerConfigIdentity: 'loaded-small', bestTryContext: false,
+    })
+    const stale = await api.sessions.selectModel(request({ ...selection, expectedWorkerConfigIdentity: 'old-worker' }))
+    expect(stale.result.ok).toBe(false)
+    if (!stale.result.ok) {
+      expect(stale.result.error.code).toBe('model-unavailable')
+      expect(stale.result.error.message).toContain('loaded worker changed')
+    }
+    expect(expectValue(await api.sessions.models(request({ sessionId }))).current.contextWindow).toBe(65_536)
+  })
+
   it('advertises, validates, selects, and preserves an exact context tier', async () => {
     const { ctx, agent, sessionId } = await harness()
     const saved: unknown[] = []
