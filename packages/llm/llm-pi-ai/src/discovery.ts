@@ -102,11 +102,11 @@ function reasoning(value: unknown, model: string): LlmDiscoveredModel['reasoning
     return { id: ReasoningEffortId(id), name, wireValue }
   })
   const defaultEffort = label(entry.default_effort)
-  if (entry.default_effort !== undefined && defaultEffort === undefined) return invalid('default_effort must be a non-empty string')
-  if (defaultEffort !== undefined && !seen.has(defaultEffort)) return invalid(`default_effort "${defaultEffort}" is not declared`)
+  if (defaultEffort === undefined) return invalid('default_effort must be a non-empty string')
+  if (!seen.has(defaultEffort)) return invalid(`default_effort "${defaultEffort}" is not declared`)
   return {
     format,
-    ...defaultEffort === undefined ? {} : { defaultEffort: ReasoningEffortId(defaultEffort) },
+    defaultEffort: ReasoningEffortId(defaultEffort),
     efforts,
   }
 }

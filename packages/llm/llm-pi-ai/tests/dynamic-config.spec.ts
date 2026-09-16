@@ -401,6 +401,23 @@ describe('request-level dynamic profiles', () => {
     expect(server.paths).toEqual(['/models', '/running'])
   })
 
+  it('rejects endpoint reasoning metadata without a declared default', async () => {
+    const server = await mockServer([{
+      body: JSON.stringify({ data: [{
+        id: 'missing-default',
+        reasoning: {
+          format: 'qwen-chat-template',
+          efforts: [{ id: 'high', name: 'On', wire_value: 'enabled' }],
+        },
+      }] }),
+    }])
+    const ctx = await boot(await home(), { providers: { local: {
+      api: 'openai-completions', baseURL: server.url, modelsFromEndpoint: true,
+    } } })
+
+    await expect(ctx.llm.listModels('local')).rejects.toMatchObject({ code: 'INVALID_CATALOG' })
+  })
+
   it('mounts bare and dormant, then registers routes the moment settings supply providers', async () => {
     vi.stubEnv('PI_DYNAMIC_KEY', '')
     const dir = await home()
