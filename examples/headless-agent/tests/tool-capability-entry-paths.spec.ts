@@ -66,7 +66,8 @@ function assertAdvisory(agent: Agent, server: Awaited<ReturnType<typeof mockServ
   })
   expect(agent.session.events.some(event => event.type === 'tool/call' || event.type === 'tool/result')).toBe(false)
   expect(server.paths.filter(path => path === '/v1/chat/completions')).toEqual(['/v1/chat/completions'])
-  const tools = server.requests.at(-1)?.tools as Array<{ function?: { name?: string } }> | undefined
+  const request = server.requests.at(-1) as { tools?: Array<{ function?: { name?: string } }> } | undefined
+  const tools = request?.tools
   expect(tools?.map(tool => tool.function?.name)).toEqual(expectedTools)
 }
 
