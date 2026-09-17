@@ -2,6 +2,8 @@
 
 Status: implemented
 
+> Superseded by [Advisory native tool capability](2026-09-17-advisory-native-tool-capability.md). This note records the former admission decision; the endpoint propagation and picker presentation remain, but the pre-inference refusal does not.
+
 ## Problem
 
 An endpoint can advertise models that accept ordinary text generation but reject native tool schemas. Sending those schemas starts provider work that cannot produce a valid tool turn, and presenting an omitted capability field as support gives legacy endpoints an unjustified verified status.

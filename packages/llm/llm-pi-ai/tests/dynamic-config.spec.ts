@@ -50,11 +50,13 @@ async function boot(dir: string, config: LlmPiAi.Config): Promise<Context> {
 }
 
 describe('request-level dynamic profiles', () => {
-  it('refuses native tools at the shared adapter gate before inference starts', async () => {
+  it('treats explicit-negative tool metadata as advisory and preserves offered tools', async () => {
     const server = await mockServer([
       { body: JSON.stringify({ data: [{ id: 'text-only', capabilities: { tools: false } }] }) },
       { body: JSON.stringify({ running: [] }) },
       { body: JSON.stringify({ workers: [] }) },
+      { body: JSON.stringify({ workers: [] }) },
+      { events: textEvents },
     ])
     vi.stubEnv('INF01_TEST_KEY', 'test-key')
     const ctx = await boot(await home(), { providers: { inf01: {
@@ -66,22 +68,22 @@ describe('request-level dynamic profiles', () => {
       tools: [{ name: 'read_file', description: 'Read one file.', parameters: {} }],
     })
 
-    expect(result.finish).toMatchObject({
-      kind: 'error',
-      failure: {
-        code: 'UNSUPPORTED_TOOLS',
-        message: 'pi-ai provider "inf01" model "text-only" does not support native tools',
-      },
+    expect(result.finish).toEqual({ kind: 'stop' })
+    expect(server.paths.filter(path => path === '/v1/chat/completions')).toHaveLength(1)
+    expect(server.requests.at(-1)).toMatchObject({
+      tools: [{ type: 'function', function: { name: 'read_file', description: 'Read one file.', parameters: {} } }],
     })
-    expect(server.paths).not.toContain('/v1/chat/completions')
   })
 
-  it('publishes a true-to-false endpoint refresh to model metadata and the next request', async () => {
+  it('publishes a true-to-false advisory refresh without blocking the next request', async () => {
     const server = await mockServer([
       { body: JSON.stringify({ data: [{ id: 'changing', capabilities: { tools: true } }] }) },
       { body: JSON.stringify({ running: [] }) },
       { body: JSON.stringify({ data: [{ id: 'changing', capabilities: { tools: false } }] }) },
       { body: JSON.stringify({ running: [] }) },
+      { body: JSON.stringify({ workers: [] }) },
+      { body: JSON.stringify({ workers: [] }) },
+      { events: textEvents },
     ])
     vi.stubEnv('INF01_TEST_KEY', 'test-key')
     const ctx = await boot(await home(), { providers: { inf01: {
@@ -99,8 +101,11 @@ describe('request-level dynamic profiles', () => {
       tools: [{ name: 'read_file', description: 'Read one file.', parameters: {} }],
     })
 
-    expect(result.finish).toMatchObject({ kind: 'error', failure: { code: 'UNSUPPORTED_TOOLS' } })
-    expect(server.paths).not.toContain('/v1/chat/completions')
+    expect(result.finish).toEqual({ kind: 'stop' })
+    expect(server.paths.filter(path => path === '/v1/chat/completions')).toHaveLength(1)
+    expect(server.requests.at(-1)).toMatchObject({
+      tools: [{ type: 'function', function: { name: 'read_file', description: 'Read one file.', parameters: {} } }],
+    })
   })
 
   it.each([

@@ -7,7 +7,7 @@ import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
-import { closeMockServers, mockServer } from '../../../packages/llm/llm-pi-ai/tests/mock-server.ts'
+import { closeMockServers, mockServer, textEvents } from '../../../packages/llm/llm-pi-ai/tests/mock-server.ts'
 
 const contexts: Context[] = []
 
@@ -20,7 +20,11 @@ afterEach(async () => {
 async function boot(toolNames: readonly string[]): Promise<{ ctx: Context; server: Awaited<ReturnType<typeof mockServer>> }> {
   const server = await mockServer([{
     body: JSON.stringify({ data: [{ id: 'text-only', capabilities: { tools: false } }] }),
-  }])
+  },
+  { body: JSON.stringify({ running: [] }) },
+  { body: JSON.stringify({ workers: [] }) },
+  { body: JSON.stringify({ workers: [] }) },
+  { events: textEvents }])
   vi.stubEnv('ENTRY_PATH_KEY', 'test-key')
   const ctx = new Context()
   contexts.push(ctx)
@@ -54,28 +58,30 @@ function send(agent: Agent): void {
   }))
 }
 
-function assertAdmission(agent: Agent, completionPaths: readonly string[]): void {
+function assertAdvisory(agent: Agent, server: Awaited<ReturnType<typeof mockServer>>, expectedTools: readonly string[]): void {
   const turnEnd = agent.session.events.findLast(event => event.type === 'turn/end')
   expect(turnEnd).toMatchObject({
     type: 'turn/end',
-    data: { reason: { kind: 'error', error: { code: 'UNSUPPORTED_TOOLS' } } },
+    data: { reason: { kind: 'completed' } },
   })
   expect(agent.session.events.some(event => event.type === 'tool/call' || event.type === 'tool/result')).toBe(false)
-  expect(completionPaths).toEqual([])
+  expect(server.paths.filter(path => path === '/v1/chat/completions')).toEqual(['/v1/chat/completions'])
+  const tools = server.requests.at(-1)?.tools as Array<{ function?: { name?: string } }> | undefined
+  expect(tools?.map(tool => tool.function?.name)).toEqual(expectedTools)
 }
 
-describe('native-tool admission entry paths', () => {
-  it('rejects a standard agent at the shared Pi-AI guard', async () => {
+describe('native-tool advisory entry paths', () => {
+  it('forwards a standard agent request with explicit-negative metadata', async () => {
     const { ctx, server } = await boot(['write'])
     const agent = ctx.agentLoop.create(SessionId('standard-agent'), { provider: 'inf01', model: 'text-only' })
 
     send(agent)
     await agent.whenIdle()
 
-    assertAdmission(agent, server.paths.filter(path => path === '/v1/chat/completions'))
+    assertAdvisory(agent, server, ['write'])
   })
 
-  it('rejects a delegated child agent at the shared Pi-AI guard', async () => {
+  it('forwards a delegated child request with explicit-negative metadata', async () => {
     const { ctx, server } = await boot(['subagent'])
     const parent = await ctx.agents.create({
       sessionId: SessionId('parent-agent'),
@@ -90,10 +96,10 @@ describe('native-tool admission entry paths', () => {
     send(child.agent)
     await child.agent.whenIdle()
 
-    assertAdmission(child.agent, server.paths.filter(path => path === '/v1/chat/completions'))
+    assertAdvisory(child.agent, server, ['subagent'])
   })
 
-  it('rejects a validation-preset agent at the shared Pi-AI guard', async () => {
+  it('forwards a validation-preset request with explicit-negative metadata', async () => {
     const { ctx, server } = await boot(['read', 'glob', 'grep'])
     const validation = await ctx.agents.create({
       sessionId: SessionId('validation-agent'),
@@ -104,6 +110,6 @@ describe('native-tool admission entry paths', () => {
     send(validation.agent)
     await validation.agent.whenIdle()
 
-    assertAdmission(validation.agent, server.paths.filter(path => path === '/v1/chat/completions'))
+    assertAdvisory(validation.agent, server, ['glob', 'grep', 'read'])
   })
 })

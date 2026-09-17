@@ -618,12 +618,6 @@ export class PiAiAdapter extends LlmAdapter {
     const snapshot = await this.refreshed(options.provider, false, options.model, options.signal)
     const profile = this.profileOf(snapshot, options.provider)
     const model = this.modelOf(snapshot, options.provider, options.model)
-    if (options.tools !== undefined && options.tools.length > 0 && profile.modelStates.get(options.model)?.supportsTools === false) {
-      throw new LlmError(
-        `pi-ai provider "${options.provider}" model "${options.model}" does not support native tools`,
-        'UNSUPPORTED_TOOLS',
-      )
-    }
     const apiKey = await this.config.resolveApiKey(options.provider, profile)
     const waitController = new AbortController()
     const waitSignal = options.signal === undefined

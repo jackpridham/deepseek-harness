@@ -64,8 +64,8 @@ describe('ModelSelect reasoning effort', () => {
     const unverified = screen.getByRole('menuitemradio', { name: 'Unknown tools' })
     expect((unavailable as HTMLButtonElement).disabled).toBe(false)
     expect((unverified as HTMLButtonElement).disabled).toBe(false)
-    expect(unavailable.getAttribute('aria-description')).toBe('原生工具不可用')
-    expect(unverified.getAttribute('aria-description')).toBe('原生工具支持未经验证')
+    expect(unavailable.getAttribute('aria-description')).toBe('无原生工具')
+    expect(unverified.getAttribute('aria-description')).toBe('工具支持未知')
   })
 
   it('marks saved choices and loaded settings independently without a conflict popup', () => {

@@ -33,8 +33,6 @@ const goalScenarioDir = join(snapshotsDir, 'goal-tools')
 const goalConfigPath = fileURLToPath(new URL('../goal.cordis.snapshot.yml', import.meta.url))
 const retryScenarioDir = join(snapshotsDir, 'provider-retry')
 const retryConfigPath = fileURLToPath(new URL('../retry.cordis.snapshot.yml', import.meta.url))
-const toolCapabilityScenarioDir = join(snapshotsDir, 'tool-capability-admission')
-const toolCapabilityConfigPath = fileURLToPath(new URL('../tool-capability-admission.cordis.snapshot.yml', import.meta.url))
 const compactionScenarioDir = join(snapshotsDir, 'compaction-recovery')
 const compactionSessionFixture = join(compactionScenarioDir, 'session.jsonl')
 const compactionStreamExpected = join(compactionScenarioDir, 'stream-json.expected.jsonl')
@@ -330,30 +328,6 @@ describe('headless stream-json snapshots', () => {
     const normalized = normalizeHeadlessStream(result.stdout, runCwd)
     if (refreshing) await writeFile(streamExpected, normalized)
     expect(normalized).toBe(await readFile(streamExpected, 'utf8'))
-  }, LOADER_SMOKE_TEST_TIMEOUT_MS)
-
-  it('tool capability admission', async () => {
-    const prompt = 'Attempt a native tool request against a model that declines tools.'
-    const streamExpected = join(toolCapabilityScenarioDir, 'stream-json.expected.jsonl')
-    let runCwd = ''
-    const result = await runLoaderSmoke({
-      label: 'tool capability admission',
-      tempDirPrefix: 'headless-snapshot-tool-capability-admission-',
-      binScript,
-      libBinScript: binScript,
-      configPath: toolCapabilityConfigPath,
-      binArgs: [toolCapabilityConfigPath, prompt],
-      tsconfigPath,
-      env: { DSH_SNAPSHOT: 'replay' },
-      prepare: (cwd) => { runCwd = cwd },
-    })
-
-    expect(result.stderr).toBe('')
-    const normalized = normalizeHeadlessStream(result.stdout, runCwd)
-    if (refreshing) await writeFile(streamExpected, normalized)
-    expect(normalized).toBe(await readFile(streamExpected, 'utf8'))
-    expect(normalized).toContain('UNSUPPORTED_TOOLS')
-    expect(normalized).not.toContain('tool/call')
   }, LOADER_SMOKE_TEST_TIMEOUT_MS)
 
   it('recovers from context overflow through an assembled compaction', async () => {

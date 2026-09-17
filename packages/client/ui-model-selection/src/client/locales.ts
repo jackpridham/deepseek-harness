@@ -37,8 +37,8 @@ export const zh = {
   'blocked.composer': '当前模型不可用，请先选择模型',
   'empty.efforts': '当前模型未提供推理等级。',
   'empty.contexts': '当前模型未提供上下文选项。',
-  'tools.unavailable': '原生工具不可用',
-  'tools.unverified': '原生工具支持未经验证',
+  'tools.unavailable': '无原生工具',
+  'tools.unverified': '工具支持未知',
 } satisfies Record<string, string>
 
 /** The model namespace key union. */
@@ -73,6 +73,6 @@ export const en = {
   'blocked.composer': 'This model is unavailable — select one to continue',
   'empty.efforts': 'This model provides no reasoning effort levels.',
   'empty.contexts': 'This model provides no context choices.',
-  'tools.unavailable': 'Native tools unavailable',
-  'tools.unverified': 'Native tool support is unverified',
+  'tools.unavailable': 'No native tools',
+  'tools.unverified': 'Tool support unknown',
 } satisfies Record<ModelKey, string>
