@@ -143,6 +143,8 @@ export interface ModelCatalogModel {
   description?: string
   /** Whether an ordinary conversation may select this model. */
   selectable?: boolean
+  /** Whether the provider explicitly verifies native tool-call support. */
+  supportsTools?: boolean
   /** Whether this model or one of its private runtime routes is currently loaded. */
   active?: boolean
   /** Bounded selectable context sizes and their default. */

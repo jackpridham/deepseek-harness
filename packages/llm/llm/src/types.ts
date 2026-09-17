@@ -232,6 +232,8 @@ export interface LlmDiscoveredModel {
   contextWindows?: readonly LlmDiscoveredContextWindow[]
   /** Whether an ordinary conversation may select this model; omission means yes. */
   selectable?: boolean
+  /** Whether the endpoint explicitly verifies native tool-call support. */
+  supportsTools?: boolean
   /** Whether this model or one of its private runtime routes is currently loaded. */
   active?: boolean
   /** Bounded reasoning choices and transport advertised by the endpoint. */
@@ -329,6 +331,8 @@ export interface LlmModelInfo {
   inputModalities?: readonly ModelModality[]
   /** Whether an ordinary conversation may select this model; omission means yes. */
   selectable?: boolean
+  /** Whether the provider explicitly verifies native tool-call support. */
+  supportsTools?: boolean
   /** Whether this model or one of its private runtime routes is currently loaded. */
   active?: boolean
   /** Bounded context choices, with the model default identified separately. */

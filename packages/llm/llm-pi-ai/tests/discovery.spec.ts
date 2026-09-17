@@ -135,6 +135,7 @@ describe('draft-provider model discovery', () => {
             },
             max_output_tokens: 4096,
             selectable: false,
+            capabilities: { tools: false },
             architecture: { input_modalities: ['text', 'image', 'audio', 'image'] },
           },
           { id: 'acme-small' },
@@ -149,6 +150,7 @@ describe('draft-provider model discovery', () => {
       {
         id: 'acme-large',
         selectable: false,
+        supportsTools: false,
         name: 'Acme Large',
         inputModalities: ['text', 'image'],
         contextWindow: 65_536,
@@ -185,6 +187,12 @@ describe('draft-provider model discovery', () => {
     await ctx.llm.discoverModels('llm-pi-ai', { baseURL: `${server.url}/openai/v1/` })
 
     expect(server.paths).toEqual(['/openai/v1/models'])
+  })
+
+  it.each([{ capabilities: { tools: 'yes' } }, { capabilities: [] }, { capabilities: null }])('refuses malformed supplied tool metadata', async ({ capabilities }) => {
+    const server = await listingServer({ body: JSON.stringify({ data: [{ id: 'm', capabilities }] }) })
+
+    await expect(discoverModels({ baseURL: server.url })).rejects.toMatchObject({ code: 'INVALID_CATALOG' })
   })
 
   it('offers no credential when the draft names none', async () => {

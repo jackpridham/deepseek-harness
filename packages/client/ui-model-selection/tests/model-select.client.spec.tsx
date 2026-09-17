@@ -49,6 +49,25 @@ function state(overrides: Partial<ModelDirectoryState> = {}): ModelDirectoryStat
 afterEach(cleanup)
 
 describe('ModelSelect reasoning effort', () => {
+  it('keeps explicit-negative and unverified tool models selectable with accessible status', () => {
+    const directory = createSnapshotStore<ModelDirectoryState>(state({
+      current: { provider: 'tools', model: 'false' },
+      groups: [{ id: 'tools', name: 'Tools', models: [
+        { id: 'false', name: 'No tools', supportsTools: false },
+        { id: 'unknown', name: 'Unknown tools' },
+      ] }],
+    }))
+    render(<ModelSelect locked={false} available directory={directory} load={vi.fn()} select={vi.fn()} t={t} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /No tools/ }))
+    const unavailable = screen.getByRole('menuitemradio', { name: 'No tools' })
+    const unverified = screen.getByRole('menuitemradio', { name: 'Unknown tools' })
+    expect((unavailable as HTMLButtonElement).disabled).toBe(false)
+    expect((unverified as HTMLButtonElement).disabled).toBe(false)
+    expect(unavailable.getAttribute('aria-description')).toBe('原生工具不可用')
+    expect(unverified.getAttribute('aria-description')).toBe('原生工具支持未经验证')
+  })
+
   it('marks saved choices and loaded settings independently without a conflict popup', () => {
     const context = {
       defaultContextWindow: 131_072,

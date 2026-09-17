@@ -64,6 +64,7 @@ interface ListingEntry {
   load_modes?: unknown
   load_routes?: unknown
   selectable?: unknown
+  capabilities?: unknown
   architecture?: { input_modalities?: unknown } | null
 }
 
@@ -307,9 +308,18 @@ function readListing(body: unknown): LlmDiscoveredModel[] {
     const defaultLoadMode = label(entry?.default_load_mode)
     const modes = loadModes(entry?.load_modes)
     const routes = loadRoutes(entry?.load_routes)
+    if (entry?.capabilities === null || Array.isArray(entry?.capabilities)
+      || (entry?.capabilities !== undefined && typeof entry.capabilities !== 'object')) {
+      throw new LlmError(`endpoint model "${id}" has invalid capabilities metadata`, 'INVALID_CATALOG')
+    }
+    const capabilities = entry?.capabilities as { tools?: unknown } | undefined
+    if (capabilities?.tools !== undefined && typeof capabilities.tools !== 'boolean') {
+      throw new LlmError(`endpoint model "${id}" has invalid capabilities.tools metadata`, 'INVALID_CATALOG')
+    }
     models.push({
       id,
       selectable: entry?.selectable !== false,
+      ...capabilities?.tools === undefined ? {} : { supportsTools: capabilities.tools },
       ...name === undefined ? {} : { name },
       ...input === undefined ? {} : { inputModalities: input },
       ...contextWindow === undefined ? {} : { contextWindow },

@@ -455,6 +455,9 @@ export function ModelSelect(
                       <div className={css.groupTitle} id={headingId}>{group.name}</div>
                       {group.models.map((model) => {
                         const selected = state.current?.provider === group.id && state.current.model === model.id
+                        const tools = model.supportsTools === false
+                          ? t('tools.unavailable')
+                          : model.supportsTools === undefined ? t('tools.unverified') : undefined
                         return (
                           <button
                             ref={itemRef()}
@@ -464,6 +467,7 @@ export function ModelSelect(
                             className={clsx(css.option, selected && css.selected)}
                             key={model.id}
                             title={model.name}
+                            aria-description={tools}
                             disabled={busy || model.selectable === false}
                             onClick={() => {
                               const choice = choices.find(candidate =>
@@ -481,6 +485,7 @@ export function ModelSelect(
                               {model.description !== undefined && (
                                 <span className={css.description}>{model.description}</span>
                               )}
+                              {tools !== undefined && <span className={css.description} aria-hidden="true">{tools}</span>}
                             </span>
                             <span className={css.check}>
                               {selected ? <IconCheckOutline16 /> : null}

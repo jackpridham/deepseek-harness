@@ -558,6 +558,7 @@ export class LlmRuntime extends Service {
           ? {}
           : { contextWindows: model.contextWindows.map(context => ({ ...context })) },
         ...model.selectable === undefined ? {} : { selectable: model.selectable },
+        ...model.supportsTools === undefined ? {} : { supportsTools: model.supportsTools },
         ...model.active === undefined ? {} : { active: model.active },
         ...model.reasoning === undefined ? {} : {
           reasoning: {
@@ -608,6 +609,7 @@ export class LlmRuntime extends Service {
         || model.name.length === 0
         || (model.description !== undefined && typeof model.description !== 'string')
         || (model.selectable !== undefined && typeof model.selectable !== 'boolean')
+        || (model.supportsTools !== undefined && typeof model.supportsTools !== 'boolean')
         || (model.active !== undefined && typeof model.active !== 'boolean')
         || seen.has(model.id)
       ) {
@@ -623,6 +625,7 @@ export class LlmRuntime extends Service {
         ...model.description === undefined ? {} : { description: model.description },
         ...inputModalities === undefined ? {} : { inputModalities },
         ...model.selectable === undefined ? {} : { selectable: model.selectable },
+        ...model.supportsTools === undefined ? {} : { supportsTools: model.supportsTools },
         ...model.active === undefined ? {} : { active: model.active },
         ...model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens },
         ...model.defaultLoadMode === undefined ? {} : { defaultLoadMode: model.defaultLoadMode },
@@ -689,6 +692,7 @@ export class LlmRuntime extends Service {
       || resolved.name.length === 0
       || (resolved.description !== undefined && typeof resolved.description !== 'string')
       || (resolved.selectable !== undefined && typeof resolved.selectable !== 'boolean')
+      || (resolved.supportsTools !== undefined && typeof resolved.supportsTools !== 'boolean')
       || (resolved.active !== undefined && typeof resolved.active !== 'boolean')
     ) {
       throw new LlmError(
@@ -755,6 +759,7 @@ export class LlmRuntime extends Service {
       ...resolved.description === undefined ? {} : { description: resolved.description },
       ...inputModalities === undefined ? {} : { inputModalities },
       ...resolved.selectable === undefined ? {} : { selectable: resolved.selectable },
+      ...resolved.supportsTools === undefined ? {} : { supportsTools: resolved.supportsTools },
       ...resolved.active === undefined ? {} : { active: resolved.active },
       ...contextOptions === undefined ? {} : {
         contextOptions: {
@@ -1017,9 +1022,10 @@ export class LlmRuntime extends Service {
     let iterator: AsyncIterator<StreamChunk>
     try {
       const registration = prepared?.registration ?? this.registration(options.provider)
-      const resolvedConfig = prepared === undefined
-        ? (await this.resolveCallFor(registration, options, options.signal)).config
-        : prepared.config
+      const resolved = prepared === undefined
+        ? await this.resolveCallFor(registration, options, options.signal)
+        : { config: prepared.config }
+      const resolvedConfig = resolved.config
       if (prepared !== undefined && !callConfigEquals(options, resolvedConfig)) {
         throw new LlmError(
           'prepared LLM call config changed before adapter dispatch',

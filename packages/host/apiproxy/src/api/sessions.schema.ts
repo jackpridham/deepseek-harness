@@ -228,6 +228,7 @@ export const modelCatalogModelSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
   selectable: z.boolean().optional(),
+  supportsTools: z.boolean().optional(),
   active: z.boolean().optional(),
   context: modelContextChoicesSchema.optional(),
   reasoning: modelReasoningSchema.optional(),

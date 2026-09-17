@@ -50,6 +50,59 @@ async function boot(dir: string, config: LlmPiAi.Config): Promise<Context> {
 }
 
 describe('request-level dynamic profiles', () => {
+  it('refuses native tools at the shared adapter gate before inference starts', async () => {
+    const server = await mockServer([
+      { body: JSON.stringify({ data: [{ id: 'text-only', capabilities: { tools: false } }] }) },
+      { body: JSON.stringify({ running: [] }) },
+      { body: JSON.stringify({ workers: [] }) },
+    ])
+    vi.stubEnv('INF01_TEST_KEY', 'test-key')
+    const ctx = await boot(await home(), { providers: { inf01: {
+      apiKeyEnv: 'INF01_TEST_KEY', api: 'openai-completions', baseURL: `${server.url}/v1`, modelsFromEndpoint: true,
+    } } })
+
+    const result = await assemble(ctx, {
+      provider: 'inf01', model: 'text-only', messages: [],
+      tools: [{ name: 'read_file', description: 'Read one file.', parameters: {} }],
+    })
+
+    expect(result.finish).toMatchObject({
+      kind: 'error',
+      failure: {
+        code: 'UNSUPPORTED_TOOLS',
+        message: 'pi-ai provider "inf01" model "text-only" does not support native tools',
+      },
+    })
+    expect(server.paths).not.toContain('/v1/chat/completions')
+  })
+
+  it('publishes a true-to-false endpoint refresh to model metadata and the next request', async () => {
+    const server = await mockServer([
+      { body: JSON.stringify({ data: [{ id: 'changing', capabilities: { tools: true } }] }) },
+      { body: JSON.stringify({ running: [] }) },
+      { body: JSON.stringify({ data: [{ id: 'changing', capabilities: { tools: false } }] }) },
+      { body: JSON.stringify({ running: [] }) },
+    ])
+    vi.stubEnv('INF01_TEST_KEY', 'test-key')
+    const ctx = await boot(await home(), { providers: { inf01: {
+      apiKeyEnv: 'INF01_TEST_KEY', api: 'openai-completions', baseURL: `${server.url}/v1`, modelsFromEndpoint: true,
+    } } })
+
+    await expect(ctx.llm.listModels('inf01')).resolves.toEqual([
+      expect.objectContaining({ id: 'changing', supportsTools: true }),
+    ])
+    await expect(ctx.llm.listModels('inf01')).resolves.toEqual([
+      expect.objectContaining({ id: 'changing', supportsTools: false }),
+    ])
+    const result = await assemble(ctx, {
+      provider: 'inf01', model: 'changing', messages: [],
+      tools: [{ name: 'read_file', description: 'Read one file.', parameters: {} }],
+    })
+
+    expect(result.finish).toMatchObject({ kind: 'error', failure: { code: 'UNSUPPORTED_TOOLS' } })
+    expect(server.paths).not.toContain('/v1/chat/completions')
+  })
+
   it.each([
     { name: 'stopped worker with stale saved identity', contextWindow: 32_768, mode: 'default', options: {}, switchWorker: false, stopped: true },
     { name: 'capacity rejection', contextWindow: 32_768, mode: 'default', options: {}, switchWorker: true, rejected: true },

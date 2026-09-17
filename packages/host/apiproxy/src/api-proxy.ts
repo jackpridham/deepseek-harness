@@ -305,6 +305,7 @@ async function buildModelCatalog(ctx: Context): Promise<{
               name: model.name,
               ...model.description === undefined ? {} : { description: model.description },
               ...model.selectable === undefined ? {} : { selectable: model.selectable },
+              ...resolved.supportsTools === undefined ? {} : { supportsTools: resolved.supportsTools },
               ...model.active === undefined ? {} : { active: model.active },
               ...resolved.contextOptions === undefined ? {} : {
                 context: {

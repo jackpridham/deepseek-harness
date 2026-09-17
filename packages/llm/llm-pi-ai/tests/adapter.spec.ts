@@ -43,9 +43,20 @@ async function harness(baseURL: string, overrides: Record<string, unknown> = {})
 function adapterOf(
   providers: Record<string, LlmPiAi.PiAiProviderProfile>,
   apiKey: string | undefined = 'test-key',
+  supportsTools?: boolean,
 ): PiAiAdapter {
+  const resolved = resolveProfiles(providers)
   return new PiAiAdapter({
-    profiles: () => resolveProfiles(providers),
+    profiles: () => supportsTools === undefined
+      ? resolved
+      : new Map([...resolved].map(([provider, profile]) => [provider, {
+        ...profile,
+        modelStates: new Map(Object.values(providers).flatMap(entry => entry.models ?? []).map(model => [model.id, {
+          selectable: true,
+          active: false,
+          supportsTools,
+        }])),
+      }])),
     resolveApiKey: () => Promise.resolve(apiKey),
   })
 }
@@ -57,6 +68,67 @@ beforeEach(() => {
 })
 
 describe('PiAiAdapter provider routing', () => {
+  it.each([
+    { label: 'explicit false without tools', supportsTools: false, tools: undefined, calls: 1 },
+    { label: 'explicit true with tools', supportsTools: true, tools: [{ name: 'read_file', description: 'Read.', parameters: {} }], calls: 1 },
+    { label: 'unknown with tools', supportsTools: undefined, tools: [{ name: 'read_file', description: 'Read.', parameters: {} }], calls: 1 },
+  ])('keeps $label on the provider stream', async ({ supportsTools, tools, calls }) => {
+    const server = await mockServer([{ events: textEvents }])
+    const adapter = adapterOf({ gateway: {
+      api: 'openai-completions', baseURL: server.url, models: [{ id: 'm' }],
+    } }, 'test-key', supportsTools)
+
+    for await (const _chunk of adapter.stream({ provider: 'gateway', model: 'm', messages: [], ...tools === undefined ? {} : { tools } })) {}
+
+    expect(server.paths).toEqual(['/chat/completions'])
+    expect(server.requests).toHaveLength(calls)
+  })
+
+  it('refuses explicit false with tools before provider streaming', async () => {
+    const server = await mockServer([{ events: textEvents }])
+    const adapter = adapterOf({ gateway: {
+      api: 'openai-completions', baseURL: server.url, models: [{ id: 'm' }],
+    } }, 'test-key', false)
+
+    await expect(async () => {
+      for await (const _chunk of adapter.stream({
+        provider: 'gateway', model: 'm', messages: [],
+        tools: [{ name: 'read_file', description: 'Read.', parameters: {} }],
+      })) {}
+    }).rejects.toMatchObject({ code: 'UNSUPPORTED_TOOLS' })
+    expect(server.paths).toEqual([])
+  })
+
+  it('keeps an in-flight stream on its captured positive profile while the next stream sees a negative refresh', async () => {
+    const server = await mockServer([{ events: textEvents, delayMs: 20 }])
+    const providers = { gateway: {
+      api: 'openai-completions', baseURL: server.url, models: [{ id: 'm' }],
+    } } satisfies Record<string, LlmPiAi.PiAiProviderProfile>
+    const resolved = resolveProfiles(providers)
+    const withSupport = (supportsTools: boolean) => new Map([...resolved].map(([provider, profile]) => [provider, {
+      ...profile,
+      modelStates: new Map([['m', { selectable: true, active: false, supportsTools }]]),
+    }]))
+    let profiles = withSupport(true)
+    const adapter = new PiAiAdapter({
+      profiles: () => profiles,
+      resolveApiKey: () => Promise.resolve('test-key'),
+    })
+    const tools = [{ name: 'read_file', description: 'Read.', parameters: {} }]
+    const first = (async () => {
+      for await (const _chunk of adapter.stream({ provider: 'gateway', model: 'm', messages: [], tools })) {}
+    })()
+    await vi.waitFor(() => expect(server.paths).toEqual(['/chat/completions']))
+
+    profiles = withSupport(false)
+    await expect(async () => {
+      for await (const _chunk of adapter.stream({ provider: 'gateway', model: 'm', messages: [], tools })) {}
+    }).rejects.toMatchObject({ code: 'UNSUPPORTED_TOOLS' })
+
+    await first
+    expect(server.paths).toEqual(['/chat/completions'])
+  })
+
   it.each([
     { contextWindow: 262_144, expected: 32_768 },
     { contextWindow: 131_072, expected: 1 },
@@ -426,7 +498,7 @@ describe('provider profile lifecycle', () => {
     await ctx.plugin(LlmRuntime)
     await ctx.plugin(LlmPiAi, { providers: { openai: {} } })
     const models = await ctx.llm.listModels('openai')
-    expect(models.find(model => model.id === 'gpt-4.1')).toEqual({
+    expect(models.find(model => model.id === 'gpt-4.1')).toMatchObject({
       provider: 'openai', id: 'gpt-4.1', name: 'GPT-4.1',
       inputModalities: ['text', 'image'],
     })
