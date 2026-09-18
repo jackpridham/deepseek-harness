@@ -18,6 +18,9 @@
       "path": "../subprocess"
     },
     {
+      "path": "../../sandbox/sandbox"
+    },
+    {
       "path": "../../util/timeout"
     },
     {
