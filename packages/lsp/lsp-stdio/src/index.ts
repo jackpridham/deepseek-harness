@@ -346,7 +346,7 @@ class LocalLspProvider implements LspProvider {
       maxStderrBytes: this.config.maxStderrBytes,
       shutdownTimeoutMs: this.config.shutdownTimeoutMs,
       killGraceMs: this.config.killGraceMs,
-      sandboxPolicy,
+      ...sandboxPolicy === undefined ? {} : { sandboxPolicy },
     }
     return new LspInstance(spec, this.spawner)
   }
