@@ -1,10 +1,7 @@
 # Keyless real-Loader composition for the parent-only override inheritance
-# snapshot. The deployment default stays WIDE (workspace-write) while the
-# seeded parent session carries a session-scoped read-only override; the
-# resumed parent delegates, and only the inheritance capture can confine the
-# child — remove it and the child writes successfully under the deployment
-# default, so this scenario is the assembled-app red/green anchor for the
-# delegation bypass.
+# snapshot. The deployment default is full access while the seeded parent
+# carries a workspace-write override; the resumed parent delegates, and only
+# the inherited lower policy keeps the protected credential unavailable.
 
 - id: persistence
   name: '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -16,14 +13,14 @@
 - id: replay
   name: '@deepseek-ai/dsh-llm-replay'
 
-# The confining filesystem stack: the wide deployment default lives on the
-# shared policy home; the seeded parent's read-only override must beat it
-# INSIDE the child for the scenario to deny.
+# The child inherits the parent's lower policy over this full-access default.
 - id: sandbox-policy
   name: '@deepseek-ai/dsh-sandbox-policy'
   config:
-    mode: workspace-write
+    mode: danger-full-access
     workspaceRoot: !!js process.cwd()
+    protectedPaths:
+      - !!js process.cwd() + '/protected'
 
 - id: fs-sandbox
   name: '@deepseek-ai/dsh-fs-sandbox'

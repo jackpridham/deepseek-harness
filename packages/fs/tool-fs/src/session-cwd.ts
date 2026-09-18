@@ -31,7 +31,7 @@ export function sessionCwd(exec: ToolExecution, requestedPath: string): string |
  * Resolution options shared by all model-facing filesystem tools.
  * @param exec - the tool-execution context supplying session cwd and cancellation.
  * @param requestedPath - the path the provider will resolve.
- * @param policyWorkspaceRoot - resolved per-call root, when a mutation carries sandbox policy.
+ * @param policy - resolved per-call sandbox policy, when the tool carries one.
  * @returns provider resolution options for the current tool call.
  */
 export function sessionResolveOptions(
