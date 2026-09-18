@@ -30,11 +30,8 @@ class EmptySandbox extends SandboxProvider {
 }
 
 class RecordingSandbox extends SandboxProvider {
-  calls: { argv: readonly string[]; policy: SandboxPolicy }[] = []
-
-  confine(argv: readonly string[], policy: SandboxPolicy): ConfinedArgv {
-    this.calls.push({ argv, policy })
-    return { argv: ['/sandbox', '--', ...argv], enforcement: 'full', denialSignatures: [], runnerFailureRules: [] }
+  confine(argv: readonly string[], _policy: SandboxPolicy): ConfinedArgv {
+    return { argv: [...argv], enforcement: 'full', denialSignatures: [], runnerFailureRules: [] }
   }
 }
 
@@ -113,16 +110,14 @@ function registerStubLocalBackend(ctx: Context, createSession: () => LocalPtySes
 }
 
 describe('BashTerminalBackend startup rollback', () => {
-  it('rejects pre-aborted setup and empty sandbox argv', async () => {
+  it('rejects pre-aborted setup', async () => {
     const ctx = new Context()
-    await ctx.plugin(EmptySandbox)
     await ctx.plugin(SandboxPolicyService, { mode: 'read-only', workspaceRoot: '/tmp' })
     const backend = new BashTerminalBackend(ctx, config(), async () => terminalHandle())
     const controller = new AbortController()
     const abortReason = new Error('spawn aborted')
     controller.abort(abortReason)
     await expect(backend.spawn(spec(agent(ctx), controller.signal))).rejects.toBe(abortReason)
-    await expect(backend.spawn(spec(agent(ctx)))).rejects.toThrow('empty argv')
   })
 
   it('closes failed startup and aggregates cleanup failure', async () => {
@@ -176,9 +171,8 @@ describe('BashTerminalBackend startup rollback', () => {
     initialization.resolve(undefined)
   })
 
-  it('wraps confined argv, scrubs the environment, and returns initialized sessions', async () => {
+  it('carries the resolved policy, scrubs the environment, and returns initialized sessions', async () => {
     const ctx = new Context()
-    await ctx.plugin(RecordingSandbox)
     await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: '/workspace' })
     const terminal = terminalHandle()
     let spawned: SubprocessTerminalSpawnSpec | undefined
@@ -204,7 +198,7 @@ describe('BashTerminalBackend startup rollback', () => {
     }
 
     expect(spawned).toMatchObject({
-      argv: ['/sandbox', '--', '/bin/bash', '-i'],
+      argv: ['/bin/bash', '-i'],
       cols: 80,
       rows: 24,
       cwd: '/work',
@@ -214,18 +208,14 @@ describe('BashTerminalBackend startup rollback', () => {
         PROMPT_COMMAND: 'printf "\\033]133;D;%s\\007" "$?"; PS1=\'dsh> \'',
         DSH_SHELL: '1', DSH_SESSION_ID: 'agent', DSH_PTY_SESSION_ID: 'pty-1',
       },
+      sandboxPolicy: { mode: 'workspace-write', sessionId: 'agent', workspaceRoot: resolve('/workspace') },
     })
     expect(spawned?.env?.PTY_TEST_SECRET).toBeUndefined()
     expect(initialized).toHaveBeenCalledWith(undefined)
-    expect((ctx.sandbox as RecordingSandbox).calls).toEqual([{
-      argv: ['/bin/bash', '-i'],
-      policy: { mode: 'workspace-write', sessionId: 'agent', workspaceRoot: resolve('/workspace') },
-    }])
   })
 
-  it('resolves session mode and root together before wrapping the shell', async () => {
+  it('resolves session mode and root together before spawning the shell', async () => {
     const ctx = new Context()
-    await ctx.plugin(RecordingSandbox)
     await ctx.plugin(SandboxPolicyService, { mode: 'read-only', workspaceRoot: '/deployment-fallback' })
     const terminal = terminalHandle()
     let spawned: SubprocessTerminalSpawnSpec | undefined
@@ -246,32 +236,29 @@ describe('BashTerminalBackend startup rollback', () => {
     expect(await backend.spawn(spec(owner))).toBe(session)
 
     expect(spawned).toMatchObject({
-      argv: ['/sandbox', '--', '/bin/bash', '-i'],
-      cwd: resolve('/session-workspace'),
-    })
-    expect((ctx.sandbox as RecordingSandbox).calls).toEqual([{
       argv: ['/bin/bash', '-i'],
-      policy: { mode: 'workspace-write', sessionId: 'agent', workspaceRoot: resolve('/session-workspace') },
-    }])
+      cwd: resolve('/session-workspace'),
+      sandboxPolicy: { mode: 'workspace-write', sessionId: 'agent', workspaceRoot: resolve('/session-workspace') },
+    })
   })
 
-  it('rejects a confined spawn without a sandbox provider', async () => {
+  it('passes a confined policy to its subprocess provider', async () => {
     const confinedCtx = new Context()
     await confinedCtx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: '/workspace' })
     const confined = new BashTerminalBackend(
       confinedCtx,
       config(),
-      async () => { throw new Error('terminal spawn must not run') },
+      async (request) => {
+        expect(request.sandboxPolicy?.mode).toBe('workspace-write')
+        return terminalHandle()
+      },
       () => stubLocalSession(),
     )
-    await expect(confined.spawn(spec(agent(confinedCtx)))).rejects.toThrow(
-      'sandbox mode "workspace-write" requires a ctx.sandbox provider in the execution world',
-    )
+    await expect(confined.spawn(spec(agent(confinedCtx)))).resolves.toBeDefined()
   })
 
   it('forwards terminal allocation cancellation directly', async () => {
     const ctx = new Context()
-    await ctx.plugin(EmptySandbox)
     await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: '/tmp' })
 
     const publishedController = new AbortController()

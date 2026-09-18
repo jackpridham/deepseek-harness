@@ -8,6 +8,7 @@
  */
 
 import type { Readable, Writable } from 'node:stream'
+import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
 
 /** Namespace prefix reserved for DeepSeek Harness-managed child environment facts. */
 export const DSH_ENV_PREFIX = 'DSH_' as const
@@ -101,6 +102,12 @@ export interface SubprocessSpawnSpec {
    * tombstone that removes an ordinary ambient entry from the child.
    */
   env?: NodeJS.ProcessEnv | undefined
+  /**
+   * Complete per-call filesystem policy. Local execution enforces a confined
+   * policy before spawn; remote providers reject one unless they can do so in
+   * their execution world.
+   */
+  sandboxPolicy?: SandboxExecutionPolicy | undefined
 }
 
 /**
@@ -216,6 +223,8 @@ export interface SubprocessTerminalSpawnSpec {
   graceMs: number
   /** Cancellation of terminal allocation; a published handle owns its later lifetime. */
   signal?: AbortSignal | undefined
+  /** Complete per-call filesystem policy for this terminal process. */
+  sandboxPolicy?: SandboxExecutionPolicy | undefined
 }
 
 /** Current foreground process-group facts for one terminal. */

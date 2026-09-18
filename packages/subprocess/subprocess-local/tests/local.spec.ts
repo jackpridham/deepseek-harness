@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { basename, dirname, relative, resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
+import SandboxProvider from '@deepseek-ai/dsh-sandbox'
+import type { ConfinedArgv, SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
 import type { SubprocessSpawnSpec, SubprocessTerminalHandle, SubprocessTerminalSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import { childEnv } from '../src/spawn.ts'
 
@@ -28,7 +30,43 @@ function spec(command: string, overrides: Partial<SubprocessSpawnSpec> = {}): Su
   }
 }
 
+class RecordingSandbox extends SandboxProvider {
+  calls: { argv: readonly string[]; policy: SandboxPolicy }[] = []
+
+  confine(argv: readonly string[], policy: SandboxPolicy): ConfinedArgv {
+    this.calls.push({ argv, policy })
+    return { argv: [...argv], enforcement: 'full', denialSignatures: [], runnerFailureRules: [] }
+  }
+}
+
 describe('LocalSubprocessRuntime', () => {
+  it('confines each lower-mode spawn at the local provider boundary', async () => {
+    const ctx = new Context()
+    await ctx.plugin(RecordingSandbox)
+    const fiber = await ctx.plugin(LocalSubprocessRuntime)
+    try {
+      const policy = { mode: 'read-only' as const, workspaceRoot: process.cwd() }
+      await ctx.subprocess.spawn(spec('true', { sandboxPolicy: policy })).done
+      expect((ctx.sandbox as RecordingSandbox).calls).toEqual([{
+        argv: spec('true').argv,
+        policy,
+      }])
+    } finally {
+      await fiber.dispose()
+    }
+  })
+
+  it('refuses a lower-mode spawn without a local sandbox provider', async () => {
+    const ctx = new Context()
+    const fiber = await ctx.plugin(LocalSubprocessRuntime)
+    try {
+      expect(() => ctx.subprocess.spawn(spec('true', {
+        sandboxPolicy: { mode: 'read-only', workspaceRoot: process.cwd() },
+      }))).toThrow('sandbox mode "read-only" is requested')
+    } finally {
+      await fiber.dispose()
+    }
+  })
   it('places the host-exit finalizer before listeners that predate the service', async () => {
     const baseline = new Set(process.listeners('exit'))
     const prior = vi.fn()

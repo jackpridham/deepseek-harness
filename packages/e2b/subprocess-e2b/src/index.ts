@@ -17,6 +17,7 @@ import type {
   SubprocessTerminalSpawnSpec,
 } from '@deepseek-ai/dsh-subprocess'
 import { e2bControlEnvs, quoteE2BShellArg } from '@deepseek-ai/dsh-e2b'
+import { SandboxUnavailableError } from '@deepseek-ai/dsh-sandbox'
 import { E2BSubprocessHandle } from './process.ts'
 import { asError, signalOpts } from './remote.ts'
 import { spawnE2BTerminal } from './terminal.ts'
@@ -139,6 +140,9 @@ export class E2BSubprocessRuntime extends SubprocessRuntime {
   /** @inheritdoc */
   spawn(spec: SubprocessSpawnSpec): SubprocessHandle {
     if (this.disposing) throw new Error('subprocess-e2b: service is disposing')
+    if (spec.sandboxPolicy !== undefined && spec.sandboxPolicy.mode !== 'danger-full-access') {
+      throw new SandboxUnavailableError(spec.sandboxPolicy.mode, 'subprocess-e2b does not enforce host protected paths')
+    }
     const program = spec.argv[0]
     if (program === undefined || program.length === 0) {
       throw new Error('invalid argv: expected a non-empty program name at argv[0]')
@@ -163,6 +167,9 @@ export class E2BSubprocessRuntime extends SubprocessRuntime {
   /** @inheritdoc */
   async spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> {
     if (this.disposing) throw new Error('subprocess-e2b: service is disposing')
+    if (spec.sandboxPolicy !== undefined && spec.sandboxPolicy.mode !== 'danger-full-access') {
+      throw new SandboxUnavailableError(spec.sandboxPolicy.mode, 'subprocess-e2b does not enforce host protected paths')
+    }
     const program = spec.argv[0]
     if (program === undefined || program.length === 0) {
       throw new Error('subprocess-e2b: terminal argv must contain a program')

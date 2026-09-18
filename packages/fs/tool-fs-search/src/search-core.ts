@@ -26,6 +26,8 @@ import { HarnessError } from '@deepseek-ai/dsh-llm'
 import { ItemRetainer, TextRetainer } from '@deepseek-ai/dsh-output-retention'
 import type { RetainedItems } from '@deepseek-ai/dsh-output-retention'
 import type { SubprocessHandle, SubprocessOutcome, SubprocessOutputRead, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
+import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type { SaveTextSpill, SpillRef } from '@deepseek-ai/dsh-spill'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 
@@ -226,6 +228,9 @@ export async function runRipgrep(
   }
   const cwd = exec.agent?.session.header.cwd
   const workdir = cwd ?? process.cwd()
+  const sandboxPolicy: SandboxExecutionPolicy | undefined = ctx.get('sandboxPolicy')?.resolve(
+    exec.agent === undefined ? {} : { session: exec.agent.session },
+  )
   let handle: SubprocessHandle
   try {
     handle = ctx.subprocess.spawn({
@@ -238,6 +243,7 @@ export async function runRipgrep(
       },
       graceMs,
       signal: exec.signal,
+      ...sandboxPolicy === undefined ? {} : { sandboxPolicy },
     } satisfies SubprocessSpawnSpec)
   } catch (error: unknown) {
     // Node's spawn() throws synchronously for a NUL in argv, and the local

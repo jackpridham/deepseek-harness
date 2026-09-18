@@ -26,6 +26,8 @@ import type { LocalSubprocessHandle, SpawnInternals } from './spawn.ts'
 import { createProcessInspector } from './process-inspector.ts'
 import type { ProcessInspector } from './process-inspector.ts'
 import { LocalTerminalHandle } from './terminal.ts'
+import { SandboxUnavailableError } from '@deepseek-ai/dsh-sandbox'
+import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
 
 /**
  * Local subprocess service: detached process trees, Node-shaped stdio
@@ -43,6 +45,15 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
   internals: SpawnInternals = {}
   /** Test hook for platform process inspection; production resolves lazily on terminal spawn. */
   terminalInspector: ProcessInspector | undefined
+
+  /** Wrap a confined policy at the final local spawn boundary, or fail closed. */
+  private confinedSpec<T extends SubprocessSpawnSpec | SubprocessTerminalSpawnSpec>(spec: T): T {
+    const policy: SandboxExecutionPolicy | undefined = spec.sandboxPolicy
+    if (policy === undefined || policy.mode === 'danger-full-access') return spec
+    const sandbox = this.ctx.get('sandbox')
+    if (sandbox === undefined) throw new SandboxUnavailableError(policy.mode)
+    return { ...spec, argv: sandbox.confine(spec.argv, { ...policy, mode: policy.mode }).argv }
+  }
 
   constructor(ctx: Context) {
     super(ctx)
@@ -144,7 +155,7 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
   }
 
   spawn(spec: SubprocessSpawnSpec): SubprocessHandle {
-    const handle = spawnSubprocess(spec, this.internals)
+    const handle = spawnSubprocess(this.confinedSpec(spec), this.internals)
     this.live.add(handle)
     // Release ownership only once the whole TREE is gone, not at direct-child
     // settlement — a TERM-trapping helper that outlives the leader must stay
@@ -159,6 +170,7 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
   // Local PTY allocation is synchronous, but the provider contract permits remote asynchronous allocation.
   // oxlint-disable-next-line typescript/require-await -- Preserve promise rejection semantics at the async provider contract.
   async spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> {
+    spec = this.confinedSpec(spec)
     const file = spec.argv[0]
     if (file === undefined || file.length === 0) {
       throw new Error('subprocess-local: terminal argv must contain a program')
