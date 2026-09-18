@@ -146,6 +146,9 @@ export class FakeApiClient implements IApiClient {
       return this.record('session.search', payload, this.onSearch(payload))
     },
     create: (payload: unknown) => this.record('session.create', payload, this.onCreate(payload)),
+    getPolicy: (payload: unknown) => this.record('session.getPolicy', payload, Promise.resolve(ok({
+      id: 'test-policy-v1' as import('@deepseek-ai/dsh-session/types').SessionPolicyId, attestation: { testPolicy: true },
+    }))),
     history: (payload: { sessionId: SessionId; beforeSeq?: number; maxMessages?: number }) =>
       this.record('session.history', payload, this.onHistory(payload)),
     models: (payload: unknown) => this.record('session.models', payload, this.onModels(payload)),

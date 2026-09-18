@@ -10,7 +10,7 @@
 
 import { join } from 'node:path'
 import { decodeStorageRecord, packChunkRuns, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
-import type { SessionEvent, SessionHeader, SessionId, StorageRecord } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionHeader, SessionId, SessionPolicyId, StorageRecord } from '@deepseek-ai/dsh-session'
 import { SessionFormatUnsupportedError, sessionFormatVersionRefusal } from '@deepseek-ai/dsh-session-persistence'
 
 /** Physical encoding selected for JSONL session artifacts. */
@@ -41,6 +41,7 @@ export interface HeaderLine {
   origin?: 'subagent'
   delegationDepth: number
   agentPreset?: string
+  sessionPolicy?: SessionPolicyId
 }
 
 /**
@@ -60,6 +61,7 @@ export function toHeaderLine(header: SessionHeader): HeaderLine {
     ...header.origin !== undefined ? { origin: header.origin } : {},
     delegationDepth: header.delegationDepth ?? 0,
     ...header.agentPreset !== undefined ? { agentPreset: header.agentPreset } : {},
+    ...header.sessionPolicy === undefined ? {} : { sessionPolicy: header.sessionPolicy },
   }
 }
 
@@ -69,7 +71,7 @@ export function toHeaderLine(header: SessionHeader): HeaderLine {
  * @returns the header, absent optional fields omitted.
  */
 export function fromHeaderLine(line: HeaderLine): SessionHeader {
-  if (Object.hasOwn(line, 'sandboxMode') || Object.hasOwn(line, 'approvalPolicy')) {
+  if (Object.hasOwn(line, 'sandboxMode') || Object.hasOwn(line, 'approvalPolicy') || Object.hasOwn(line, 'sessionMode')) {
     throw new Error('session header uses retired policy baseline fields')
   }
   return {
@@ -82,6 +84,7 @@ export function fromHeaderLine(line: HeaderLine): SessionHeader {
     ...line.origin !== undefined ? { origin: line.origin } : {},
     delegationDepth: line.delegationDepth,
     ...line.agentPreset !== undefined ? { agentPreset: line.agentPreset } : {},
+    ...line.sessionPolicy === undefined ? {} : { sessionPolicy: line.sessionPolicy },
   }
 }
 
@@ -104,6 +107,9 @@ function isHeaderLine(value: unknown): value is HeaderLine {
       || (value as { origin?: unknown }).origin === 'subagent')
     && ((value as { agentPreset?: unknown }).agentPreset === undefined
       || typeof (value as { agentPreset?: unknown }).agentPreset === 'string')
+    && ((value as { sessionPolicy?: unknown }).sessionPolicy === undefined
+      || (typeof (value as { sessionPolicy?: unknown }).sessionPolicy === 'string'
+        && (value as { sessionPolicy: string }).sessionPolicy.length > 0))
   )
 }
 

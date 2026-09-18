@@ -6,7 +6,7 @@ import AgentRegistry, { agentEvents } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentHandle, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { SessionPolicyId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
@@ -16,6 +16,7 @@ import { RpcId } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
 import { createApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 
 const sid = (id: string): SessionId => id as SessionId
+const policyId = SessionPolicyId('test-restricted-v1')
 
 let nextRpc = 1
 function request<P>(payload: P): RpcRequest<P> {
@@ -27,6 +28,9 @@ async function composed(workspaces: readonly Workspace[] = []): Promise<Context>
   await ctx.plugin(SessionStore)
   await ctx.plugin(SystemPrompt, { persona: '' })
   await ctx.plugin(AgentRegistry)
+  ctx.agents.registerPolicy({
+    id: policyId, instructions: false, workspace: false, presets: false, fork: false, attestation: {}, apply: () => {},
+  })
   await ctx.plugin(UserQuestionService)
   ctx.provide('workspaceRegistry', { list: () => workspaces } as never)
   ctx.agents.setFactory({
@@ -37,7 +41,7 @@ async function composed(workspaces: readonly Workspace[] = []): Promise<Context>
       })
       const agent = {} as Agent
       const agentCtx = ownerCtx.extend({ agent })
-      Object.assign(agent, { id: session.id, session, status: 'idle', ctx: agentCtx })
+      Object.assign(agent, { id: session.id, session, status: 'idle', ctx: agentCtx, options: options.agentOptions })
       await options.setup?.(agentCtx)
       ctx.agents.register(agent)
       return { agent, dispose: () => Promise.resolve() }
@@ -55,9 +59,11 @@ function liveAgent(
   id: string,
   turns: number,
   tail: Tail = 'none',
-  lineage: { parentSession?: SessionId; origin?: 'subagent' } = {},
+  lineage: { parentSession?: SessionId; origin?: 'subagent'; sessionPolicy?: SessionPolicyId } = {},
 ): Session {
-  const session = ctx.sessions.create(sid(id), { meta: { cwd: '/proj', ...lineage } })
+  const session = ctx.sessions.create(sid(id), {
+    meta: { ...lineage.sessionPolicy === policyId ? {} : { cwd: '/proj' }, ...lineage },
+  })
   for (let turn = 1; turn <= turns; turn++) {
     session.append('turn/start', { turn })
     session.append('user/message', createUserMessage({
@@ -87,6 +93,16 @@ const api = (ctx: Context) => createApiProxy(ctx, {
 })
 
 describe('sessions.fork', () => {
+  it('refuses to fork an restricted session into an ordinary composition', async () => {
+    const ctx = await composed()
+    const restricted = liveAgent(ctx, 'session-restricted-source', 1, 'none', { sessionPolicy: policyId })
+
+    await expect(api(ctx).sessions.fork(request({ sessionId: restricted.id }))).resolves.toMatchObject({
+      result: { ok: false, error: { code: 'session-policy-invalid' } },
+    })
+    await ctx.fiber.dispose()
+  })
+
   it('cuts at the anchored completed turn and records lineage and cwd', async () => {
     const ctx = await composed()
     const source = liveAgent(ctx, 'session-source', 2)

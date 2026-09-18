@@ -955,6 +955,16 @@ describe('JsonlSessionPersistence: scanLog unit', () => {
     expect(() => scanLog(Buffer.from(log))).toThrow(/session header/)
   })
 
+  it.each(['', 7, null])('rejects malformed policy identity %s in a stored header', (sessionPolicy) => {
+    const line = { type: 'session', version: 0, id: 'invalid-policy', createdAt: 1, delegationDepth: 0, sessionPolicy }
+    expect(() => scanLog(Buffer.from(`${JSON.stringify(line)}\n`))).toThrow(/session header/)
+  })
+
+  it('rejects a retired advisory marker instead of discarding it', () => {
+    const line = { type: 'session', version: 0, id: 'retired-policy', createdAt: 1, delegationDepth: 0, sessionMode: 'advisory' }
+    expect(() => scanLog(Buffer.from(`${JSON.stringify(line)}\n`))).toThrow(/retired policy baseline/)
+  })
+
   it('round-trips the agent preset a session was composed from', () => {
     const line = toHeaderLine({
       version: 0,

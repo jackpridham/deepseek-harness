@@ -13,7 +13,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it, vi } from 'vitest'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
-import SessionStore, { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { SESSION_FORMAT_VERSION, Session, SessionId, SessionPolicyId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { meta, oneTurnLog, appendLog } from './contract.ts'
 
@@ -345,7 +345,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
       }
     })
 
-    it('round-trips the delegation depth through persistence', async () => {
+    it('round-trips the delegation depth and policy identity through persistence', async () => {
       // A subagent child's recursion budget lives in its header; a reload that
       // dropped it would reset the child to top-level and un-bound maxDepth
       // (JSONL stores it in the header line; SQLite uses `delegation_depth`).
@@ -355,7 +355,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
         let session!: Session
         const sessionFiber = await ctx.plugin(Object.assign((inner: Context) => {
           session = inner.sessions.create(SessionId('delegated-child'), {
-            meta: { cwd: WORK, parentSession: SessionId('root'), delegationDepth: 2 },
+            meta: { cwd: WORK, parentSession: SessionId('root'), delegationDepth: 2, sessionPolicy: SessionPolicyId('test-policy-v1') },
           })
         }, { inject: ['sessions'] }))
         send(session, oneTurnLog())
@@ -364,6 +364,7 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
 
         const loaded = await ctx.sessionPersistence.load(SessionId('delegated-child'))
         expect(loaded.meta.delegationDepth).toBe(2)
+        expect(loaded.meta.sessionPolicy).toBe('test-policy-v1')
       } finally {
         await fiber.dispose()
         await fix.cleanup()

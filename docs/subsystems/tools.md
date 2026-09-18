@@ -513,6 +513,14 @@ register(definition: ToolDefinition): () => void
 restrict(filter: ToolRestriction): () => void
 
 /**
+ * Hide every tool from one agent scope, including its own later
+ * registrations and Code Mode's reserved transport. Unlike {@link restrict},
+ * this is a final capability boundary rather than an inherited-tool filter.
+ * @returns the exact disposer that restores the scope's visible registry.
+ */
+denyAllTools(): () => void
+
+/**
  * Register a monotonic guard after the extensible `tools/pre-execute`
  * waterfall. A plain-context guard applies globally; one registered through
  * `agent.ctx` applies only to that agent. Any matching guard may deny by
@@ -571,7 +579,7 @@ async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>
 
 Types: [ScopeKey](scope.md)
 
-Source: [`packages/core/tools/src/index.ts:787`](../../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:789`](../../packages/core/tools/src/index.ts)
 
 <a id="tools-events"></a>
 

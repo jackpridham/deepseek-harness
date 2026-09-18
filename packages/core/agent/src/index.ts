@@ -11,7 +11,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { isPromise } from 'node:util/types'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import type { JsonValue, SessionEvent, SessionId, SessionPolicyId } from '@deepseek-ai/dsh-session'
 import type { TypertContext, TypertLookup } from '@deepseek-ai/dsh-typert-protocol'
 import type { Agent, AgentOptions } from './runtime-types.ts'
 
@@ -95,6 +95,7 @@ export interface CreateAgentOptions {
    */
   readonly meta?: {
     readonly cwd?: string
+    readonly sessionPolicy?: SessionPolicyId
     readonly parentSession?: SessionId
     readonly seedLength?: number
     readonly origin?: 'subagent'
@@ -215,6 +216,27 @@ export interface AgentFactory {
   resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>
 }
 
+/** Deployment-owned policy installed synchronously before each agent registration. */
+export interface SessionPolicy {
+  /** Versioned identity persisted on the session; changing guarantees requires a new id. */
+  readonly id: SessionPolicyId
+  /** Whether a session may configure a caller-owned system prompt or context sources. */
+  readonly instructions: boolean
+  /** Whether sessions may record a cwd or attach to a workspace. */
+  readonly workspace: boolean
+  /** Whether a session may select or change an agent preset. */
+  readonly presets: boolean
+  /** Whether the API may fork a session under this policy. */
+  readonly fork: boolean
+  /** Provider-owned, JSON-serializable assertions returned after policy installation. */
+  readonly attestation: Readonly<Record<string, JsonValue>>
+  /**
+   * Install policy on the agent's own scope; effects must last until that scope is disposed.
+   * @param agent - fully composed agent, not yet visible in the registry.
+   */
+  apply(agent: Agent): void
+}
+
 /** Thrown when create/resume is called before an agent factory is registered. */
 const NO_FACTORY_MESSAGE = 'no agent factory registered (load an agent-loop plugin)'
 const NO_INITIATOR_MESSAGE = 'no initiating agent is active'
@@ -224,6 +246,7 @@ const DISPOSED_INITIATOR_MESSAGE = 'agent initiator scope is disposed'
 interface AgentEntry {
   readonly id: SessionId
   readonly agent: Agent
+  readonly policy: SessionPolicy | undefined
   /** Runtime creator-agent ownership; independent of durable session lineage. */
   readonly owner: Agent | undefined
   readonly carrier: Scoped<Agent>
@@ -257,6 +280,7 @@ interface FactorySlot {
  */
 export class AgentRegistry extends Service {
   private store = new Map<SessionId, AgentEntry>()
+  private readonly policies = new Map<SessionPolicyId, SessionPolicy>()
   private factory: FactorySlot | undefined
   private readonly initiators = new AsyncLocalStorage<Agent | undefined>()
   private readonly initiatorRuns = new AsyncLocalStorage<InitiatorRun>()
@@ -396,6 +420,51 @@ export class AgentRegistry extends Service {
   }
 
   /**
+   * Register a deployment's versioned policy. Existing agents retain their scoped effects on provider unload.
+   * @param policy - synchronous policy installer and API restrictions.
+   * @returns the effect disposer removing this provider from future creation and resume.
+   * @throws when the id is already registered.
+   */
+  registerPolicy(policy: SessionPolicy): () => void {
+    const dispose = this.ctx.effect(() => {
+      if (this.policies.has(policy.id)) throw new Error(`session policy "${policy.id}" is already registered`)
+      this.policies.set(policy.id, policy)
+      return () => { this.policies.delete(policy.id) }
+    }, 'agents.registerPolicy()')
+    // oxlint-disable-next-line typescript/no-misused-promises -- preserve the exact effect disposer.
+    return dispose
+  }
+
+  /**
+   * Resolve a required policy without falling back to ordinary composition.
+   * @param id - persisted or requested policy identifier.
+   * @returns the registered provider.
+   * @throws when no provider is registered for the id.
+   */
+  requirePolicy(id: SessionPolicyId): SessionPolicy {
+    const policy = this.policies.get(id)
+    if (policy === undefined) throw new Error(`session policy "${id}" is unavailable`)
+    return policy
+  }
+
+  /**
+   * Discover the deployment's available session policies.
+   * @returns the currently available versioned policy identifiers.
+   */
+  policyIds(): SessionPolicyId[] {
+    return [...this.policies.keys()]
+  }
+
+  /**
+   * Read the exact provider installed when a live agent entered the registry.
+   * @param id - live agent/session identifier.
+   * @returns the installed policy, or undefined for an ordinary or absent agent.
+   */
+  policyFor(id: SessionId): SessionPolicy | undefined {
+    return this.store.get(id)?.policy
+  }
+
+  /**
    * Create and publish a new agent through the registered factory.
    * Distinct from {@link register} (which records an already-constructed
    * agent): this constructs the agent and its session. Rejects if no factory is
@@ -405,6 +474,10 @@ export class AgentRegistry extends Service {
    * @returns the handle after setup, rollback-covered publication, and loop start complete.
    */
   async create(options: CreateAgentOptions): Promise<AgentHandle> {
+    const sessionPolicy = options.meta?.sessionPolicy
+    if (sessionPolicy !== undefined && options.instructions !== undefined && !this.requirePolicy(sessionPolicy).instructions) {
+      throw new Error(`session policy "${sessionPolicy}" forbids instructions`)
+    }
     const ownerCtx = this.ctx
     // Re-trace a Service-backed factory through the accessing context
     // explicitly. This preserves AgentLoop's dependency origin while binding
@@ -482,9 +555,20 @@ export class AgentRegistry extends Service {
     // This is the authoritative collision boundary. Concurrent create/resume
     // operations may both prepare, but only one exact entry can publish.
     if (this.store.has(id)) throw new Error(`agent "${id}" is already registered`)
+    const { sessionPolicy, cwd, agentPreset } = agent.session.header
+    const policy = sessionPolicy === undefined ? undefined : this.requirePolicy(sessionPolicy)
+    if (policy !== undefined) {
+      if (!policy.workspace && cwd !== undefined) throw new Error(`session policy "${sessionPolicy}" forbids cwd`)
+      if (!policy.presets && agentPreset !== undefined) throw new Error(`session policy "${sessionPolicy}" forbids agentPreset`)
+      if (!policy.fork && agent.session.header.parentSession !== undefined) {
+        throw new Error(`session policy "${sessionPolicy}" forbids forked agents`)
+      }
+      policy.apply(agent)
+    }
     const entry: AgentEntry = {
       id,
       agent,
+      policy,
       owner,
       carrier,
       announced: false,

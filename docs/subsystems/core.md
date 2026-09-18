@@ -21,6 +21,8 @@ A turn flows through the six packages in one loop: the driver in [`agent-loop`](
 
 ## Creation and ownership
 
+A session may persist a versioned `SessionPolicyId`. `AgentRegistry.enter()` requires the corresponding deployment provider, checks its workspace/preset/fork restrictions, and installs its synchronous policy before announcing the agent. This also covers factory resume without a caller setup callback. The provider owns its prompt, tool restrictions, and JSON assertions; Harness owns admission and durable identity. See [session policies](../../packages/core/agent/README.md#session-policies) for provider lifetime and lookup semantics.
+
 Consumers create agents through `ctx.agents` — `create()` builds a fresh session and agent under one caller-supplied `SessionId`, `resume()` loads a persisted session first — or declaratively through the loop's config entries. Programmatic creation returns the owner's handle:
 
 Source: [`packages/core/agent/src/index.ts`](../../packages/core/agent/src/index.ts)
@@ -623,6 +625,35 @@ withoutInitiator<T>(operation: () => T): T
 setFactory(factory: AgentFactory): () => void
 
 /**
+ * Register a deployment's versioned policy. Existing agents retain their scoped effects on provider unload.
+ * @param policy - synchronous policy installer and API restrictions.
+ * @returns the effect disposer removing this provider from future creation and resume.
+ * @throws when the id is already registered.
+ */
+registerPolicy(policy: SessionPolicy): () => void
+
+/**
+ * Resolve a required policy without falling back to ordinary composition.
+ * @param id - persisted or requested policy identifier.
+ * @returns the registered provider.
+ * @throws when no provider is registered for the id.
+ */
+requirePolicy(id: SessionPolicyId): SessionPolicy
+
+/**
+ * Discover the deployment's available session policies.
+ * @returns the currently available versioned policy identifiers.
+ */
+policyIds(): SessionPolicyId[]
+
+/**
+ * Read the exact provider installed when a live agent entered the registry.
+ * @param id - live agent/session identifier.
+ * @returns the installed policy, or undefined for an ordinary or absent agent.
+ */
+policyFor(id: SessionId): SessionPolicy | undefined
+
+/**
  * Create and publish a new agent through the registered factory.
  * Distinct from {@link register} (which records an already-constructed
  * agent): this constructs the agent and its session. Rejects if no factory is
@@ -720,7 +751,7 @@ list(): Agent[]
 roots(): Agent[]
 ```
 
-Source: [`packages/core/agent/src/index.ts:256`](../../packages/core/agent/src/index.ts)
+Source: [`packages/core/agent/src/index.ts:277`](../../packages/core/agent/src/index.ts)
 
 <a id="agent-events"></a>
 

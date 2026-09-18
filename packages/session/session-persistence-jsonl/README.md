@@ -6,6 +6,8 @@ The JSONL durable session-persistence backend — a concrete `SessionPersistence
 
 ## On-disk layout
 
+The header preserves an optional `sessionPolicy` identifier through serialization and reload. Empty or non-string identifiers and retired `sessionMode` markers reject the log. A missing runtime provider is rejected by agent admission, not converted into an ordinary session.
+
 ```
 <root>/
   --<normalized-cwd>--/          # readable project directory (or _no-cwd/)

@@ -23,7 +23,7 @@ export type TestSqlName =
   | 'set-application-id-12345'
   | 'set-user-version-15'
   | 'set-user-version-16'
-  | 'set-user-version-17'
+  | 'set-user-version-18'
   | 'update-invalid-session-metadata'
 
 /** Load one fixed test SQL resource. */

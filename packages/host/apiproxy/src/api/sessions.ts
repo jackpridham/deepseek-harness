@@ -8,13 +8,19 @@ import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { AttachmentIdType, ImageAttachmentLimits, ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 import type { ModelModality } from '@deepseek-ai/dsh-llm/types'
-import type { SessionEvent, SessionId, SessionInstructions, SessionInstructionState, InstructionContextSources } from '@deepseek-ai/dsh-session/types'
+import type { JsonValue, SessionPolicyId, SessionEvent, SessionId, SessionInstructions, SessionInstructionState, InstructionContextSources } from '@deepseek-ai/dsh-session/types'
 // The pure-type outlet: api/ is browser-importable, and the package root's
 // cordis Context merge (via dsh-agent) must not enter client aggregates.
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
 import type { RpcId, RpcRequest, RpcResponse } from './rpc.ts'
 import type { ToolEventView } from './events.ts'
 import type { WorkspaceId } from './workspace.ts'
+
+/** Deployment assertions for the policy installed on a live session agent. */
+export interface SessionPolicyAttestation {
+  id: SessionPolicyId
+  attestation: Readonly<Record<string, JsonValue>>
+}
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionStateMap {
@@ -337,6 +343,11 @@ export interface SessionsApi {
    * the session header, so a later resume rebuilds the same agent. An unknown
    * id fails with `agent-preset-not-found`, and a preset whose composition
    * cannot be mounted fails with `agent-preset-invalid`.
+   *
+   * `sessionPolicy` requires a registered provider and records its immutable
+   * identity. The provider determines allowed workspace and preset inputs.
+   * Missing providers fail creation and resume; successful creation returns
+   * the installed provider's assertions in `policy`.
    */
   create(request: RpcRequest<{
     workspaceId?: WorkspaceId
@@ -344,8 +355,9 @@ export interface SessionsApi {
     sessionId?: SessionId
     agentPreset?: string
     instructions?: SessionInstructions
+    sessionPolicy?: SessionPolicyId
   }>):
-  Promise<RpcResponse<{ sessionId: SessionId; agentPreset?: string; instructionsRevision?: number }>>
+  Promise<RpcResponse<{ sessionId: SessionId; agentPreset?: string; policy?: SessionPolicyAttestation; instructionsRevision?: number }>>
 
   /** Set the complete configuration before the first turn; identical retries are idempotent. */
   configureInstructions(request: RpcRequest<{ sessionId: SessionId; instructions: SessionInstructions }>):
@@ -361,6 +373,9 @@ export interface SessionsApi {
       contexts: Array<{ name: string; text: string }>
     }
   }>>
+
+  /** Resumes the session if needed and returns its installed policy's assertions; fails without a provider. */
+  getPolicy(request: RpcRequest<{ sessionId: SessionId }>): Promise<RpcResponse<SessionPolicyAttestation>>
 
   /**
    * Reads a window of history events; page boundaries align to append-origin message

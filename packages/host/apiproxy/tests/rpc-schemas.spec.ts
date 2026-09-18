@@ -136,6 +136,14 @@ describe('rpcReceiptSchema', () => {
 })
 
 describe('sessions domain schemas', () => {
+  it('rejects retired session modes and invalid policy identifiers', () => {
+    expect(() => sessionCreateRequestSchema.parse({ sessionMode: 'advisory' })).toThrow()
+    expect(() => sessionCreateRequestSchema.parse({ sessionPolicy: '' })).toThrow()
+    expect(() => sessionCreateRequestSchema.parse({ sessionPolicy: 1 })).toThrow()
+    expect(sessionCreateRequestSchema.parse({ sessionPolicy: 'deployment-policy-v1' }))
+      .toEqual({ sessionPolicy: 'deployment-policy-v1' })
+  })
+
   it('validates ids, summaries, and the event passthrough envelope', () => {
     expect(sessionIdSchema.parse('s1')).toBe('s1')
     expect(() => sessionIdSchema.parse('')).toThrow()

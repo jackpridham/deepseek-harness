@@ -2320,6 +2320,9 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
             details: { workspaceId: request.payload.workspaceId },
           })
         }
+        if (request.payload.sessionPolicy !== undefined) {
+          return err(request, { code: 'session-policy-unavailable', message: 'fixture has no session policy providers', details: {} })
+        }
         const cwd = workspace?.path ?? request.payload.cwd ?? '/tmp/fixture'
         const requestedId = request.payload.sessionId
         const attachWorkspace = (sessionId: SessionId): void => {
@@ -2377,6 +2380,9 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
         }
         if (options.dropSessionCreateResponse) throw new Error('fixture: dropped session.create response after publication')
         return ok(request, { sessionId: created.sessionId })
+      },
+      getPolicy: (request) => {
+        return err(request, { code: 'session-policy-unavailable', message: 'fixture has no session policy providers', details: {} })
       },
       rename: (request) => {
         const missing = requireSession(request)
@@ -2624,7 +2630,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
     },
     host: {
       describe: request => ok(request, {
-        version: '0.0.0-fixture', cwd: '/tmp/fixture', attachedSessions, home: FIXTURE_HOME, canOpenPath: true,
+        version: '0.0.0-fixture', cwd: '/tmp/fixture', attachedSessions, home: FIXTURE_HOME, canOpenPath: true, sessionPolicies: [],
       }),
       // Deterministic native pick: the keyless lanes drive the full
       // pick-then-adopt path without an OS chooser (design-mock content,
@@ -3233,6 +3239,7 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'session.create': return this.api.sessions.create(request)
       case 'session.configureInstructions': return this.api.sessions.configureInstructions(request)
       case 'session.getInstructions': return this.api.sessions.getInstructions(request)
+      case 'session.getPolicy': return this.api.sessions.getPolicy(request)
       case 'session.history': return this.api.sessions.history(request)
       case 'session.models': return this.api.sessions.models(request)
       case 'session.selectModel': return this.api.sessions.selectModel(request)

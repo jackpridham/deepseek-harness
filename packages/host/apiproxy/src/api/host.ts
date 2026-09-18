@@ -4,6 +4,7 @@
  */
 
 import type { RpcRequest, RpcResponse } from './rpc.ts'
+import type { SessionPolicyId } from '@deepseek-ai/dsh-session/types'
 
 /** One directory row of a listing: a child entry or a breadcrumb ancestor. */
 export interface DirectoryEntry {
@@ -44,7 +45,8 @@ export interface HostApi {
    * no explicit default (the adapter falls back internally);
    * attachedSessions = count of currently attached sessions (those with a live agent);
    * home = the host account home directory (Web display abbreviation on POSIX);
-   * canOpenPath = whether this deployment can hand a path to a user-visible native desktop.
+   * canOpenPath = whether this deployment can hand a path to a user-visible native desktop;
+   * sessionPolicies = versioned session-policy identifiers currently registered on this host.
    */
   describe(request: RpcRequest<{}>): Promise<RpcResponse<{
     /** Supported session instruction schema versions; absent means unsupported. */
@@ -56,6 +58,7 @@ export interface HostApi {
     attachedSessions: number
     home: string
     canOpenPath: boolean
+    sessionPolicies?: SessionPolicyId[]
   }>>
 
   /**

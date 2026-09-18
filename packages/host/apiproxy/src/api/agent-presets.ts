@@ -66,7 +66,8 @@ export interface AgentPresetsApi {
    * Allowed only while the session is blank — no turn has run. Once a
    * conversation starts, its history was produced under that preset's tools,
    * and swapping them would leave logged tool calls the new composition cannot
-   * make; the attempt answers `agent-preset-locked`.
+   * make; the attempt answers `agent-preset-locked`. A session whose policy
+   * forbids presets answers `session-policy-invalid`.
    */
   select(request: RpcRequest<{ sessionId: SessionId; agentPreset: string }>):
   Promise<RpcResponse<{ agentPreset: string }>>

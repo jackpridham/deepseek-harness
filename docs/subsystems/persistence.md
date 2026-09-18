@@ -61,6 +61,11 @@ interface SessionHeader {
   readonly createdAt: number
   /** Absolute working directory the session was created in (if any). */
   readonly cwd?: string
+  /**
+   * Immutable policy provider required before an agent can enter the registry.
+   * Absent selects ordinary agent composition.
+   */
+  readonly sessionPolicy?: SessionPolicyId
   /** The session this one was forked from (seed lineage), if any. */
   readonly parentSession?: SessionId
   /**
@@ -95,7 +100,7 @@ A backend refuses a log it cannot faithfully interpret with `SessionFormatUnsupp
 
 ## `CreateSessionOptions` — seeding and metadata
 
-Creating a `Session` through the store takes a `seed` (initial replay or fork history) and `meta` (the storage-level fields the store folds into a `SessionHeader`). The store fills in `version`/`id` and defaults `createdAt`; the caller may supply the validated absolute `cwd`, the `parentSession` lineage, the `seedLength` seed boundary, the optional coarse `origin`, the `delegationDepth`, the `agentPreset` the agent was composed from, and an existing `createdAt`. `origin: 'subagent'` lets product navigation hide duplicate child rows; it does not prove that a descriptor is valid or that the child can resume.
+Creating a `Session` through the store takes a `seed` (initial replay or fork history) and `meta` (the storage-level fields the store folds into a `SessionHeader`). The store fills in `version`/`id` and defaults `createdAt`; the caller may supply the validated absolute `cwd`, `sessionPolicy`, the `parentSession` lineage, the `seedLength` seed boundary, the optional coarse `origin`, the `delegationDepth`, the `agentPreset` the agent was composed from, and an existing `createdAt`. `origin: 'subagent'` lets product navigation hide duplicate child rows; it does not prove that a descriptor is valid or that the child can resume.
 
 ```ts type-equiv
 /**
@@ -114,6 +119,7 @@ interface CreateSessionOptions {
    */
   readonly meta?: {
     readonly cwd?: string
+    readonly sessionPolicy?: SessionPolicyId
     readonly parentSession?: SessionId
     readonly createdAt?: number
     readonly seedLength?: number

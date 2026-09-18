@@ -23,6 +23,7 @@ import {
   sessionCreateValueSchema,
   sessionConfigureInstructionsValueSchema,
   sessionGetInstructionsValueSchema,
+  sessionGetPolicyValueSchema,
   sessionForkValueSchema,
   sessionHistoryValueSchema,
   sessionListValueSchema,
@@ -97,6 +98,7 @@ export interface IApiClient {
     configureInstructions(payload: RequestPayload<'session.configureInstructions'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.configureInstructions'>>>
     getInstructions(payload: RequestPayload<'session.getInstructions'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.getInstructions'>>>
     create(payload: RequestPayload<'session.create'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.create'>>>
+    getPolicy(payload: RequestPayload<'session.getPolicy'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.getPolicy'>>>
     history(payload: RequestPayload<'session.history'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.history'>>>
     models(payload: RequestPayload<'session.models'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.models'>>>
     selectModel(payload: RequestPayload<'session.selectModel'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.selectModel'>>>
@@ -191,6 +193,7 @@ const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseV
   'session.create': sessionCreateValueSchema,
   'session.configureInstructions': sessionConfigureInstructionsValueSchema,
   'session.getInstructions': sessionGetInstructionsValueSchema,
+  'session.getPolicy': sessionGetPolicyValueSchema,
   'session.history': sessionHistoryValueSchema,
   'session.models': sessionModelsValueSchema,
   'session.selectModel': sessionSelectModelValueSchema,
@@ -437,6 +440,7 @@ export abstract class AbstractApiClient implements IApiClient {
     create: (payload, signal) => this.callUnary('session.create', payload, signal),
     configureInstructions: (payload, signal) => this.callUnary('session.configureInstructions', payload, signal),
     getInstructions: (payload, signal) => this.callUnary('session.getInstructions', payload, signal),
+    getPolicy: (payload, signal) => this.callUnary('session.getPolicy', payload, signal),
     history: (payload, signal) => this.callUnary('session.history', payload, signal),
     models: (payload, signal) => this.callUnary('session.models', payload, signal),
     selectModel: (payload, signal) => this.callUnary('session.selectModel', payload, signal),
