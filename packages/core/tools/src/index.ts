@@ -1205,12 +1205,13 @@ export class ToolRuntime extends Service {
     // an invariant assertion as well as protection against future layer
     // changes. Per scope: a native agent must not find `run_code` in its
     // dispatch table because some other agent in the process presents it.
+    if (layers.some(layer => !layer.denyAll.isEmpty())) {
+      visible.clear()
+      return { visible, knownNames, restrictableNames }
+    }
     if (this.modeFor(scope) !== 'native') {
       visible.set(RUN_CODE_NAME, this.requireCodeTransport())
     }
-    // A final scoped boundary applies after own registrations and the Code
-    // Mode transport, neither of which ordinary restrictions may remove.
-    if (layers.some(layer => !layer.denyAll.isEmpty())) visible.clear()
     return { visible, knownNames, restrictableNames }
   }
 

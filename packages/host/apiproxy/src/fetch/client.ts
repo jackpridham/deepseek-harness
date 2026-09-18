@@ -21,7 +21,7 @@ import {
   sessionCancelValueSchema,
   sessionAttachmentValueSchema,
   sessionCreateValueSchema,
-  sessionGetToolPolicyValueSchema,
+  sessionGetPolicyValueSchema,
   sessionForkValueSchema,
   sessionHistoryValueSchema,
   sessionListValueSchema,
@@ -91,7 +91,7 @@ export interface IApiClient {
     list(payload: RequestPayload<'session.list'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.list'>>>
     search(payload: RequestPayload<'session.search'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.search'>>>
     create(payload: RequestPayload<'session.create'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.create'>>>
-    getToolPolicy(payload: RequestPayload<'session.getToolPolicy'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.getToolPolicy'>>>
+    getPolicy(payload: RequestPayload<'session.getPolicy'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.getPolicy'>>>
     history(payload: RequestPayload<'session.history'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.history'>>>
     models(payload: RequestPayload<'session.models'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.models'>>>
     selectModel(payload: RequestPayload<'session.selectModel'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.selectModel'>>>
@@ -177,7 +177,7 @@ const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseV
   'session.list': sessionListValueSchema,
   'session.search': sessionSearchValueSchema,
   'session.create': sessionCreateValueSchema,
-  'session.getToolPolicy': sessionGetToolPolicyValueSchema,
+  'session.getPolicy': sessionGetPolicyValueSchema,
   'session.history': sessionHistoryValueSchema,
   'session.models': sessionModelsValueSchema,
   'session.selectModel': sessionSelectModelValueSchema,
@@ -419,7 +419,7 @@ export abstract class AbstractApiClient implements IApiClient {
     list: (payload, signal) => this.callUnary('session.list', payload, signal),
     search: (payload, signal) => this.callUnary('session.search', payload, signal),
     create: (payload, signal) => this.callUnary('session.create', payload, signal),
-    getToolPolicy: (payload, signal) => this.callUnary('session.getToolPolicy', payload, signal),
+    getPolicy: (payload, signal) => this.callUnary('session.getPolicy', payload, signal),
     history: (payload, signal) => this.callUnary('session.history', payload, signal),
     models: (payload, signal) => this.callUnary('session.models', payload, signal),
     selectModel: (payload, signal) => this.callUnary('session.selectModel', payload, signal),

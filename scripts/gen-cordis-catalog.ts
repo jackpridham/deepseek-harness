@@ -270,6 +270,8 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   SessionReferenceInput: 'session-reference.md',
   SessionEvent: 'session.md',
   SessionId: 'core.md',
+  SessionPolicy: 'core.md',
+  SessionPolicyId: 'core.md',
   SessionStartSource: 'core.md',
   SessionLogSnapshot: 'session-query.md',
   SessionSurfaceSnapshot: 'session-query.md',

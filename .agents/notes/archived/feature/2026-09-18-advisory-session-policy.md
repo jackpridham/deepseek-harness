@@ -1,6 +1,7 @@
 # Agent Note: Advisory session policy
 
 Status: implemented
+Archived: 2026-09-18
 
 ## Problem
 

@@ -6,7 +6,7 @@
  */
 
 import { z } from 'zod'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionEvent, SessionId, SessionPolicyId } from '@deepseek-ai/dsh-session/types'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { RequestPayload, ResponseValue } from './rpc-map.ts'
 import type { Wire } from './rpc.schema.ts'
@@ -25,6 +25,15 @@ import {
 
 /** SessionId: one brand cast after schema validation (the only cast point in this domain). */
 export const sessionIdSchema = z.string().min(1) as unknown as z.ZodType<SessionId>
+
+/** Policy identity validated before crossing the API into the agent registry. */
+export const sessionPolicyIdSchema = z.string().min(1) as unknown as z.ZodType<SessionPolicyId>
+
+/** Provider-owned assertions; the generic carrier preserves all JSON fields. */
+export const sessionPolicyAttestationSchema = z.object({
+  id: sessionPolicyIdSchema,
+  attestation: z.record(z.string(), z.json()),
+})
 
 /** MessageId: one brand cast after non-empty string validation. */
 export const messageIdSchema = z.string().min(1) as unknown as z.ZodType<MessageId>
@@ -104,44 +113,27 @@ export const sessionCreateRequestSchema = z.object({
   cwd: z.string().optional(),
   sessionId: sessionIdSchema.optional(),
   agentPreset: z.string().optional(),
-  sessionMode: z.literal('advisory').optional(),
+  sessionPolicy: sessionPolicyIdSchema.optional(),
+  sessionMode: z.never().optional(),
 }).refine(
   payload => payload.workspaceId === undefined || payload.cwd === undefined,
   { message: 'session.create accepts workspaceId or cwd, not both' },
-).refine(
-  payload => payload.sessionMode !== 'advisory'
-    || (payload.workspaceId === undefined && payload.cwd === undefined && payload.agentPreset === undefined),
-  { message: 'advisory session.create does not accept workspaceId, cwd, or agentPreset' },
 ) satisfies z.ZodType<Wire<RequestPayload<'session.create'>>>
 
 /** session.create response value. */
 export const sessionCreateValueSchema = z.object({
   sessionId: sessionIdSchema,
   agentPreset: z.string().optional(),
-  toolPolicy: z.object({
-    version: z.literal(1),
-    mode: z.literal('advisory'),
-    tools: z.tuple([]),
-    executorEnabled: z.literal(false),
-    automaticHostContextEnabled: z.literal(false),
-    workspaceEnabled: z.literal(false),
-  }).optional(),
+  policy: sessionPolicyAttestationSchema.optional(),
 }) satisfies z.ZodType<Wire<ResponseValue<'session.create'>>>
 
-/** session.getToolPolicy request payload. */
-export const sessionGetToolPolicyRequestSchema = z.object({
+/** session.getPolicy request payload. */
+export const sessionGetPolicyRequestSchema = z.object({
   sessionId: sessionIdSchema,
-}) satisfies z.ZodType<Wire<RequestPayload<'session.getToolPolicy'>>>
+}) satisfies z.ZodType<Wire<RequestPayload<'session.getPolicy'>>>
 
-/** session.getToolPolicy response value. */
-export const sessionGetToolPolicyValueSchema = z.object({
-  version: z.literal(1),
-  mode: z.literal('advisory'),
-  tools: z.tuple([]),
-  executorEnabled: z.literal(false),
-  automaticHostContextEnabled: z.literal(false),
-  workspaceEnabled: z.literal(false),
-}) satisfies z.ZodType<Wire<ResponseValue<'session.getToolPolicy'>>>
+/** session.getPolicy response value. */
+export const sessionGetPolicyValueSchema = sessionPolicyAttestationSchema satisfies z.ZodType<Wire<ResponseValue<'session.getPolicy'>>>
 
 /** session.rename request payload (raw title; host-side normalization decides acceptance). */
 export const sessionRenameRequestSchema = z.object({

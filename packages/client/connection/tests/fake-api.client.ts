@@ -6,6 +6,7 @@ import type {
   RpcRequest, RpcResponse, SessionId, SessionModels, SessionSearchItem, SkillEntry, WorkspaceId,
 } from '../src/client/api.ts'
 import { RpcId } from '../src/client/api.ts'
+import { SessionPolicyId } from '@deepseek-ai/dsh-session/types'
 
 export interface Deferred<T> {
   promise: Promise<T>
@@ -111,9 +112,8 @@ export class FakeApiClient implements IApiClient {
       return this.record('session.search', payload, this.onSearch(payload))
     },
     create: (payload: unknown) => this.record('session.create', payload, this.onCreate(payload)),
-    getToolPolicy: (payload: unknown) => this.record('session.getToolPolicy', payload, Promise.resolve(ok({
-      version: 1 as const, mode: 'advisory' as const, tools: [] as [], executorEnabled: false as const,
-      automaticHostContextEnabled: false as const, workspaceEnabled: false as const,
+    getPolicy: (payload: unknown) => this.record('session.getPolicy', payload, Promise.resolve(ok({
+      id: SessionPolicyId('test-policy-v1'), attestation: { testPolicy: true },
     }))),
     history: (payload: { sessionId: SessionId; beforeSeq?: number; maxMessages?: number }) =>
       this.record('session.history', payload, this.onHistory(payload)),

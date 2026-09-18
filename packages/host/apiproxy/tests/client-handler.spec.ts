@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import type { SessionId } from '@deepseek-ai/dsh-session'
+import { SessionPolicyId, type SessionId } from '@deepseek-ai/dsh-session'
 import type { ApiProxy, GoalRef, HostFrame, MuxFrame, RpcMessage, RpcRequest, RpcResponse } from '@deepseek-ai/dsh-host-apiproxy'
 import { InProcessApiClient, RpcId, toFetchHandler } from '@deepseek-ai/dsh-host-apiproxy'
 
@@ -38,9 +38,8 @@ function scriptedApi(overrides: {
       list: r => ok(r, { items: [] }),
       search: r => ok(r, { items: [], hasMore: false }),
       create: r => ok(r, { sessionId: sid('s-new') }),
-      getToolPolicy: r => ok(r, {
-        version: 1, mode: 'advisory', tools: [], executorEnabled: false,
-        automaticHostContextEnabled: false, workspaceEnabled: false,
+      getPolicy: r => ok(r, {
+        id: SessionPolicyId('test-policy-v1'), attestation: { testPolicy: true },
       }),
       history: r => ok(r, {
         events: [],
@@ -76,7 +75,7 @@ function scriptedApi(overrides: {
     },
     host: {
       describe: r => ok(r, {
-        version: '0-test', cwd: '/t', attachedSessions: 0, home: '/h', canOpenPath: true, advisoryPolicyVersions: [1],
+        version: '0-test', cwd: '/t', attachedSessions: 0, home: '/h', canOpenPath: true, sessionPolicies: [],
       }),
       pickDirectory: r => ok(r, { path: null }),
       listDirectory: r => ok(r, { path: '/t', home: '/t', crumbs: [], entries: [], truncated: false }),
@@ -153,6 +152,13 @@ function recorderInto(seen: { method: string; payload: unknown }[]) {
 }
 
 describe('unary round trip', () => {
+  it('preserves a provider-owned policy attestation through the carrier', async () => {
+    const response = await client(scriptedApi()).sessions.getPolicy({ sessionId: sid('policy-session') })
+    expect(response.result).toEqual({
+      ok: true, value: { id: 'test-policy-v1', attestation: { testPolicy: true } },
+    })
+  })
+
   it('carries payload out and value back through the full wire form', async () => {
     let seen: RpcRequest<{ cursor?: string }> | undefined
     const api = scriptedApi({

@@ -115,8 +115,11 @@ function validateSessionHeader(id: SessionId, input: unknown): SessionHeader {
       throw new Error(`session header cwd must be an absolute path, got "${record.cwd}"`)
     }
   }
-  if (record.sessionMode !== undefined && record.sessionMode !== 'advisory') {
-    throw new Error('session header sessionMode must be "advisory"')
+  if (record.sessionMode !== undefined) {
+    throw new Error('session header sessionMode is unsupported; create a session with a registered sessionPolicy')
+  }
+  if (record.sessionPolicy !== undefined && (typeof record.sessionPolicy !== 'string' || record.sessionPolicy.length === 0)) {
+    throw new Error('session header sessionPolicy must be a non-empty string')
   }
   if (record.parentSession !== undefined && typeof record.parentSession !== 'string') {
     throw new Error('session header parentSession must be a string')
@@ -134,9 +137,6 @@ function validateSessionHeader(id: SessionId, input: unknown): SessionHeader {
   }
   if (record.agentPreset !== undefined && typeof record.agentPreset !== 'string') {
     throw new Error('session header agentPreset must be a string')
-  }
-  if (record.sessionMode === 'advisory' && (record.cwd !== undefined || record.agentPreset !== undefined)) {
-    throw new Error('advisory session header must not contain cwd or agentPreset')
   }
   return deepFreeze(record as unknown as SessionHeader)
 }
@@ -890,7 +890,7 @@ export class SessionStore extends Service {
       id: sessionId,
       createdAt: meta?.createdAt ?? Date.now(),
       ...meta?.cwd === undefined ? {} : { cwd: meta.cwd },
-      ...meta?.sessionMode === undefined ? {} : { sessionMode: meta.sessionMode },
+      ...meta?.sessionPolicy === undefined ? {} : { sessionPolicy: meta.sessionPolicy },
       ...meta?.parentSession === undefined ? {} : { parentSession: meta.parentSession },
       ...meta?.seedLength === undefined ? {} : { seedLength: meta.seedLength },
       ...meta?.origin === undefined ? {} : { origin: meta.origin },
@@ -1100,6 +1100,7 @@ export class SessionStore extends Service {
       seed,
       meta: {
         ...liveSource.header.cwd !== undefined ? { cwd: liveSource.header.cwd } : {},
+        ...liveSource.header.sessionPolicy === undefined ? {} : { sessionPolicy: liveSource.header.sessionPolicy },
         parentSession: liveSource.id,
         seedLength: seed.length,
       },

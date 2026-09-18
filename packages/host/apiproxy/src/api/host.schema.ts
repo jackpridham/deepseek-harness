@@ -6,6 +6,7 @@ import { z } from 'zod'
 import type { DirectoryEntry } from './host.ts'
 import type { RequestPayload, ResponseValue } from './rpc-map.ts'
 import type { Wire } from './rpc.schema.ts'
+import { sessionPolicyIdSchema } from './sessions.schema.ts'
 
 /** host.describe request payload (empty object literal). */
 export const hostDescribeRequestSchema = z.object({}) satisfies z.ZodType<Wire<RequestPayload<'host.describe'>>>
@@ -19,7 +20,7 @@ export const hostDescribeValueSchema = z.object({
   attachedSessions: z.number().int().nonnegative(),
   home: z.string(),
   canOpenPath: z.boolean(),
-  advisoryPolicyVersions: z.tuple([z.literal(1)]).optional(),
+  sessionPolicies: z.array(sessionPolicyIdSchema).optional(),
 }) satisfies z.ZodType<Wire<ResponseValue<'host.describe'>>>
 
 /** host.pickDirectory request payload (empty object literal). */

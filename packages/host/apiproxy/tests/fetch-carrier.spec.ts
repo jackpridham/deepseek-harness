@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { SessionPolicyId } from '@deepseek-ai/dsh-session'
 import type { ApiProxy, HostFrame, MuxFrame } from '../src/api/index.ts'
 import type { ClientResponse, RpcMessage, RpcReceipt, RpcRequest } from '../src/api/rpc.ts'
 import { RpcId } from '../src/api/rpc.ts'
@@ -44,14 +45,13 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
       async create(request) {
         return { rpcId: request.rpcId, result: { ok: true, value: { sessionId: 's-new' as never } } }
       },
-      async getToolPolicy(request) {
+      async getPolicy(request) {
         return {
           rpcId: request.rpcId,
           result: {
             ok: true,
             value: {
-              version: 1 as const, mode: 'advisory' as const, tools: [] as [], executorEnabled: false as const,
-              automaticHostContextEnabled: false as const, workspaceEnabled: false as const,
+              id: SessionPolicyId('test-policy-v1'), attestation: { testPolicy: true },
             },
           },
         }
@@ -155,7 +155,7 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
           rpcId: request.rpcId,
           result: {
             ok: true,
-            value: { version: 'v', cwd: '/w', attachedSessions: 0, home: '/h', canOpenPath: true, advisoryPolicyVersions: [1] },
+            value: { version: 'v', cwd: '/w', attachedSessions: 0, home: '/h', canOpenPath: true, sessionPolicies: [] },
           },
         }
       },

@@ -117,6 +117,37 @@ describe('scoped tool registration', () => {
   })
 })
 
+describe('denyAllTools()', () => {
+  it.each(['native', 'code', 'both'] as const)('masks own and inherited tools in %s mode until disposal', async (mode) => {
+    const ctx = await mount()
+    try {
+      const { scope, key } = await mintAgentScope(ctx, 'denied')
+      ctx.tools.register(tool('shared'))
+      const restore = scope.ctx.tools.denyAllTools()
+      const restoreMode = scope.ctx.tools.presentAs(mode)
+      scope.ctx.tools.register(tool('late'))
+      expect(ctx.tools.schemas(key)).toEqual([])
+      expect(await run(ctx, 'late', key)).toBe('Error: unknown tool "late"')
+      expect(await run(ctx, 'run_code', key)).toBe('Error: unknown tool "run_code"')
+      expect(await run(ctx, 'shared')).toBe('ran:shared')
+      restore()
+      restoreMode()
+      expect(ctx.tools.schemas(key).map(entry => entry.name)).toEqual(['shared', 'late'])
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('rejects unscoped denial', async () => {
+    const ctx = await mount()
+    try {
+      expect(() => ctx.tools.denyAllTools()).toThrow('requires a scoped context')
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+})
+
 describe('restrict()', () => {
   it('masks global tools, merges scope-local tools afterward, and keeps assembly with execution', async () => {
     const ctx = await mount()

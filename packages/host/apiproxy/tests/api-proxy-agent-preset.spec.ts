@@ -5,14 +5,14 @@
  * rebuilding it differently would replay tool calls the new agent cannot make.
  */
 
-import { mkdtempSync, realpathSync } from 'node:fs'
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import AgentRegistry, { type AgentFactory } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import SessionStore, { Session, SessionId, type Session as SessionType } from '@deepseek-ai/dsh-session'
+import SessionStore, { Session, SessionId, SessionPolicyId, type Session as SessionType } from '@deepseek-ai/dsh-session'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -25,7 +25,14 @@ import {
 import type {} from '@deepseek-ai/dsh-agent-presets/types'
 import { GoalId } from '@deepseek-ai/dsh-goal'
 import { createApiProxy } from '../src/api-proxy.ts'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+
+const tempDirs: string[] = []
+const policyId = SessionPolicyId('test-restricted-v1')
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+})
 
 let nextRpc = 0
 function request<P>(payload: P): RpcRequest<P> {
@@ -110,13 +117,27 @@ async function harness(
   persistence?: unknown,
   options: { userIds?: readonly string[]; defaults?: Record<string, unknown>; toolMode?: 'native' | 'code' | 'both' } = {},
 ) {
-  const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-apiproxy-preset-')))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-apiproxy-preset-'))
+  tempDirs.push(dir)
+  const cwd = realpathSync(dir)
   const ctx = new Context()
   await ctx.plugin(SessionStore)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(UserQuestionService)
   await ctx.plugin(SystemPrompt, { persona: '' })
   await ctx.plugin(ToolRuntime, { mode: options.toolMode ?? 'native' })
+  ctx.agents.registerPolicy({
+    id: policyId,
+    workspace: false,
+    presets: false,
+    fork: false,
+    attestation: { testPolicy: true },
+    apply(agent) {
+      agent.ctx.get('tools')!.presentAs('native')
+      agent.ctx.get('tools')!.denyAllTools()
+      agent.ctx.get('systemPrompt')!.suppressRuntimeContext()
+    },
+  })
   ctx.get('tools')!.register(defineContentToolFixture({
     name: 'host-tool',
     description: 'host tool',
@@ -354,14 +375,14 @@ describe('agentPreset.list', () => {
 })
 
 describe('agentPreset.select', () => {
-  it('refuses to recompose an advisory session', async () => {
+  it('refuses to recompose an restricted session', async () => {
     const { api, ctx } = await harness(['standard', 'minimal'])
-    await api.sessions.create(request({ sessionId: SessionId('sel-advisory'), sessionMode: 'advisory' }))
+    await api.sessions.create(request({ sessionId: SessionId('sel-restricted'), sessionPolicy: policyId }))
 
     await expect(api.agentPresets.select(
-      request({ sessionId: SessionId('sel-advisory'), agentPreset: 'minimal' }),
-    )).resolves.toMatchObject({ result: { ok: false, error: { code: 'advisory-session-invalid' } } })
-    expect(ctx.get('tools')!.schemas(ctx.agents.get(SessionId('sel-advisory'))!)).toEqual([])
+      request({ sessionId: SessionId('sel-restricted'), agentPreset: 'minimal' }),
+    )).resolves.toMatchObject({ result: { ok: false, error: { code: 'session-policy-invalid' } } })
+    expect(ctx.get('tools')!.schemas(ctx.agents.get(SessionId('sel-restricted')))).toEqual([])
   })
 
   it('recomposes a blank session', async () => {
@@ -751,7 +772,24 @@ describe('session.history presenter scope', () => {
   })
 })
 
-describe('advisory session policy', () => {
+describe('restricted session policy', () => {
+  it('rejects an unavailable provider without creating a session', async () => {
+    const { api, ctx } = await harness()
+    await expect(api.sessions.create(request({ sessionPolicy: SessionPolicyId('missing') }))).resolves.toMatchObject({
+      result: { ok: false, error: { code: 'session-policy-unavailable' } },
+    })
+    expect(ctx.sessions.list()).toEqual([])
+  })
+
+  it('does not attest an ordinary session', async () => {
+    const { api } = await harness()
+    const sessionId = SessionId('ordinary-policy-query')
+    await api.sessions.create(request({ sessionId }))
+    await expect(api.sessions.getPolicy(request({ sessionId }))).resolves.toMatchObject({
+      result: { ok: false, error: { code: 'session-policy-unavailable' } },
+    })
+  })
+
   it.each(['native', 'code', 'both'] as const)('attests an empty tool surface and denies host tool dispatch in %s mode', async (toolMode) => {
     const { api, ctx } = await harness(['standard'], undefined, { toolMode })
     let dynamicContextEvaluations = 0
@@ -760,33 +798,26 @@ describe('advisory session policy', () => {
       order: 1,
       text: () => {
         dynamicContextEvaluations += 1
-        return 'host context must not reach an advisory model'
+        return 'host context must not reach an restricted model'
       },
     })
-    const created = await api.sessions.create(request({ sessionId: SessionId('advisory'), sessionMode: 'advisory' }))
+    const created = await api.sessions.create(request({ sessionId: SessionId('restricted'), sessionPolicy: policyId }))
 
     expect(created.result).toMatchObject({
       ok: true,
       value: {
-        toolPolicy: {
-          version: 1,
-          mode: 'advisory',
-          tools: [],
-          executorEnabled: false,
-          automaticHostContextEnabled: false,
-          workspaceEnabled: false,
-        },
+        policy: { id: policyId, attestation: { testPolicy: true } },
       },
     })
-    const agent = ctx.agents.get(SessionId('advisory'))!
-    expect(agent.session.header).toMatchObject({ sessionMode: 'advisory' })
+    const agent = ctx.agents.get(SessionId('restricted'))!
+    expect(agent.session.header).toMatchObject({ sessionPolicy: policyId })
     expect(agent.session.header.cwd).toBeUndefined()
     expect((await ctx.systemPrompt.assemble({ scope: agent })).contexts).toEqual([])
     expect(dynamicContextEvaluations).toBe(0)
     expect(ctx.get('tools')!.schemas(agent)).toEqual([])
-    agent.ctx!.inject(['tools'], (scope) => {
+    agent.ctx.inject(['tools'], (scope) => {
       scope.tools.register(defineContentToolFixture({
-        name: 'late-advisory-tool',
+        name: 'late-restricted-tool',
         description: 'must remain hidden',
         parameters: {},
         execute: () => Promise.resolve([{ type: 'text' as const, text: 'must not execute' }]),
@@ -795,60 +826,60 @@ describe('advisory session policy', () => {
     expect(ctx.get('tools')!.schemas(agent)).toEqual([])
     await expect(ctx.get('tools')!.execute({
       signal: new AbortController().signal,
-      callId: CallId('advisory-late-tool'),
-      name: 'late-advisory-tool',
+      callId: CallId('restricted-late-tool'),
+      name: 'late-restricted-tool',
       arguments: {},
       agent,
-    })).resolves.toMatchObject({ content: [{ type: 'text', text: 'Error: unknown tool "late-advisory-tool"' }], isError: true })
+    })).resolves.toMatchObject({ content: [{ type: 'text', text: 'Error: unknown tool "late-restricted-tool"' }], isError: true })
     await expect(ctx.get('tools')!.execute({
       signal: new AbortController().signal,
-      callId: CallId('advisory-host-tool'),
+      callId: CallId('restricted-host-tool'),
       name: 'host-tool',
       arguments: {},
       agent,
     })).resolves.toMatchObject({ content: [{ type: 'text', text: 'Error: unknown tool "host-tool"' }], isError: true })
     await expect(ctx.get('tools')!.execute({
       signal: new AbortController().signal,
-      callId: CallId('advisory-run-code'),
+      callId: CallId('restricted-run-code'),
       name: 'run_code',
       arguments: { code: 'return {}', description: 'must be denied' },
       agent,
     })).resolves.toMatchObject({ content: [{ type: 'text', text: 'Error: unknown tool "run_code"' }], isError: true })
-    expect(await api.sessions.getToolPolicy(request({ sessionId: SessionId('advisory') }))).toMatchObject({
-      result: { ok: true, value: created.result.ok ? created.result.value.toolPolicy : undefined },
+    expect(await api.sessions.getPolicy(request({ sessionId: SessionId('restricted') }))).toMatchObject({
+      result: { ok: true, value: created.result.ok ? created.result.value.policy : undefined },
     })
     expect(await api.host.describe(request({}))).toMatchObject({
-      result: { ok: true, value: { advisoryPolicyVersions: [1] } },
+      result: { ok: true, value: { sessionPolicies: [policyId] } },
     })
   })
 
-  it('rejects advisory workspace, cwd, and executable-composition inputs', async () => {
+  it('rejects restricted workspace, cwd, and executable-composition inputs', async () => {
     const { api } = await harness(['standard'])
     for (const payload of [
-      { sessionMode: 'advisory' as const, cwd: '/tmp/not-attached' },
-      { sessionMode: 'advisory' as const, agentPreset: 'standard' },
+      { sessionPolicy: policyId, cwd: '/tmp/not-attached' },
+      { sessionPolicy: policyId, agentPreset: 'standard' },
     ]) {
       await expect(api.sessions.create(request(payload))).resolves.toMatchObject({
-        result: { ok: false, error: { code: 'advisory-session-invalid' } },
+        result: { ok: false, error: { code: 'session-policy-invalid' } },
       })
     }
   })
 
-  it('keeps an advisory mode immutable on identity reuse', async () => {
+  it('keeps an restricted mode immutable on identity reuse', async () => {
     const { api } = await harness(['standard'])
-    await api.sessions.create(request({ sessionId: SessionId('fixed'), sessionMode: 'advisory' }))
+    await api.sessions.create(request({ sessionId: SessionId('fixed'), sessionPolicy: policyId }))
     await expect(api.sessions.create(request({ sessionId: SessionId('fixed') }))).resolves.toMatchObject({
-      result: { ok: false, error: { code: 'session-mode-conflict' } },
+      result: { ok: false, error: { code: 'session-policy-conflict' } },
     })
   })
 
-  it('keeps the advisory marker through session restoration', () => {
-    const restored = Session.fromRestore(SessionId('cold-advisory'), [], {
+  it('keeps the restricted marker through session restoration', () => {
+    const restored = Session.fromRestore(SessionId('cold-restricted'), [], {
       version: 0,
-      id: SessionId('cold-advisory'),
+      id: SessionId('cold-restricted'),
       createdAt: 1,
-      sessionMode: 'advisory',
+      sessionPolicy: policyId,
     })
-    expect(restored.header).toMatchObject({ sessionMode: 'advisory' })
+    expect(restored.header).toMatchObject({ sessionPolicy: policyId })
   })
 })

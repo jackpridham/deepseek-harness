@@ -17,7 +17,9 @@ import { contentHasImage, createUserMessage, freezeMessage, ReasoningEffortId } 
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageSource } from '@deepseek-ai/dsh-llm'
 import { isAppendSurfaceEvent, isJsonValue } from '@deepseek-ai/dsh-session'
-import type { JsonValue, Session, SessionEvent, SessionEventMap, SessionHeader, SessionId, UserMessage } from '@deepseek-ai/dsh-session'
+import type {
+  JsonValue, Session, SessionEvent, SessionEventMap, SessionHeader, SessionId, SessionPolicyId, UserMessage,
+} from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { SessionQueryError, type SessionSearchCursor } from '@deepseek-ai/dsh-session-query'
 import { SubagentError } from '@deepseek-ai/dsh-subagent'
@@ -35,11 +37,10 @@ import {
 } from '@deepseek-ai/dsh-agent-presets'
 import type { PresetBearingSession } from '@deepseek-ai/dsh-agent-presets'
 import type {} from '@deepseek-ai/dsh-tools'
-import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {
   ApiProxy, ConfigurableProviderView, CredentialView, GoalRef, HistoryEntry, HostFrame,
   ModelCatalogFailure, ModelProviderGroup,
-  AdvisoryToolPolicy, ModelReasoning, MuxFrame, PromptContentPart, QuestionResponsePayload,
+  ModelReasoning, MuxFrame, PromptContentPart, QuestionResponsePayload,
   SessionListMetadata, SessionProjectionsBlock, SessionSearchItem,
   QueuedInboxItem, SessionSummary, SettingsNamespaceView, SubagentAddress, JobView, ToolEventView,
   WorkspaceId, WorkspaceView,
@@ -125,16 +126,6 @@ export const DEFAULT_COLD_BLANK_PROBE_MAX_BYTES = 1024
 
 /** Conversation message event types (the pagination counting unit). */
 const MESSAGE_TYPES = new Set(['user/message', 'assistant/message'])
-
-/** The complete version-one attestation; callers must match every field. */
-const ADVISORY_TOOL_POLICY: AdvisoryToolPolicy = {
-  version: 1,
-  mode: 'advisory',
-  tools: [],
-  executorEnabled: false,
-  automaticHostContextEnabled: false,
-  workspaceEnabled: false,
-}
 
 /** Validate one prompt as a batch before publishing any durable image object. */
 async function durablePromptContent(ctx: Context, content: readonly PromptContentPart[]): Promise<ContentBlock[]> {
@@ -1017,14 +1008,14 @@ class SessionCwdConflict extends Error {
   }
 }
 
-/** A session id cannot be adopted under a different host-owned mode. */
-class SessionModeConflict extends Error {
+/** A session id cannot be adopted under a different policy provider. */
+class SessionPolicyConflict extends Error {
   constructor(
     readonly sessionId: SessionId,
-    readonly requestedMode: 'ordinary' | 'advisory',
-    readonly existingMode: 'ordinary' | 'advisory',
+    readonly requestedMode: string,
+    readonly existingMode: string,
   ) {
-    super(`session "${sessionId}" has immutable mode "${existingMode}"; requested "${requestedMode}"`)
+    super(`session "${sessionId}" has immutable policy "${existingMode}"; requested "${requestedMode}"`)
   }
 }
 
@@ -1392,28 +1383,13 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
    * @returns the id to record on the header (absent without a roster) and the setup callback.
    * @throws when the roster supplies no such preset.
    */
-  async function composeAgent(presetId: string | undefined, sessionMode?: 'advisory'): Promise<{
+  async function composeAgent(presetId: string | undefined, sessionPolicy?: SessionPolicyId): Promise<{
     agentPreset?: string
     setup: (agentCtx: Context) => Promise<void>
   }> {
-    if (sessionMode === 'advisory') {
+    if (sessionPolicy !== undefined && !ctx.agents.requirePolicy(sessionPolicy).presets) {
       return {
-        setup: (agentCtx: Context) => {
-          agentCtx.inject(['tools', 'systemPrompt'], (scope) => {
-            // Code Mode's transport is appended after normal restrictions;
-            // advisory policy is stricter than presentation, so pin native.
-            scope.tools.presentAs('native')
-            scope.tools.denyAllTools()
-            scope.systemPrompt.suppressRuntimeContext()
-            scope.systemPrompt.section({
-              name: 'deployment:persona',
-              order: 0,
-              text: 'You are an advisory reviewer. Review supplied evidence and report findings without tools or host context.',
-              complete: true,
-            })
-          })
-          return Promise.resolve()
-        },
+        setup: () => Promise.resolve(),
       }
     }
     const presets = ctx.get('agentPresets')
@@ -1455,7 +1431,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
   const resolveAgent = createApiRemoteAgentResolver(ctx, {
     agentOptions,
     setup: async ({ meta, events }) =>
-      (await composeAgent(resolveSessionPreset({ header: meta, events }), meta.sessionMode)).setup,
+      (await composeAgent(resolveSessionPreset({ header: meta, events }), meta.sessionPolicy)).setup,
     retainHandle: rememberAgentHandle,
   })
   const agentFor: typeof resolveAgent = sessionId =>
@@ -1811,7 +1787,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     cwd: string | undefined,
     checkPersistedIdentity: boolean,
     presetId?: string,
-    sessionMode?: 'advisory',
+    sessionPolicy?: SessionPolicyId,
   ): Promise<Agent> {
     let creation = sessionCreations.get(sessionId)
     if (creation === undefined) {
@@ -1838,15 +1814,15 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           // Resolved from the log, not the header: a session that switched
           // while blank ran every turn under the newer composition.
           const storedPreset = resolveSessionPreset({ header: inspected.meta, events: inspected.events })
-          if (inspected.meta.sessionMode !== sessionMode) {
-            throw new SessionModeConflict(
+          if (inspected.meta.sessionPolicy !== sessionPolicy) {
+            throw new SessionPolicyConflict(
               sessionId,
-              sessionMode ?? 'ordinary',
-              inspected.meta.sessionMode ?? 'ordinary',
+              sessionPolicy ?? 'ordinary',
+              inspected.meta.sessionPolicy ?? 'ordinary',
             )
           }
           if (inspected.meta.cwd !== cwd) {
-            if (cwd === undefined) throw new Error(`advisory session "${sessionId}" unexpectedly records a cwd`)
+            if (cwd === undefined) throw new Error(`session policy for "${sessionId}" forbids cwd`)
             throw new SessionCwdConflict(sessionId, cwd, inspected.meta.cwd)
           }
           assertPresetUnchanged(sessionId, presetId, storedPreset)
@@ -1857,7 +1833,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           return rememberAgentHandle(await ctx.agents.resume({
             resumeSessionId: sessionId,
             agentOptions: agentOptions(),
-            setup: (await composeAgent(storedPreset, inspected.meta.sessionMode)).setup,
+            setup: (await composeAgent(storedPreset, inspected.meta.sessionPolicy)).setup,
           }))
         }
 
@@ -1866,13 +1842,13 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         } catch (error: unknown) {
           throw new Error(`failed to ensure project directory "${cwd}": ${String(error)}`, { cause: error })
         }
-        const composition = await composeAgent(presetId, sessionMode)
+        const composition = await composeAgent(presetId, sessionPolicy)
         return rememberAgentHandle(await ctx.agents.create({
           sessionId,
           agentOptions: agentOptions(),
           meta: {
             ...cwd === undefined ? {} : { cwd },
-            ...sessionMode === undefined ? {} : { sessionMode },
+            ...sessionPolicy === undefined ? {} : { sessionPolicy },
             ...composition.agentPreset === undefined ? {} : { agentPreset: composition.agentPreset },
           },
           setup: composition.setup,
@@ -1897,11 +1873,11 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     }
     const agent = await creation
     if (hasSubagentOwner(agent.session, agent)) throw new SubagentSessionOwnership(sessionId)
-    if (agent.session.header.sessionMode !== sessionMode) {
-      throw new SessionModeConflict(
+    if (agent.session.header.sessionPolicy !== sessionPolicy) {
+      throw new SessionPolicyConflict(
         sessionId,
-        sessionMode ?? 'ordinary',
-        agent.session.header.sessionMode ?? 'ordinary',
+        sessionPolicy ?? 'ordinary',
+        agent.session.header.sessionPolicy ?? 'ordinary',
       )
     }
     // Beside the cwd check for the same reason, and after the await so it
@@ -1909,7 +1885,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     // live, resumed from disk, or recovered by the concurrent-creation catch.
     assertPresetUnchanged(sessionId, presetId, resolveSessionPreset(agent.session))
     if (agent.session.header.cwd !== cwd) {
-      if (cwd === undefined) throw new Error(`advisory session "${sessionId}" unexpectedly records a cwd`)
+      if (cwd === undefined) throw new Error(`session policy for "${sessionId}" forbids cwd`)
       throw new SessionCwdConflict(sessionId, cwd, agent.session.header.cwd)
     }
     return agent
@@ -2351,15 +2327,20 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       async create(request) {
         return serializeWorkspaceOperation(async () => {
           const sessionId = request.payload.sessionId ?? `session-${randomUUID()}` as SessionId
-          const sessionMode = request.payload.sessionMode
-          if (sessionMode === 'advisory' && (
-            request.payload.workspaceId !== undefined
-            || request.payload.cwd !== undefined
-            || request.payload.agentPreset !== undefined
+          const sessionPolicy = request.payload.sessionPolicy
+          let policy
+          try {
+            policy = sessionPolicy === undefined ? undefined : ctx.agents.requirePolicy(sessionPolicy)
+          } catch (error: unknown) {
+            return err(request, { code: 'session-policy-unavailable', message: String(error), details: {} })
+          }
+          if (policy !== undefined && (
+            (!policy.workspace && (request.payload.workspaceId !== undefined || request.payload.cwd !== undefined))
+            || (!policy.presets && request.payload.agentPreset !== undefined)
           )) {
             return err(request, {
-              code: 'advisory-session-invalid',
-              message: 'advisory session.create does not accept workspaceId, cwd, or agentPreset',
+              code: 'session-policy-invalid',
+              message: 'session.create inputs conflict with the requested policy',
               details: {},
             })
           }
@@ -2374,14 +2355,14 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
               })
             }
           }
-          const cwd = sessionMode === 'advisory' ? undefined : workspace?.path ?? request.payload.cwd ?? defaults.cwd
+          const cwd = policy?.workspace === false ? undefined : workspace?.path ?? request.payload.cwd ?? defaults.cwd
           const requestedPreset = request.payload.agentPreset
           try {
-            await ensureSession(sessionId, cwd, request.payload.sessionId !== undefined, requestedPreset, sessionMode)
+            await ensureSession(sessionId, cwd, request.payload.sessionId !== undefined, requestedPreset, sessionPolicy)
           } catch (error: unknown) {
-            if (error instanceof SessionModeConflict) {
+            if (error instanceof SessionPolicyConflict) {
               return err(request, {
-                code: 'session-mode-conflict',
+                code: 'session-policy-conflict',
                 message: error.message,
                 details: {
                   sessionId: error.sessionId,
@@ -2444,26 +2425,28 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           // allowed and the row `session.list` serves for the same session.
           const created = ctx.agents.get(sessionId)
           const createdPreset = created === undefined ? undefined : resolveSessionPreset(created.session)
+          const installedPolicy = ctx.agents.policyFor(sessionId)
           return ok(request, {
             sessionId,
             ...createdPreset === undefined ? {} : { agentPreset: createdPreset },
-            ...sessionMode === 'advisory' ? { toolPolicy: ADVISORY_TOOL_POLICY } : {},
+            ...installedPolicy === undefined ? {} : { policy: { id: installedPolicy.id, attestation: installedPolicy.attestation } },
           })
         })
       },
 
-      async getToolPolicy(request) {
-        const live = ctx.sessions.get(request.payload.sessionId)
+      async getPolicy(request) {
         try {
-          const header = live?.header ?? (await inspectServable(request.payload.sessionId)).meta
-          if (header.sessionMode !== 'advisory') {
+          const found = await agentFor(request.payload.sessionId)
+          if ('error' in found) return err(request, found.error)
+          const policy = ctx.agents.policyFor(found.agent.id)
+          if (policy === undefined) {
             return err(request, {
-              code: 'session-not-advisory',
-              message: `session "${request.payload.sessionId}" is not advisory`,
+              code: 'session-policy-unavailable',
+              message: `session "${request.payload.sessionId}" has no policy`,
               details: { sessionId: request.payload.sessionId },
             })
           }
-          return ok(request, ADVISORY_TOOL_POLICY)
+          return ok(request, { id: policy.id, attestation: policy.attestation })
         } catch (error: unknown) {
           if (error instanceof SessionNotFound) {
             return err(request, {
@@ -2474,7 +2457,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           }
           return err(request, {
             code: 'internal',
-            message: `failed to read advisory policy: ${String(error)}`,
+            message: `failed to read session policy: ${String(error)}`,
             details: {},
           })
         }
@@ -2620,10 +2603,10 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             details: {},
           })
         }
-        if (source.header.sessionMode === 'advisory') {
+        if (source.header.sessionPolicy !== undefined && !ctx.agents.requirePolicy(source.header.sessionPolicy).fork) {
           return err(request, {
-            code: 'advisory-session-invalid',
-            message: `advisory session "${sessionId}" cannot be forked`,
+            code: 'session-policy-invalid',
+            message: `session policy for "${sessionId}" forbids forking`,
             details: {},
           })
         }
@@ -2670,13 +2653,14 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         // those tools, and composing anything else would strand the tool calls
         // it already carries. Now that no model-facing row sits in the host
         // plane, composing nothing would leave the child with no tools at all.
-        const forkComposition = await composeAgent(resolveSessionPreset(source))
+        const forkComposition = await composeAgent(resolveSessionPreset(source), source.header.sessionPolicy)
         try {
           rememberAgentHandle(await ctx.agents.create({
             sessionId: childId,
             seed: events.slice(0, cut),
             meta: {
               ...source.header.cwd === undefined ? {} : { cwd: source.header.cwd },
+              ...source.header.sessionPolicy === undefined ? {} : { sessionPolicy: source.header.sessionPolicy },
               parentSession: source.id,
               seedLength: cut,
               ...forkComposition.agentPreset === undefined
@@ -3208,7 +3192,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           attachedSessions: ctx.agents.list().length,
           home: homedir(),
           canOpenPath: canOpenPaths(),
-          advisoryPolicyVersions: [1],
+          sessionPolicies: ctx.agents.policyIds(),
         }))
       },
 
@@ -3362,10 +3346,10 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         const found = await agentFor(sessionId)
         if ('error' in found) return err(request, found.error)
         const { agent } = found
-        if (agent.session.header.sessionMode === 'advisory') {
+        if (ctx.agents.policyFor(agent.id)?.presets === false) {
           return err(request, {
-            code: 'advisory-session-invalid',
-            message: `advisory session "${sessionId}" cannot select an agent preset`,
+            code: 'session-policy-invalid',
+            message: `session policy for "${sessionId}" forbids agent presets`,
             details: {},
           })
         }

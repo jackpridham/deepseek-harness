@@ -55,8 +55,17 @@ export function SessionId(id: string): SessionId {
  */
 export const SESSION_FORMAT_VERSION = 0
 
-/** A session whose host-owned execution policy differs from the ordinary default. */
-export type SessionMode = 'advisory'
+/** Identifies a deployment-provided, versioned session policy. */
+export type SessionPolicyId = Branded<'SessionPolicyId'>
+
+/**
+ * Brand a policy identifier; providers use a new id when their guarantees change.
+ * @param id - the deployment's versioned policy identifier.
+ * @returns the same string, branded.
+ */
+export function SessionPolicyId(id: string): SessionPolicyId {
+  return id as SessionPolicyId
+}
 
 /**
  * Immutable validated storage metadata, kept outside the conversation event log.
@@ -75,10 +84,10 @@ export interface SessionHeader {
   /** Absolute working directory the session was created in (if any). */
   readonly cwd?: string
   /**
-   * Host-owned session policy. Absent is the ordinary mode; an advisory mode
-   * survives persistence so a reload cannot restore executable capabilities.
+   * Immutable policy provider required before an agent can enter the registry.
+   * Absent selects ordinary agent composition.
    */
-  readonly sessionMode?: SessionMode
+  readonly sessionPolicy?: SessionPolicyId
   /** The session this one was forked from (seed lineage), if any. */
   readonly parentSession?: SessionId
   /**
@@ -120,7 +129,7 @@ export interface CreateSessionOptions {
    */
   readonly meta?: {
     readonly cwd?: string
-    readonly sessionMode?: SessionMode
+    readonly sessionPolicy?: SessionPolicyId
     readonly parentSession?: SessionId
     readonly createdAt?: number
     readonly seedLength?: number

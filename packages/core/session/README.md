@@ -10,6 +10,8 @@ The optional `@deepseek-ai/dsh-session/invariant` companion registers this packa
 
 Creates and holds event-sourced `Session` instances. Persistence is intentionally not implemented here — plugins subscribe to `session/event`, flush on `session/flush`, and may mirror the paired `session/created`/`session/disposed` lifecycle.
 
+`SessionHeader.sessionPolicy` is an immutable, non-empty provider identifier. Forks retain it; the agent registry requires that provider before admitting an agent. Storage validates the identifier without executing deployment policy. Headers carrying the retired `sessionMode` field reject rather than silently discarding execution restrictions.
+
 ### Public API
 
 - `ctx.sessions.create(id?, { seed?, meta? }?)` validates and detaches durable seed/header data, fills the version and id, defaults `createdAt` to now, publishes the session, and binds it to the calling fiber. Persisted reconstruction supplies its original `createdAt`, `seedLength`, and `delegationDepth`.
