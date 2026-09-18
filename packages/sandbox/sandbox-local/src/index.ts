@@ -323,6 +323,9 @@ export class LocalSandboxProvider extends SandboxProvider {
       }
     }
     const selected = this.selectRunner(policy.mode)
+    if ((policy.protectedPaths?.length ?? 0) > 0 && selected.runner !== 'bwrap') {
+      throw new SandboxUnavailableError(policy.mode, `runner "${selected.runner}" cannot hide deployment protected paths; bubblewrap is required for this lower-permission policy`)
+    }
     const runnerArgv = this.runnerArgv(selected.runner, policy)
     return {
       argv: [...runnerArgv, '--', ...argv],

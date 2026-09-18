@@ -18,7 +18,7 @@
  * @module @deepseek-ai/dsh-sandbox-policy
  */
 
-import { resolve as resolvePath } from 'node:path'
+import { isAbsolute, resolve as resolvePath, sep } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-agent'
@@ -72,6 +72,15 @@ export interface Config {
    * `process.cwd()`). Normal agent calls use their session cwd instead.
    */
   workspaceRoot?: string
+  /** Absolute host paths lower-permission sessions must not access. */
+  protectedPaths?: string[]
+}
+
+function protectedPath(path: string): string {
+  if (!isAbsolute(path)) throw new Error(`sandbox-policy: protectedPaths entries must be absolute: ${JSON.stringify(path)}`)
+  const normalized = resolvePath(canonicalPath(path))
+  if (normalized === sep) throw new Error('sandbox-policy: protectedPaths must not contain the filesystem root')
+  return normalized
 }
 
 /** Inputs that select the sandbox policy for one capability call. */
@@ -95,12 +104,14 @@ export class SandboxPolicyService extends Service {
     // No schema default: process.cwd() is resolved in the constructor so the
     // stored root is always absolute regardless of how it was supplied.
     workspaceRoot: z.string(),
+    protectedPaths: z.array(z.string()).default([]),
   })
 
   /** The deployment default mode — the fallback beneath a session override. */
   readonly defaultMode: SandboxMode
   /** The absolute `workspace-write` fallback root for calls without a session cwd. */
   readonly workspaceRoot: string
+  readonly protectedPaths: readonly string[]
   constructor(ctx: Context, config: Config) {
     super(ctx, 'sandboxPolicy')
     // schemastery (static Config) already filled `mode`; the cast records that
@@ -108,6 +119,7 @@ export class SandboxPolicyService extends Service {
     // the process cwd is real branching, resolved absolute either way.
     this.defaultMode = config.mode as SandboxMode
     this.workspaceRoot = resolveWorkspaceRoot(config.workspaceRoot ?? process.cwd())
+    this.protectedPaths = [...new Set((config.protectedPaths as string[]).map(protectedPath))]
 
     ctx.inject(['systemPrompt'], (scope: Context) => {
       scope.systemPrompt.context({
@@ -134,9 +146,11 @@ export class SandboxPolicyService extends Service {
    */
   resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy {
     const { session } = request
+    const mode = request.mode ?? (session === undefined ? undefined : this.overrideOf(session)) ?? this.defaultMode
     return {
-      mode: request.mode ?? (session === undefined ? undefined : this.overrideOf(session)) ?? this.defaultMode,
+      mode,
       workspaceRoot: resolveWorkspaceRoot(session?.header.cwd ?? this.workspaceRoot),
+      ...mode === 'danger-full-access' || this.protectedPaths.length === 0 ? {} : { protectedPaths: this.protectedPaths },
       ...session === undefined ? {} : { sessionId: session.id },
     }
   }

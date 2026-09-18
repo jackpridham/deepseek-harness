@@ -70,6 +70,15 @@ export class SandboxedFileSystem extends LocalFileSystem {
     return this.defaultMode
   }
 
+  override async resolve(
+    path: string,
+    opts?: { cwd?: string; signal?: AbortSignal; sandboxPolicy?: SandboxExecutionPolicy },
+  ): Promise<FsTarget> {
+    const target = await super.resolve(path, opts)
+    await this.assertVisible(target, opts?.sandboxPolicy)
+    return target
+  }
+
   /**
    * Fence the write by the per-call policy, then delegate to the inherited
    * atomic write. See {@link checkedTarget}.
@@ -125,6 +134,7 @@ export class SandboxedFileSystem extends LocalFileSystem {
    */
   private async checkedTarget(target: FsTarget, sandboxPolicy?: SandboxExecutionPolicy): Promise<FsTarget> {
     const policy = sandboxPolicy ?? this.ctx.sandboxPolicy.resolve()
+    await this.assertVisible(target, policy)
     const { mode } = policy
     if (mode === 'danger-full-access') return target
     if (mode === 'read-only') {
@@ -145,6 +155,16 @@ export class SandboxedFileSystem extends LocalFileSystem {
       throw new FsError(`cannot write "${target.displayPath}": file access denied under workspace-write mode`, 'FS_SANDBOX_DENIED')
     }
     return fresh
+  }
+
+  private async assertVisible(target: FsTarget, sandboxPolicy?: SandboxExecutionPolicy): Promise<void> {
+    const policy = sandboxPolicy ?? this.ctx.sandboxPolicy.resolve()
+    if (policy.mode === 'danger-full-access') return
+    for (const root of policy.protectedPaths ?? []) {
+      if (await isPathUnder(String(target.targetKey), root)) {
+        throw new FsError(`cannot access "${target.displayPath}": file access denied under ${policy.mode} mode`, 'FS_SANDBOX_DENIED')
+      }
+    }
   }
 }
 

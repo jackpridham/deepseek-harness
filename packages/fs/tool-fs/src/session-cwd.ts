@@ -10,6 +10,7 @@
 
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import { canonicalPath } from '@deepseek-ai/dsh-sandbox'
+import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
 
 const PARENT_PATH_SEGMENT = /(?:^|[\\/])\.\.(?:[\\/]|$)/
 
@@ -36,11 +37,12 @@ export function sessionCwd(exec: ToolExecution, requestedPath: string): string |
 export function sessionResolveOptions(
   exec: ToolExecution,
   requestedPath: string,
-  policyWorkspaceRoot?: string,
-): { cwd?: string; signal?: AbortSignal } {
-  const cwd = policyWorkspaceRoot ?? sessionCwd(exec, requestedPath)
+  policy?: SandboxExecutionPolicy,
+): { cwd?: string; signal?: AbortSignal; sandboxPolicy?: SandboxExecutionPolicy } {
+  const cwd = policy?.workspaceRoot ?? sessionCwd(exec, requestedPath)
   return {
     ...cwd !== undefined ? { cwd } : {},
     signal: exec.signal,
+    ...policy === undefined ? {} : { sandboxPolicy: policy },
   }
 }

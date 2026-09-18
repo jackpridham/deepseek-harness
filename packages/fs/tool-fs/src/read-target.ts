@@ -8,6 +8,7 @@ import { FsError } from '@deepseek-ai/dsh-fs'
 import type { FsInfo, FsTarget } from '@deepseek-ai/dsh-fs'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import { sessionResolveOptions } from './session-cwd.ts'
+import type {} from '@deepseek-ai/dsh-sandbox-policy'
 
 /**
  * Resolve a model-supplied path, observe absence, and require a regular file.
@@ -21,7 +22,10 @@ export async function resolveRegularReadTarget(
   exec: ToolExecution,
   requestedPath: string,
 ): Promise<{ target: FsTarget; info: FsInfo }> {
-  const target = await ctx.fs.resolve(requestedPath, sessionResolveOptions(exec, requestedPath))
+  const policy = ctx.fs.sandboxMode === undefined
+    ? undefined
+    : ctx.sandboxPolicy.resolve(exec.agent === undefined ? {} : { session: exec.agent.session })
+  const target = await ctx.fs.resolve(requestedPath, sessionResolveOptions(exec, requestedPath, policy))
   const info = await ctx.fs.stat(target, exec.signal)
   if (info === undefined) {
     ctx.emit('fs/observed', target, { kind: 'absent' }, exec)

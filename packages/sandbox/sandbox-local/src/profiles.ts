@@ -4,6 +4,7 @@
  * @module @deepseek-ai/dsh-sandbox-local/profiles
  */
 
+import { lstatSync } from 'node:fs'
 import { grantArgs as landlockGrantArgs } from '@deepseek-ai/node-addon-landlock-run'
 import { writableRoots } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
@@ -14,10 +15,20 @@ import type { SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
  * @returns profile arguments before the trailing separator and command argv.
  */
 export function bwrapProfileArgs(policy: SandboxPolicy): string[] {
-  const args = ['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--die-with-parent']
+  const args = ['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--unshare-pid', '--die-with-parent']
   if (policy.mode === 'workspace-write') {
     args.push('--tmpfs', '/tmp')
     args.push('--bind', policy.workspaceRoot, policy.workspaceRoot)
+  }
+  for (const path of policy.protectedPaths ?? []) {
+    try {
+      if (lstatSync(path).isDirectory()) args.push('--tmpfs', path)
+      else args.push('--ro-bind', '/dev/null', path)
+    } catch (error: unknown) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error
+      args.push('--tmpfs', path)
+    }
   }
   return args
 }
@@ -28,6 +39,7 @@ export function bwrapProfileArgs(policy: SandboxPolicy): string[] {
  * @returns launcher grant arguments before the trailing separator and command argv.
  */
 export function landlockProfileArgs(policy: SandboxPolicy): string[] {
+  if ((policy.protectedPaths?.length ?? 0) > 0) throw new Error('sandbox-local: Landlock cannot hide protected paths beneath its read-only root grant')
   const readWrite = ['/dev/null']
   if (policy.mode === 'workspace-write') {
     readWrite.push('/tmp', policy.workspaceRoot)

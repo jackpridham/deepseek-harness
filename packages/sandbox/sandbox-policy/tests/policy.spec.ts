@@ -14,7 +14,7 @@ import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SandboxPolicyService, { SANDBOX_MODES, effectiveSandboxMode, setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
 import SystemPrompt, { renderContextSnapshot, renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 
-async function mounted(config: { mode?: 'read-only' | 'workspace-write' | 'danger-full-access'; workspaceRoot?: string } = {}) {
+async function mounted(config: { mode?: 'read-only' | 'workspace-write' | 'danger-full-access'; workspaceRoot?: string; protectedPaths?: string[] } = {}) {
   const ctx = new Context()
   await ctx.plugin(SandboxPolicyService, config)
   return ctx
@@ -116,6 +116,14 @@ describe('SandboxPolicyService', () => {
       workspaceRoot: resolve('/projects/approved'),
       sessionId: 'sess-approved',
     })
+  })
+
+  it('carries protected paths only in lower modes', async () => {
+    const ctx = await mounted({ mode: 'workspace-write', workspaceRoot: '/fallback', protectedPaths: ['/run/docker.sock'] })
+    const active = session('protected', '/projects/protected')
+    expect(ctx.sandboxPolicy.resolve({ session: active }).protectedPaths).toEqual(['/run/docker.sock'])
+    setSandboxMode(active, 'danger-full-access')
+    expect(ctx.sandboxPolicy.resolve({ session: active }).protectedPaths).toBeUndefined()
   })
 
   it('uses the configured root when a session has no cwd', async () => {
