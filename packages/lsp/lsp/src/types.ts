@@ -8,6 +8,7 @@
  */
 
 import type { LspProviderId } from './brand.ts'
+import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
 
 /**
  * The four semantic queries the seam and model expose. A closed union: adding an operation is a
@@ -44,6 +45,8 @@ export interface LspQueryRequest {
   readonly position: LspPosition
   /** The workspace root the provider resolves against and indexes; required, never defaulted. */
   readonly workspaceRoot: string
+  /** Resolved per-session process policy for a provider that starts a server, when confinement is active. */
+  readonly sandboxPolicy?: SandboxExecutionPolicy
 }
 
 /**

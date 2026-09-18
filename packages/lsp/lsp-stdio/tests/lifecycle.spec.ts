@@ -6,6 +6,8 @@ import { join } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import Lsp, { type LspProvider, type LspQueryRequest, type LspQueryResult } from '@deepseek-ai/dsh-lsp'
+import SandboxProvider from '@deepseek-ai/dsh-sandbox'
+import type { ConfinedArgv, SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
 import { deadline } from '@deepseek-ai/dsh-timeout'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
@@ -13,6 +15,13 @@ import * as LspLocal from '@deepseek-ai/dsh-lsp-stdio'
 import type { LspLocalServerConfig } from '@deepseek-ai/dsh-lsp-stdio'
 
 const fixtureServer = fileURLToPath(new URL('./fixture-server.ts', import.meta.url))
+
+/** Test-only confinement provider that preserves argv while exercising policy propagation. */
+class PassthroughSandbox extends SandboxProvider {
+  confine(argv: readonly string[], _policy: SandboxPolicy): ConfinedArgv {
+    return { argv: [...argv], enforcement: 'full', denialSignatures: [], runnerFailureRules: [] }
+  }
+}
 
 let root: string
 let ws: string
@@ -434,6 +443,21 @@ describe('lsp-stdio end to end over a fake server', () => {
     ])
     expect(r1).toMatchObject({ kind: 'locations' })
     expect(r2).toMatchObject({ kind: 'locations' })
+    await ctx.fiber.dispose()
+  })
+
+  it('does not reuse a server across process-policy identities', async () => {
+    const ctx = await mount({ LSP_FAKE_DEF: 'null' })
+    await ctx.plugin(PassthroughSandbox)
+    const spawn = vi.spyOn(ctx.subprocess, 'spawn')
+    const first = { mode: 'read-only' as const, workspaceRoot: ws, protectedPaths: ['/secret-a'] }
+    const second = { mode: 'workspace-write' as const, workspaceRoot: ws, protectedPaths: ['/secret-b'] }
+
+    await ctx.lsp.query({ ...query('goToDefinition'), sandboxPolicy: first })
+    await ctx.lsp.query({ ...query('goToDefinition'), sandboxPolicy: second })
+
+    expect(spawn).toHaveBeenCalledTimes(2)
+    expect(spawn.mock.calls.map(([spec]) => spec.sandboxPolicy)).toEqual([first, second])
     await ctx.fiber.dispose()
   })
 

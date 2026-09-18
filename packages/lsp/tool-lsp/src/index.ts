@@ -16,6 +16,9 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { assertNever } from '@deepseek-ai/dsh-llm'
 import { LspError } from '@deepseek-ai/dsh-lsp'
 import type {} from '@deepseek-ai/dsh-lsp'
+import type {} from '@deepseek-ai/dsh-fs'
+import type { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
+import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import {
@@ -100,6 +103,12 @@ export function apply(ctx: Context, config: Config): void {
   assertPositiveInteger('maxLocations', resolved.maxLocations)
   assertPositiveInteger('maxResultChars', resolved.maxResultChars)
   assertTimer('timeoutMs', resolved.timeoutMs)
+  const sandboxPolicy: SandboxPolicyService | undefined = ctx.get('fs')?.sandboxMode === undefined
+    ? undefined
+    : ctx.get('sandboxPolicy')
+  if (ctx.get('fs')?.sandboxMode !== undefined && sandboxPolicy === undefined) {
+    throw new Error('tool-lsp: the mounted filesystem confines but ctx.sandboxPolicy is missing')
+  }
 
   ctx.systemPrompt.section({ name: 'tool:lsp', order: 112, text: LSP_PROMPT_TEXT })
 
@@ -188,6 +197,9 @@ export function apply(ctx: Context, config: Config): void {
         filePath: input.filePath,
         position: input.position,
         workspaceRoot,
+        ...sandboxPolicy === undefined
+          ? {}
+          : { sandboxPolicy: sandboxPolicy.resolve(exec.agent === undefined ? {} : { session: exec.agent.session }) },
       }, exec.signal)
       switch (result.kind) {
         case 'locations':

@@ -4,7 +4,9 @@ import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
+import { LocalFileSystem } from '@deepseek-ai/dsh-fs-local'
 import Lsp, { LspProviderId, type LspProvider, type LspProviderQuery, type LspQueryResult } from '@deepseek-ai/dsh-lsp'
+import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import * as ToolLsp from '@deepseek-ai/dsh-tool-lsp'
 import { DEFAULT_LSP_TOOL_TIMEOUT_MS, LSP_PROMPT_TEXT } from '@deepseek-ai/dsh-tool-lsp'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
@@ -26,15 +28,25 @@ function stubProvider(
   }
 }
 
+/** A test filesystem that reports active confinement without changing local reads. */
+class ConfiningFs extends LocalFileSystem {
+  override get sandboxMode() { return 'workspace-write' as const }
+}
+
 /** Mount the real tool stack over a real seam plus one stub provider. */
 async function mount(
   provider?: LspProvider,
   config: ToolLsp.Config = {},
+  confining = false,
 ): Promise<{ ctx: Context }> {
   const ctx = new Context()
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(Lsp)
+  if (confining) {
+    await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write' })
+    await ctx.plugin(ConfiningFs, { cwd: process.cwd() })
+  }
   if (provider) (ctx.lsp as Lsp).registerProvider(provider)
   await ctx.plugin(ToolLsp, config)
   return { ctx }
@@ -53,7 +65,7 @@ function call(ctx: Context, args: unknown, cwd: string | null = workspaceRoot) {
     callId: `c-${++seq}` as never,
     name: 'lsp',
     arguments: args,
-    ...cwd !== null ? { agent: { session: { header: { cwd } } } as never } : {},
+    ...cwd !== null ? { agent: { session: { header: { cwd }, events: [] } } as never } : {},
   })
 }
 
@@ -121,6 +133,13 @@ describe('tool-lsp execution', () => {
       position: { line: 2, character: 4 },
       workspaceRoot,
     })
+  })
+
+  it('resolves and forwards the calling session policy when the filesystem confines', async () => {
+    const provider = stubProvider(() => okLocations)
+    const { ctx } = await mount(provider, {}, true)
+    await call(ctx, { operation: 'goToDefinition', file_path: 'a.ts', line: 1, character: 1 }, workspaceRoot)
+    expect(provider.seen[0]?.sandboxPolicy).toMatchObject({ mode: 'workspace-write', workspaceRoot })
   })
 
   it('renders locations relative to the workspace', async () => {

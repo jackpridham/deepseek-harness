@@ -87,6 +87,7 @@ export interface Config {
 /** One server config after schemastery fills every default. */
 type ResolvedServerConfig = Required<LspLocalServerConfig>
 type WorkspaceKey = HostWorkspace['target']['targetKey']
+type InstanceKey = string
 
 const LspLocalServerConfig: z<LspLocalServerConfig> = z.object({
   command: z.string().required(),
@@ -217,10 +218,10 @@ function assertPositiveInteger(providerId: string, name: string, value: number):
 class LocalLspProvider implements LspProvider {
   readonly id: LspProviderId
   readonly extensionToLanguage: Readonly<Record<string, string>>
-  /** One live instance per stable canonical workspace identity. */
-  private readonly instances = new Map<WorkspaceKey, LspInstance>()
-  /** One complete source-read→open→query→close serialization tail per canonical workspace. */
-  private readonly queues = new Map<WorkspaceKey, Promise<void>>()
+  /** One live instance per stable canonical workspace and process-policy identity. */
+  private readonly instances = new Map<InstanceKey, LspInstance>()
+  /** One complete source-read→open→query→close serialization tail per cache identity. */
+  private readonly queues = new Map<InstanceKey, Promise<void>>()
   /** Workspace canonicalizations that have not entered a provider-owned queue yet. */
   private readonly workspaceLookups = new Set<Promise<void>>()
   private readonly lifetime = new AbortController()
@@ -271,7 +272,7 @@ class LocalLspProvider implements LspProvider {
       this.workspaceLookups.delete(workspaceLookup)
     }
     this.assertActive(querySignal)
-    const workspaceKey = workspace.target.targetKey
+    const workspaceKey = instanceKey(workspace.target.targetKey, request.sandboxPolicy)
     return this.enqueue(workspaceKey, querySignal, async () => {
       this.assertActive(querySignal)
       // Read inside the workspace queue but before spawning: a queued query sees current bytes when
@@ -280,7 +281,7 @@ class LocalLspProvider implements LspProvider {
       // Disposal may have snapshotted the instance map while host I/O was pending. Re-check before a
       // synchronous get-or-create so every spawned process remains owned by teardown.
       this.assertActive(querySignal)
-      let instance = this.instanceFor(workspaceKey, workspace)
+      let instance = this.instanceFor(workspaceKey, workspace, request.sandboxPolicy)
       try {
         return await instance.query(request, source, querySignal)
       } catch (error) {
@@ -290,7 +291,7 @@ class LocalLspProvider implements LspProvider {
         await instance.dispose()
         this.evictIfCurrent(workspaceKey, instance)
         this.assertActive(querySignal)
-        instance = this.instanceFor(workspaceKey, workspace)
+        instance = this.instanceFor(workspaceKey, workspace, request.sandboxPolicy)
         return await instance.query(request, source, querySignal)
       } finally {
         // Reach quiescence before dropping a dead slot; a replacement must survive this ownership check.
@@ -302,8 +303,8 @@ class LocalLspProvider implements LspProvider {
     })
   }
 
-  /** Serialize one complete query lifecycle for a canonical workspace. */
-  private enqueue<T>(workspace: WorkspaceKey, signal: AbortSignal | undefined, run: () => Promise<T>): Promise<T> {
+  /** Serialize one complete query lifecycle for a cache identity. */
+  private enqueue<T>(workspace: InstanceKey, signal: AbortSignal | undefined, run: () => Promise<T>): Promise<T> {
     const previous = this.queues.get(workspace) ?? Promise.resolve()
     const result = abortable(previous, signal).then(run)
     // The tail follows the actual prior work even when this caller aborts its wait. It never rejects,
@@ -316,23 +317,23 @@ class LocalLspProvider implements LspProvider {
     return result
   }
 
-  /** Return or synchronously publish the one instance for a canonical workspace. */
-  private instanceFor(workspaceKey: WorkspaceKey, workspace: HostWorkspace): LspInstance {
+  /** Return or synchronously publish the one instance for a cache identity. */
+  private instanceFor(workspaceKey: InstanceKey, workspace: HostWorkspace, sandboxPolicy?: LspProviderQuery['sandboxPolicy']): LspInstance {
     this.assertActive()
     const existing = this.instances.get(workspaceKey)
     if (existing !== undefined) return existing
-    const created = this.createInstance(workspace)
+    const created = this.createInstance(workspace, sandboxPolicy)
     this.instances.set(workspaceKey, created)
     return created
   }
 
   /** Drop the slot iff it still contains this instance. */
-  private evictIfCurrent(workspace: WorkspaceKey, instance: LspInstance): void {
+  private evictIfCurrent(workspace: InstanceKey, instance: LspInstance): void {
     /* v8 ignore next -- mismatch requires another query to replace the slot before this finally runs. */
     if (this.instances.get(workspace) === instance) this.instances.delete(workspace)
   }
 
-  private createInstance(workspace: HostWorkspace): LspInstance {
+  private createInstance(workspace: HostWorkspace, sandboxPolicy?: LspProviderQuery['sandboxPolicy']): LspInstance {
     const spec: InstanceSpec = {
       command: this.executable,
       args: this.config.args,
@@ -345,6 +346,7 @@ class LocalLspProvider implements LspProvider {
       maxStderrBytes: this.config.maxStderrBytes,
       shutdownTimeoutMs: this.config.shutdownTimeoutMs,
       killGraceMs: this.config.killGraceMs,
+      sandboxPolicy,
     }
     return new LspInstance(spec, this.spawner)
   }
@@ -366,4 +368,9 @@ class LocalLspProvider implements LspProvider {
     this.workspaceLookups.clear()
     throwTeardownFailures(results, 'lsp-stdio instance teardown failed')
   }
+}
+
+/** Cache policy identity alongside canonical workspace identity so a server never crosses session confinement. */
+function instanceKey(workspace: WorkspaceKey, policy: LspProviderQuery['sandboxPolicy']): InstanceKey {
+  return JSON.stringify([workspace, policy?.mode, policy?.workspaceRoot, policy?.protectedPaths])
 }

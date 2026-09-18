@@ -12,6 +12,7 @@
 
 import type { Writable } from 'node:stream'
 import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
 import { encodeMessage, MessageDecoder } from './framing.ts'
 
 /** How to launch the server and answer its config requests. */
@@ -36,6 +37,8 @@ export interface ConnectionSpec {
   readonly killGraceMs: number
   /** Static answer to every `workspace/configuration` item. */
   readonly configuration: unknown
+  /** Resolved policy applied to this server process when the caller is confined. */
+  readonly sandboxPolicy?: SandboxExecutionPolicy
 }
 
 interface Pending {
@@ -101,6 +104,7 @@ export class LspConnection {
       // The seam merges explicit config entries after its ambient scrub, so a
       // configured credential or DSH_* fact reaches the child deliberately.
       env: spec.env,
+      sandboxPolicy: spec.sandboxPolicy,
     })
     /* v8 ignore start -- 'pipe' dispositions expose both streams by the seam contract; defensive. */
     if (this.handle.stdin === undefined || this.handle.stdout === undefined) {
