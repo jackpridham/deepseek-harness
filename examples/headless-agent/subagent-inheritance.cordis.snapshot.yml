@@ -20,6 +20,7 @@
     mode: danger-full-access
     workspaceRoot: !!js process.cwd()
     protectedPaths:
+      - !!js process.env.DSH_SNAPSHOT_PROTECTED_ROOT
       - !!js process.cwd() + '/protected'
 
 - id: fs-sandbox

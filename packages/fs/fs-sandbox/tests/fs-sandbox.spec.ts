@@ -9,7 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, parse } from 'node:path'
@@ -163,6 +163,36 @@ describe('workspace-write containment', () => {
     // isUnder's path-equals-root branch: the fence allows the root, and the
     // write then fails because the root is a directory, not a regular file.
     await expect(fs.writeText(await target(workspace), 'x')).rejects.toMatchObject({ code: 'FS_NOT_REGULAR_FILE' })
+  })
+})
+
+describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('inaccessible protected roots', () => {
+  it('allows unrelated workspace operations while denying the inaccessible ancestor and its aliases', async () => {
+    const locked = join(outside, 'private-home')
+    await mkdir(locked)
+    await mkdir(join(locked, '.ssh'))
+    await symlink(locked, join(workspace, 'private-alias'))
+    await chmod(locked, 0o000)
+    ctx = new Context()
+    try {
+      await ctx.plugin(SandboxPolicyService, {
+        mode: 'workspace-write', workspaceRoot: workspace, protectedPaths: [join(locked, '.ssh')],
+      })
+      fiber = await ctx.plugin(SandboxedFileSystem, { cwd: workspace })
+      fs = ctx.fs as SandboxedFileSystem
+      const file = await fs.resolve(join(workspace, 'allowed.txt'))
+      await fs.writeText(file, 'initial')
+      await fs.editText(file, { oldString: 'initial', newString: 'edited', replaceAll: false })
+      expect(await fs.readText(file)).toBe('edited')
+      for (const path of [locked, join(workspace, 'private-alias')]) {
+        await expect(fs.resolve(path)).rejects.toMatchObject({ code: 'FS_SANDBOX_DENIED' })
+      }
+      await expect(fs.writeText(file, 'denied', undefined, undefined, {
+        mode: 'read-only', workspaceRoot: workspace, protectedPaths: [join(locked, '.ssh')],
+      })).rejects.toMatchObject({ code: 'FS_SANDBOX_DENIED' })
+    } finally {
+      await chmod(locked, 0o700)
+    }
   })
 })
 

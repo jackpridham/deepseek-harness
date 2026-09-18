@@ -3,9 +3,9 @@
  * `@deepseek-ai/dsh-fs` Service Definition. It extends `LocalFileSystem` so all
  * text-storage mechanics — resolve, stat, read/stream, list, the atomic
  * write and the read-match-write edit critical section — are the local
- * implementation's, verbatim; this package adds only the per-call POLICY fence
- * on the two mutations. Reads pass through untouched: every mode permits
- * reading.
+ * implementation's, verbatim; this package adds the per-call POLICY fence on
+ * the two mutations and hides deployment-protected paths from lower modes.
+ * Other reads pass through untouched.
  *
  * The fence is a policy check in TRUSTED code over a MODEL-CONTROLLED path,
  * NOT a kernel boundary — the operations are the seam's own (open, rename),
@@ -38,7 +38,7 @@ import type { FsEditOutcome, FsEditRequest, FsTarget, FsVersion, FsWriteIntent, 
 import { writableRoots } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandbox'
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
-import { isPathUnder } from './containment.ts'
+import { isPathUnder, isProtectedPath } from './containment.ts'
 
 /**
  * Plugin config: the local backend's knobs verbatim (`cwd` resolution default
@@ -161,7 +161,7 @@ export class SandboxedFileSystem extends LocalFileSystem {
     const policy = sandboxPolicy ?? this.ctx.sandboxPolicy.resolve()
     if (policy.mode === 'danger-full-access') return
     for (const root of policy.protectedPaths ?? []) {
-      if (await isPathUnder(String(target.targetKey), root)) {
+      if (await isProtectedPath(String(target.targetKey), root)) {
         throw new FsError(`cannot access "${target.displayPath}": file access denied under ${policy.mode} mode`, 'FS_SANDBOX_DENIED')
       }
     }

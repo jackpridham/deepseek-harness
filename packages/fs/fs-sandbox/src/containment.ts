@@ -10,6 +10,7 @@ import { stat } from 'node:fs/promises'
 import { dirname, sep } from 'node:path'
 
 const MISSING_CODES: ReadonlySet<NodeJS.ErrnoException['code']> = new Set(['ENOENT', 'ENOTDIR'])
+const INACCESSIBLE_CODES: ReadonlySet<NodeJS.ErrnoException['code']> = new Set(['EACCES', 'EPERM'])
 
 function isMissing(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException).code
@@ -32,9 +33,7 @@ async function statIfPresent(path: string): Promise<BigIntStats | undefined> {
   try {
     return await stat(path, { bigint: true })
   } catch (error: unknown) {
-    /* v8 ignore else -- a non-missing stat failure requires a host permission or I/O fault after resolve reached this ancestor. */
     if (isMissing(error)) return undefined
-    /* v8 ignore next -- requires a host permission or I/O fault after resolve already reached this ancestor. */
     throw error
   }
 }
@@ -72,5 +71,27 @@ export async function isPathUnder(
     const parent = dirname(ancestor)
     if (parent === ancestor) return false
     ancestor = parent
+  }
+}
+
+/**
+ * Match a protected root, conservatively protecting its nearest stat-able
+ * ancestor when account permissions prevent inspecting the root itself.
+ * This deny-only expansion must not be used to compute writable grants.
+ * @param path - canonical target key.
+ * @param root - configured protected root.
+ * @returns whether the target is within the protected root or ancestor.
+ */
+export async function isProtectedPath(path: string, root: string): Promise<boolean> {
+  let candidate = root
+  for (;;) {
+    try {
+      return await isPathUnder(path, candidate)
+    } catch (error: unknown) {
+      const failure = error as NodeJS.ErrnoException
+      /* v8 ignore next -- requires a protected-root stat I/O fault other than absence or account permissions. */
+      if (!INACCESSIBLE_CODES.has(failure.code)) throw error
+      candidate = dirname(candidate)
+    }
   }
 }

@@ -3,7 +3,8 @@
  * its child log and confines a real write under a wider deployment default.
  */
 
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
@@ -12,7 +13,7 @@ import { LOADER_SMOKE_TEST_TIMEOUT_MS, runLoaderSmoke } from '@deepseek-ai/dsh-l
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SESSION_FORMAT_VERSION, SessionId, type SessionEvent, type SessionHeader } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 const fixtureDir = fileURLToPath(new URL('./subagent-inheritance-snapshots/parent-override', import.meta.url))
 const replayOverride = join(fixtureDir, 'replay.override.json')
@@ -25,6 +26,18 @@ const tsconfigPath = fileURLToPath(new URL('../../../tsconfig.json', import.meta
 const sessionId = SessionId('subagent-inheritance-parent')
 const refreshing = process.env.DSH_SNAPSHOT === 'refresh'
 const task = 'Delegate the write probe to a subagent.'
+let privateHome: string
+
+beforeEach(async () => {
+  privateHome = await mkdtemp(join(tmpdir(), 'dsh-inaccessible-home-'))
+  await mkdir(join(privateHome, '.ssh'))
+  await chmod(privateHome, 0o000)
+})
+
+afterEach(async () => {
+  await chmod(privateHome, 0o700)
+  await rm(privateHome, { recursive: true, force: true })
+})
 
 /** Seed a completed parent turn with the lower policy the child must inherit. */
 async function seedReadOnlyParent(root: string, cwd: string): Promise<void> {
@@ -69,6 +82,7 @@ describe('parent-only override inheritance snapshot', () => {
         DSH_SNAPSHOT_FILE: replayOverride,
         DSH_SNAPSHOT_OVERRIDE: replayOverride,
         DSH_SNAPSHOT_CHILD_FILES: childReplay,
+        DSH_SNAPSHOT_PROTECTED_ROOT: join(privateHome, '.ssh'),
       },
       prepare: async (runCwd) => {
         cwd = runCwd
@@ -77,6 +91,7 @@ describe('parent-only override inheritance snapshot', () => {
         await seedReadOnlyParent(join(runCwd, '.sessions'), runCwd)
       },
       inspect: async (runCwd) => {
+        await expect(readFile(join(runCwd, 'allowed.txt'), 'utf8')).resolves.toBe('workspace write without approval')
         // The protected credential survives the child's workspace-write
         // attempt. Without inherited lower policy the full-access default
         // would overwrite it.
@@ -91,6 +106,8 @@ describe('parent-only override inheritance snapshot', () => {
         const parent = logs.find(content => content.includes('"subagent-inheritance-parent"'))
         const child = logs.find(content => typeof headerOf(content).parentSession === 'string')
         if (parent === undefined || child === undefined) throw new Error('missing persisted parent or child log')
+        expect(parent).not.toContain('"type":"approval/asked"')
+        expect(parent).not.toContain('EACCES')
 
         const childRecords = child.trimEnd().split('\n').map(
           line => JSON.parse(line) as Record<string, unknown>,
