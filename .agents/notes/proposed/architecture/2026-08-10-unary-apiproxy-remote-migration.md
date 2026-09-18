@@ -101,7 +101,7 @@ The final commit generates every `/remote` artifact from a clean state, updates 
 
 **Preserve every legacy RPC name and response envelope.** That would turn business packages into copies of the old protocol. Service-oriented names and business values let the Client own joins while Connection continues to own the one RPC envelope.
 
-**Trust the API Proxy fallback to enforce privileged methods.** Interceptor selection bypasses that fallback, so this would silently widen authority for migrated methods.
+**Recreate a loopback-only method list in migrated Remotes.** Rejected because the [complete trusted-authority API](../../implemented/simplification/2026-09-18-complete-trusted-authority-api.md) deliberately gives declared authorities one coherent surface.
 
 ## Acceptance criteria
 

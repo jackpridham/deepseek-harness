@@ -6,7 +6,7 @@ English | [中文](2026-07-30-config-plane-boundaries.zh.md)
 
 > Scope: boundary hardening of the [web configuration plane](2026-07-30-web-config-plane.md) — which namespaces reach the wire, which callers reach them, and how an editor holding a partial, possibly stale view writes without destroying what it cannot see.
 
-> The caller boundary, the redaction, and the revision fencing remain current. Restricting which namespaces reach the wire to the configurable-provider directory is superseded by the [plugin-owned settings surface](2026-08-12-plugin-owned-settings-surface.md), which serves every registered namespace.
+> The redaction and revision fencing remain current. The loopback-only caller split is superseded by the [complete trusted-authority API](../simplification/2026-09-18-complete-trusted-authority-api.md), and restricting which namespaces reach the wire to the configurable-provider directory is superseded by the [plugin-owned settings surface](2026-08-12-plugin-owned-settings-surface.md), which serves every registered namespace.
 
 ## Problem
 
@@ -40,4 +40,4 @@ Three smaller defects sat beside them. `llm/adapters-updated` documented contain
 
 ## Consequences
 
-A LAN client on a `trustedHosts` deployment can no longer render the settings page at all; loopback is the configuration surface. A plugin that registers a settings namespace is not web-configurable until it also registers a configurable provider — deliberate, and the reason `settings-not-exposed` names the boundary in its message. `SettingsDescriptor` gained a required `revision`, so any programmatic constructor of a descriptor-shaped value must supply it, and `settings/document-updated` is a new event any provider-side listener may now observe. Clients that ignore `expectedRevision` keep last-write-wins semantics unchanged. Deferred: the fail-closed wire describe (with the `headers` and envelope-sanitization work it carries), and a non-executable browser schema protocol.
+A trusted LAN client reaches the configuration plane under the carrier-wide policy owned by the [complete trusted-authority API](../simplification/2026-09-18-complete-trusted-authority-api.md). `SettingsDescriptor` carries a required `revision`, so any programmatic constructor of a descriptor-shaped value must supply it, and `settings/document-updated` is an event any provider-side listener may observe. Clients that ignore `expectedRevision` keep last-write-wins semantics unchanged. Deferred: the fail-closed wire describe (with the `headers` and envelope-sanitization work it carries), and a non-executable browser schema protocol.

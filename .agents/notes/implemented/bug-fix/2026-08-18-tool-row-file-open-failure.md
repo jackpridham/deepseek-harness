@@ -6,7 +6,7 @@ English | [中文](2026-08-18-tool-row-file-open-failure.zh.md)
 
 ## Problem
 
-Tool-row path clicks already call `host.openPath` through the chat view's injected `openFile`. The inject swallowed every Host or OS refusal, so a missing desktop opener, a remote or non-loopback carrier, or a path the Host cannot hand off left the row looking successful. The reader had no reason and no second try.
+Tool-row path clicks already call `host.openPath` through the chat view's injected `openFile`. The inject swallowed every Host or OS refusal, so a missing desktop opener or a path the Host cannot hand off left the row looking successful. The reader had no reason and no second try.
 
 The [file-open-in-OS decision](../feature/2026-07-28-tool-call-file-open-in-os.md) still owns the link gesture and the Host handoff. This note owns only the refusal.
 
@@ -26,7 +26,7 @@ The Host message is shown as thrown. `WorkspaceRuntime.openPath` prefixes `path 
 
 ## Consequences
 
-A silent Host refusal is no longer a success from the reader's seat. Headless or remote deployments that click a path now see why the desktop handoff did not happen. The view holds one extra request-generation counter so dismiss and retry stay race-safe.
+A silent Host refusal is no longer a success from the reader's seat. Headless deployments that click a path see why the desktop handoff did not happen. The view holds one extra request-generation counter so dismiss and retry stay race-safe.
 
 ## Testing
 
