@@ -119,7 +119,7 @@ export class SandboxPolicyService extends Service {
     // the process cwd is real branching, resolved absolute either way.
     this.defaultMode = config.mode as SandboxMode
     this.workspaceRoot = resolveWorkspaceRoot(config.workspaceRoot ?? process.cwd())
-    this.protectedPaths = [...new Set((config.protectedPaths as string[]).map(protectedPath))]
+    this.protectedPaths = [...new Set((config.protectedPaths ?? []).map(protectedPath))]
 
     ctx.inject(['systemPrompt'], (scope: Context) => {
       scope.systemPrompt.context({
