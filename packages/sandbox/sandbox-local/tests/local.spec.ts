@@ -7,7 +7,7 @@
  * are all exercised through the real `confine()` path.
  */
 
-import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -71,6 +71,20 @@ describe('profile dialects', () => {
       '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--unshare-pid', '--die-with-parent',
       '--tmpfs', '/tmp', '--bind', '/ws', '/ws',
     ])
+  })
+
+  it('bwrap masks the nearest visible ancestor of a protected path it cannot traverse', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-bwrap-inaccessible-'))
+    const locked = join(root, 'locked')
+    mkdirSync(locked)
+    chmodSync(locked, 0o000)
+    try {
+      expect(bwrapProfileArgs({ ...RO, protectedPaths: [join(locked, 'credential')] })).toContain('--tmpfs')
+      expect(bwrapProfileArgs({ ...RO, protectedPaths: [join(locked, 'credential')] })).toContain(locked)
+    } finally {
+      chmodSync(locked, 0o700)
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('landlock read-only: readable tree plus a writable /dev/null, nothing else', () => {

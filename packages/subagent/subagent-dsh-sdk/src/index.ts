@@ -12,6 +12,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type { SubagentCapabilities, SubagentProvider, SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
 import { assertPositiveFinite, NO_START_CAPABILITIES, resolveChildCwd, validateConfiguredCwd } from '@deepseek-ai/dsh-subagent'
 import {
@@ -98,7 +99,11 @@ class SdkSubagentProvider implements SubagentProvider {
   constructor(readonly name: string, private readonly ctx: Context, private readonly config: ResolvedConfig) {}
 
   start(request: SubagentStartRequest) {
-    const parentHeader = request.parent.session.requestHeader()
+    const sandboxPolicy = this.ctx.get('sandboxPolicy')?.resolve({ session: request.parent.session })
+    if (sandboxPolicy !== undefined && sandboxPolicy.mode !== 'danger-full-access') {
+      throw new Error(`subagent-dsh-sdk cannot enforce ${sandboxPolicy.mode} protected paths`)
+    }
+    const parentHeader = request.parent.session.requestHeader?.()
     const parentConfig = parentHeader?.config
     const selection = parentConfig === undefined ? undefined : {
       provider: this.config.provider,

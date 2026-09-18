@@ -12,6 +12,7 @@ Filesystem tools, one-shot bash commands, and terminal sessions may enforce the 
 
 - `mode` — the deployment default `SandboxMode` (`read-only` / `workspace-write` / `danger-full-access`), validated at load. Default `read-only` (fail-safe).
 - `workspaceRoot` — the fallback directory `workspace-write` may write under for agentless calls or sessions without a cwd. Default `process.cwd()`, resolved to its absolute filesystem identity either way. A normal agent call uses its session header's immutable `cwd` instead.
+- `protectedPaths` — deployment-owned absolute host paths hidden from `read-only` and `workspace-write` sessions. Existing symlink aliases canonicalize at load; `danger-full-access` deliberately receives no protected-path mask and remains limited only by the service account's ordinary Unix permissions. Local execution fails closed when its selected runner cannot hide these paths.
 
 ## API
 

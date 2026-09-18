@@ -5,6 +5,7 @@
  */
 
 import { lstatSync } from 'node:fs'
+import { dirname, sep } from 'node:path'
 import { grantArgs as landlockGrantArgs } from '@deepseek-ai/node-addon-landlock-run'
 import { writableRoots } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
@@ -20,15 +21,31 @@ export function bwrapProfileArgs(policy: SandboxPolicy): string[] {
     args.push('--tmpfs', '/tmp')
     args.push('--bind', policy.workspaceRoot, policy.workspaceRoot)
   }
+  const mounts = new Map<string, boolean>()
   for (const path of policy.protectedPaths ?? []) {
-    try {
-      if (lstatSync(path).isDirectory()) args.push('--tmpfs', path)
-      else args.push('--ro-bind', '/dev/null', path)
-    } catch (error: unknown) {
-      const code = (error as NodeJS.ErrnoException).code
-      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error
-      args.push('--tmpfs', path)
+    let candidate = path
+    let directory = true
+    for (;;) {
+      try {
+        directory = lstatSync(candidate).isDirectory()
+        break
+      } catch (error: unknown) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'ENOENT' || code === 'ENOTDIR') break
+        if (code !== 'EACCES' && code !== 'EPERM') throw error
+        // A service account commonly cannot traverse another user's home. Mask
+        // the nearest visible ancestor: it was already inaccessible, while a
+        // lower-mode command remains usable and cannot gain access later.
+        candidate = dirname(candidate)
+        if (candidate === sep) throw error
+      }
     }
+    mounts.set(candidate, directory)
+  }
+  for (const [path, directory] of [...mounts].sort(([left], [right]) => left.length - right.length)) {
+    if ([...mounts.keys()].some(parent => parent !== path && path.startsWith(`${parent}${sep}`))) continue
+    if (directory) args.push('--tmpfs', path, '--remount-ro', path)
+    else args.push('--ro-bind', '/dev/null', path)
   }
   return args
 }

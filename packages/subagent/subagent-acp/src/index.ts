@@ -11,6 +11,7 @@ import { accessSync, constants, statSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type {
   ResolvedSubagentStartRequest,
   SubagentCapabilities,
@@ -159,7 +160,10 @@ class AcpProvider implements SubagentProvider {
       env: this.config.env,
       disposeEofGraceMs: this.config.disposeEofGraceMs,
       disposeGraceMs: this.config.disposeGraceMs,
-      spawn: spec => this.ctx.subprocess.spawn(spec),
+      spawn: (spec) => {
+        const sandboxPolicy = this.ctx.get('sandboxPolicy')?.resolve({ session: request.parent.session })
+        return this.ctx.subprocess.spawn({ ...spec, ...sandboxPolicy === undefined ? {} : { sandboxPolicy } })
+      },
       onError: (error, stopReason) => {
         // The seam forbids `result` rejecting, so a child-level failure is
         // flattened to a stop reason — preserve it here rather than losing it.

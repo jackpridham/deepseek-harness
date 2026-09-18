@@ -36,6 +36,9 @@
       "path": "../../subprocess/subprocess"
     },
     {
+      "path": "../../sandbox/sandbox-policy"
+    },
+    {
       "path": "../../util/timeout"
     },
     {

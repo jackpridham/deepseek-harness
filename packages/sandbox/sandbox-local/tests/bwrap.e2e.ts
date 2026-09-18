@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -104,5 +105,51 @@ describe.skipIf(!bwrapUsable)('sandbox-local: real bwrap confinement', () => {
     expect(result.status).toBe(0)
     expect(result.stdout).toBe('tmp-ok')
     expect(existsSync(target)).toBe(false)
+  })
+
+  it('hides dummy credentials and a control socket, including through the host proc alias', async () => {
+    const workdir = await tempDir(homedir())
+    const protectedDir = await tempDir(homedir())
+    const credential = join(protectedDir, 'credential')
+    const socket = join(protectedDir, 'control.sock')
+    writeFileSync(credential, 'dummy-credential')
+    const server = createServer(connection => connection.end())
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(socket, resolve)
+    })
+    const connect = `node -e ${JSON.stringify(`const net = require('node:net'); const socket = net.connect(${JSON.stringify(socket)}); socket.once('connect', () => process.exit(0)); socket.once('error', () => process.exit(1)); setTimeout(() => process.exit(2), 1000)`)}`
+    try {
+      expect(spawnSync('bash', ['-c', `cat ${credential} && ${connect}`], { encoding: 'utf8', timeout: 5_000 }).status).toBe(0)
+      const sandbox = await provider()
+      const policy: SandboxPolicy = { mode: 'read-only', workspaceRoot: workdir, protectedPaths: [protectedDir] }
+      const direct = runConfined(sandbox, `cat ${credential}`, policy)
+      expect(direct.result.status).not.toBe(0)
+      expect(direct.result.stdout).not.toContain('dummy-credential')
+      expect(runConfined(sandbox, `echo replacement > ${credential}`, policy).result.status).not.toBe(0)
+      expect(runConfined(sandbox, connect, policy).result.status).not.toBe(0)
+      const proc = runConfined(sandbox, `test ! -e /proc/${process.pid}/root${credential}`, policy)
+      expect(proc.result.status).toBe(0)
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()))
+    }
+  })
+
+  it('keeps a harmless lower-mode command usable when a protected child has an inaccessible parent', async () => {
+    const workdir = await tempDir(homedir())
+    const root = await tempDir(homedir())
+    const locked = join(root, 'locked')
+    mkdirSync(locked)
+    chmodSync(locked, 0o000)
+    try {
+      const sandbox = await provider()
+      const result = runConfined(sandbox, 'echo usable', {
+        mode: 'read-only', workspaceRoot: workdir, protectedPaths: [join(locked, 'credential')],
+      })
+      expect(result.result.status).toBe(0)
+      expect(result.result.stdout).toBe('usable\n')
+    } finally {
+      chmodSync(locked, 0o700)
+    }
   })
 })

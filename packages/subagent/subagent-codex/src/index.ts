@@ -8,6 +8,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import {
   assertPositiveFinite,
@@ -94,7 +95,10 @@ class CodexProvider implements SubagentProvider {
       permissionMode: this.config.permissionMode,
       env: this.config.env,
       disposeGraceMs: this.config.disposeGraceMs,
-      spawn: spawnSpec => this.ctx.subprocess.spawn(spawnSpec),
+      spawn: (spawnSpec) => {
+        const sandboxPolicy = this.ctx.get('sandboxPolicy')?.resolve({ session: request.parent.session })
+        return this.ctx.subprocess.spawn({ ...spawnSpec, ...sandboxPolicy === undefined ? {} : { sandboxPolicy } })
+      },
       onError: (error, stopReason) => {
         this.ctx.logger.warn(
           `subagent-codex "${this.name}": child run failed (${stopReason}): ${error.message}`,
