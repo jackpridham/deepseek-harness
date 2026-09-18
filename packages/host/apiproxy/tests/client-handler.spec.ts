@@ -38,6 +38,10 @@ function scriptedApi(overrides: {
       list: r => ok(r, { items: [] }),
       search: r => ok(r, { items: [], hasMore: false }),
       create: r => ok(r, { sessionId: sid('s-new') }),
+      getToolPolicy: r => ok(r, {
+        version: 1, mode: 'advisory', tools: [], executorEnabled: false,
+        automaticHostContextEnabled: false, workspaceEnabled: false,
+      }),
       history: r => ok(r, {
         events: [],
         hasMore: false,
@@ -72,7 +76,7 @@ function scriptedApi(overrides: {
     },
     host: {
       describe: r => ok(r, {
-        version: '0-test', cwd: '/t', attachedSessions: 0, home: '/h', canOpenPath: true,
+        version: '0-test', cwd: '/t', attachedSessions: 0, home: '/h', canOpenPath: true, advisoryPolicyVersions: [1],
       }),
       pickDirectory: r => ok(r, { path: null }),
       listDirectory: r => ok(r, { path: '/t', home: '/t', crumbs: [], entries: [], truncated: false }),

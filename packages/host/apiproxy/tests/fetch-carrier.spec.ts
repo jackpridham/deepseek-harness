@@ -44,6 +44,18 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
       async create(request) {
         return { rpcId: request.rpcId, result: { ok: true, value: { sessionId: 's-new' as never } } }
       },
+      async getToolPolicy(request) {
+        return {
+          rpcId: request.rpcId,
+          result: {
+            ok: true,
+            value: {
+              version: 1 as const, mode: 'advisory' as const, tools: [] as [], executorEnabled: false as const,
+              automaticHostContextEnabled: false as const, workspaceEnabled: false as const,
+            },
+          },
+        }
+      },
       async history(request) {
         if (request.payload.sessionId === ('with-projections' as never)) {
           return {
@@ -143,7 +155,7 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
           rpcId: request.rpcId,
           result: {
             ok: true,
-            value: { version: 'v', cwd: '/w', attachedSessions: 0, home: '/h', canOpenPath: true },
+            value: { version: 'v', cwd: '/w', attachedSessions: 0, home: '/h', canOpenPath: true, advisoryPolicyVersions: [1] },
           },
         }
       },

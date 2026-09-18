@@ -104,16 +104,44 @@ export const sessionCreateRequestSchema = z.object({
   cwd: z.string().optional(),
   sessionId: sessionIdSchema.optional(),
   agentPreset: z.string().optional(),
+  sessionMode: z.literal('advisory').optional(),
 }).refine(
   payload => payload.workspaceId === undefined || payload.cwd === undefined,
   { message: 'session.create accepts workspaceId or cwd, not both' },
+).refine(
+  payload => payload.sessionMode !== 'advisory'
+    || (payload.workspaceId === undefined && payload.cwd === undefined && payload.agentPreset === undefined),
+  { message: 'advisory session.create does not accept workspaceId, cwd, or agentPreset' },
 ) satisfies z.ZodType<Wire<RequestPayload<'session.create'>>>
 
 /** session.create response value. */
 export const sessionCreateValueSchema = z.object({
   sessionId: sessionIdSchema,
   agentPreset: z.string().optional(),
+  toolPolicy: z.object({
+    version: z.literal(1),
+    mode: z.literal('advisory'),
+    tools: z.tuple([]),
+    executorEnabled: z.literal(false),
+    automaticHostContextEnabled: z.literal(false),
+    workspaceEnabled: z.literal(false),
+  }).optional(),
 }) satisfies z.ZodType<Wire<ResponseValue<'session.create'>>>
+
+/** session.getToolPolicy request payload. */
+export const sessionGetToolPolicyRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+}) satisfies z.ZodType<Wire<RequestPayload<'session.getToolPolicy'>>>
+
+/** session.getToolPolicy response value. */
+export const sessionGetToolPolicyValueSchema = z.object({
+  version: z.literal(1),
+  mode: z.literal('advisory'),
+  tools: z.tuple([]),
+  executorEnabled: z.literal(false),
+  automaticHostContextEnabled: z.literal(false),
+  workspaceEnabled: z.literal(false),
+}) satisfies z.ZodType<Wire<ResponseValue<'session.getToolPolicy'>>>
 
 /** session.rename request payload (raw title; host-side normalization decides acceptance). */
 export const sessionRenameRequestSchema = z.object({

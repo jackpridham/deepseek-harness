@@ -1046,6 +1046,8 @@ describe('Session', () => {
       { header: { ...base, createdAt: '123' }, error: /createdAt must be a non-negative safe integer/ },
       { header: { ...base, cwd: 1 }, error: /header cwd must be a string/ },
       { header: { ...base, cwd: 'relative' }, error: /header cwd must be an absolute path/ },
+      { header: { ...base, sessionMode: 'advisory', cwd: '/tmp' }, error: /advisory session header/ },
+      { header: { ...base, sessionMode: 'advisory', agentPreset: 'default' }, error: /advisory session header/ },
       { header: { ...base, parentSession: 1 }, error: /header parentSession must be a string/ },
       { header: { ...base, seedLength: '1' }, error: /seedLength must be a non-negative safe integer/ },
       { header: { ...base, seedLength: 0.5 }, error: /seedLength must be a non-negative safe integer/ },

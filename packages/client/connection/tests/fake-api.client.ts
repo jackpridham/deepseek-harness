@@ -111,6 +111,10 @@ export class FakeApiClient implements IApiClient {
       return this.record('session.search', payload, this.onSearch(payload))
     },
     create: (payload: unknown) => this.record('session.create', payload, this.onCreate(payload)),
+    getToolPolicy: (payload: unknown) => this.record('session.getToolPolicy', payload, Promise.resolve(ok({
+      version: 1 as const, mode: 'advisory' as const, tools: [] as [], executorEnabled: false as const,
+      automaticHostContextEnabled: false as const, workspaceEnabled: false as const,
+    }))),
     history: (payload: { sessionId: SessionId; beforeSeq?: number; maxMessages?: number }) =>
       this.record('session.history', payload, this.onHistory(payload)),
     models: (payload: unknown) => this.record('session.models', payload, this.onModels(payload)),

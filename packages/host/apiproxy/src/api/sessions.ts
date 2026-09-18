@@ -7,13 +7,23 @@
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { AttachmentIdType, ImageAttachmentLimits, ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionEvent, SessionId, SessionMode } from '@deepseek-ai/dsh-session/types'
 // The pure-type outlet: api/ is browser-importable, and the package root's
 // cordis Context merge (via dsh-agent) must not enter client aggregates.
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
 import type { RpcId, RpcRequest, RpcResponse } from './rpc.ts'
 import type { ToolEventView } from './events.ts'
 import type { WorkspaceId } from './workspace.ts'
+
+/** Immutable host-owned execution policy for an advisory session. */
+export interface AdvisoryToolPolicy {
+  version: 1
+  mode: 'advisory'
+  tools: []
+  executorEnabled: false
+  automaticHostContextEnabled: false
+  workspaceEnabled: false
+}
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionMap {
@@ -282,9 +292,21 @@ export interface SessionsApi {
    * the session header, so a later resume rebuilds the same agent. An unknown
    * id fails with `agent-preset-not-found`, and a preset whose composition
    * cannot be mounted fails with `agent-preset-invalid`.
+   *
+   * `sessionMode: 'advisory'` instead accepts neither workspace, cwd, nor
+   * preset input. It creates an immutable no-tool session and returns its
+   * versioned `toolPolicy`; use {@link getToolPolicy} to reread that policy.
    */
-  create(request: RpcRequest<{ workspaceId?: WorkspaceId; cwd?: string; sessionId?: SessionId; agentPreset?: string }>):
-  Promise<RpcResponse<{ sessionId: SessionId; agentPreset?: string }>>
+  create(request: RpcRequest<{
+    workspaceId?: WorkspaceId
+    cwd?: string
+    sessionId?: SessionId
+    agentPreset?: string
+    sessionMode?: SessionMode
+  }>): Promise<RpcResponse<{ sessionId: SessionId; agentPreset?: string; toolPolicy?: AdvisoryToolPolicy }>>
+
+  /** Reads the immutable advisory policy recorded on a session. */
+  getToolPolicy(request: RpcRequest<{ sessionId: SessionId }>): Promise<RpcResponse<AdvisoryToolPolicy>>
 
   /**
    * Reads a window of history events; page boundaries align to append-origin message

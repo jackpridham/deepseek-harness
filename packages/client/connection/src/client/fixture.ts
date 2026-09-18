@@ -1530,6 +1530,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
     { sessionId: sid('fx-gamma'), updatedAt: Date.now() - 120_000, running: false, blank: false, cwd: '/tmp/fixture' },
   ]
   const logs = new Map<SessionId, SessionEvent[]>([[sid('fx-alpha'), buildAlphaLog()]])
+  const advisorySessions = new Set<SessionId>()
   const modelSelections = new Map<SessionId, ModelSelection>(sessions.map(session => [
     session.sessionId,
     { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
@@ -2316,7 +2317,8 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
             details: { workspaceId: request.payload.workspaceId },
           })
         }
-        const cwd = workspace?.path ?? request.payload.cwd ?? '/tmp/fixture'
+        const advisory = request.payload.sessionMode === 'advisory'
+        const cwd = advisory ? undefined : workspace?.path ?? request.payload.cwd ?? '/tmp/fixture'
         const requestedId = request.payload.sessionId
         const attachWorkspace = (sessionId: SessionId): void => {
           /* v8 ignore next -- callers enter only when a target Workspace exists. */
@@ -2337,6 +2339,9 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
           const existing = summaryOf(requestedId)
           if (existing !== undefined) {
             if (existing.cwd !== cwd) {
+              if (cwd === undefined) {
+                return err(request, { code: 'internal', message: `advisory session ${requestedId} unexpectedly records a cwd`, details: {} })
+              }
               return err(request, {
                 code: 'session-conflict',
                 message: `session ${requestedId} already uses ${existing.cwd ?? 'no cwd'}`,
@@ -2351,14 +2356,16 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
           }
         }
         const created: SessionSummary = {
-          sessionId: requestedId ?? sid(`fx-${nextSession++}`), updatedAt: Date.now(), running: false, blank: true, cwd,
+          sessionId: requestedId ?? sid(`fx-${nextSession++}`), updatedAt: Date.now(), running: false, blank: true,
+          ...cwd === undefined ? {} : { cwd },
         }
         sessions.push(created)
+        if (advisory) advisorySessions.add(created.sessionId)
         modelSelections.set(created.sessionId, { provider: 'deepseek-official', model: 'deepseek-v4-flash' })
         attachedSessions += 1
         const emitSession = (): void => {
           // Mirrors the host: the frame fires at creation, so blank is constantly true.
-          emitHost({ type: 'host/session-added', sessionId: created.sessionId, blank: true, cwd })
+          emitHost({ type: 'host/session-added', sessionId: created.sessionId, blank: true, ...cwd === undefined ? {} : { cwd } })
         }
         if (workspace !== undefined && options.failWorkspaceAttach) {
           emitSession()
@@ -2372,7 +2379,26 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
           if (workspace !== undefined) attachWorkspace(created.sessionId)
         }
         if (options.dropSessionCreateResponse) throw new Error('fixture: dropped session.create response after publication')
-        return ok(request, { sessionId: created.sessionId })
+        return ok(request, advisory ? {
+          sessionId: created.sessionId,
+          toolPolicy: {
+            version: 1 as const, mode: 'advisory' as const, tools: [] as [], executorEnabled: false as const,
+            automaticHostContextEnabled: false as const, workspaceEnabled: false as const,
+          },
+        } : { sessionId: created.sessionId })
+      },
+      getToolPolicy: (request) => {
+        if (!advisorySessions.has(request.payload.sessionId)) {
+          return err(request, {
+            code: 'session-not-advisory',
+            message: `session ${request.payload.sessionId} is not advisory`,
+            details: { sessionId: request.payload.sessionId },
+          })
+        }
+        return ok(request, {
+          version: 1 as const, mode: 'advisory' as const, tools: [] as [], executorEnabled: false as const,
+          automaticHostContextEnabled: false as const, workspaceEnabled: false as const,
+        })
       },
       rename: (request) => {
         const missing = requireSession(request)
@@ -2617,7 +2643,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
     },
     host: {
       describe: request => ok(request, {
-        version: '0.0.0-fixture', cwd: '/tmp/fixture', attachedSessions, home: FIXTURE_HOME, canOpenPath: true,
+        version: '0.0.0-fixture', cwd: '/tmp/fixture', attachedSessions, home: FIXTURE_HOME, canOpenPath: true, advisoryPolicyVersions: [1],
       }),
       // Deterministic native pick: the keyless lanes drive the full
       // pick-then-adopt path without an OS chooser (design-mock content,
@@ -3216,6 +3242,7 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'session.list': return this.api.sessions.list(request)
       case 'session.search': return this.api.sessions.search(request, signal)
       case 'session.create': return this.api.sessions.create(request)
+      case 'session.getToolPolicy': return this.api.sessions.getToolPolicy(request)
       case 'session.history': return this.api.sessions.history(request)
       case 'session.models': return this.api.sessions.models(request)
       case 'session.selectModel': return this.api.sessions.selectModel(request)

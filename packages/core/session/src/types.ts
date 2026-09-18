@@ -55,6 +55,9 @@ export function SessionId(id: string): SessionId {
  */
 export const SESSION_FORMAT_VERSION = 0
 
+/** A session whose host-owned execution policy differs from the ordinary default. */
+export type SessionMode = 'advisory'
+
 /**
  * Immutable validated storage metadata, kept outside the conversation event log.
  */
@@ -71,6 +74,11 @@ export interface SessionHeader {
   readonly createdAt: number
   /** Absolute working directory the session was created in (if any). */
   readonly cwd?: string
+  /**
+   * Host-owned session policy. Absent is the ordinary mode; an advisory mode
+   * survives persistence so a reload cannot restore executable capabilities.
+   */
+  readonly sessionMode?: SessionMode
   /** The session this one was forked from (seed lineage), if any. */
   readonly parentSession?: SessionId
   /**
@@ -112,6 +120,7 @@ export interface CreateSessionOptions {
    */
   readonly meta?: {
     readonly cwd?: string
+    readonly sessionMode?: SessionMode
     readonly parentSession?: SessionId
     readonly createdAt?: number
     readonly seedLength?: number

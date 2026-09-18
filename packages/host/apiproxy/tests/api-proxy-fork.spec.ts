@@ -55,9 +55,11 @@ function liveAgent(
   id: string,
   turns: number,
   tail: Tail = 'none',
-  lineage: { parentSession?: SessionId; origin?: 'subagent' } = {},
+  lineage: { parentSession?: SessionId; origin?: 'subagent'; sessionMode?: 'advisory' } = {},
 ): Session {
-  const session = ctx.sessions.create(sid(id), { meta: { cwd: '/proj', ...lineage } })
+  const session = ctx.sessions.create(sid(id), {
+    meta: { ...lineage.sessionMode === 'advisory' ? {} : { cwd: '/proj' }, ...lineage },
+  })
   for (let turn = 1; turn <= turns; turn++) {
     session.append('turn/start', { turn })
     session.append('user/message', createUserMessage({
@@ -87,6 +89,16 @@ const api = (ctx: Context) => createApiProxy(ctx, {
 })
 
 describe('sessions.fork', () => {
+  it('refuses to fork an advisory session into an ordinary composition', async () => {
+    const ctx = await composed()
+    const advisory = liveAgent(ctx, 'session-advisory-source', 1, 'none', { sessionMode: 'advisory' })
+
+    await expect(api(ctx).sessions.fork(request({ sessionId: advisory.id }))).resolves.toMatchObject({
+      result: { ok: false, error: { code: 'advisory-session-invalid' } },
+    })
+    await ctx.fiber.dispose()
+  })
+
   it('cuts at the anchored completed turn and records lineage and cwd', async () => {
     const ctx = await composed()
     const source = liveAgent(ctx, 'session-source', 2)

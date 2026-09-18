@@ -9,10 +9,14 @@ import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
+import { createScope } from '@deepseek-ai/dsh-scope'
 import AgentRegistry, { type AgentFactory } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import SessionStore, { SessionId, type Session } from '@deepseek-ai/dsh-session'
+import SessionStore, { Session, SessionId, type Session as SessionType } from '@deepseek-ai/dsh-session'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
+import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
+import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+import { CallId } from '@deepseek-ai/dsh-llm'
 import { RpcId, type RpcRequest } from '../src/api/rpc.ts'
 import type { HostFrame } from '../src/api/events.ts'
 import {
@@ -29,7 +33,7 @@ function request<P>(payload: P): RpcRequest<P> {
 }
 
 /** Minimal live agent; the gateway only needs identity and its session. */
-function stubAgent(session: Session): Agent {
+function stubAgent(session: SessionType): Agent {
   return { id: session.id, session, status: 'idle' } as unknown as Agent
 }
 
@@ -104,13 +108,21 @@ const services = new Map<string, Record<string, unknown>>()
 async function harness(
   presets?: readonly string[],
   persistence?: unknown,
-  options: { userIds?: readonly string[]; defaults?: Record<string, unknown> } = {},
+  options: { userIds?: readonly string[]; defaults?: Record<string, unknown>; toolMode?: 'native' | 'code' | 'both' } = {},
 ) {
   const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-apiproxy-preset-')))
   const ctx = new Context()
   await ctx.plugin(SessionStore)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(UserQuestionService)
+  await ctx.plugin(SystemPrompt, { persona: '' })
+  await ctx.plugin(ToolRuntime, { mode: options.toolMode ?? 'native' })
+  ctx.get('tools')!.register(defineContentToolFixture({
+    name: 'host-tool',
+    description: 'host tool',
+    parameters: {},
+    execute: () => Promise.resolve([{ type: 'text' as const, text: 'executed' }]),
+  }))
   ctx.provide('sessionPersistence', (persistence ?? { list: () => Promise.resolve([]) }) as never)
   if (presets !== undefined) ctx.provide('agentPresets', roster(presets, options.userIds) as never)
 
@@ -124,7 +136,7 @@ async function harness(
       // Setup runs before publication against a context that carries the
       // agent, and the agent reaches back through `agent.ctx` — the pair the
       // gateway's own `installTarget` relies on.
-      const agentCtx = ctx.extend({ agent })
+      const agentCtx = createScope(ctx, agent).ctx.extend({ agent })
       ;(agent as { ctx?: Context }).ctx = agentCtx
       await options.setup?.(agentCtx)
       const unregister = ctx.agents.register(agent)
@@ -342,6 +354,16 @@ describe('agentPreset.list', () => {
 })
 
 describe('agentPreset.select', () => {
+  it('refuses to recompose an advisory session', async () => {
+    const { api, ctx } = await harness(['standard', 'minimal'])
+    await api.sessions.create(request({ sessionId: SessionId('sel-advisory'), sessionMode: 'advisory' }))
+
+    await expect(api.agentPresets.select(
+      request({ sessionId: SessionId('sel-advisory'), agentPreset: 'minimal' }),
+    )).resolves.toMatchObject({ result: { ok: false, error: { code: 'advisory-session-invalid' } } })
+    expect(ctx.get('tools')!.schemas(ctx.agents.get(SessionId('sel-advisory'))!)).toEqual([])
+  })
+
   it('recomposes a blank session', async () => {
     const { api } = await harness(['standard', 'minimal'])
     await api.sessions.create(request({ sessionId: SessionId('sel-1'), agentPreset: 'standard' }))
@@ -726,5 +748,107 @@ describe('session.history presenter scope', () => {
     } finally {
       failingStandingKeys.delete('standard')
     }
+  })
+})
+
+describe('advisory session policy', () => {
+  it.each(['native', 'code', 'both'] as const)('attests an empty tool surface and denies host tool dispatch in %s mode', async (toolMode) => {
+    const { api, ctx } = await harness(['standard'], undefined, { toolMode })
+    let dynamicContextEvaluations = 0
+    ctx.get('systemPrompt')!.context({
+      name: 'host-runtime-context',
+      order: 1,
+      text: () => {
+        dynamicContextEvaluations += 1
+        return 'host context must not reach an advisory model'
+      },
+    })
+    const created = await api.sessions.create(request({ sessionId: SessionId('advisory'), sessionMode: 'advisory' }))
+
+    expect(created.result).toMatchObject({
+      ok: true,
+      value: {
+        toolPolicy: {
+          version: 1,
+          mode: 'advisory',
+          tools: [],
+          executorEnabled: false,
+          automaticHostContextEnabled: false,
+          workspaceEnabled: false,
+        },
+      },
+    })
+    const agent = ctx.agents.get(SessionId('advisory'))!
+    expect(agent.session.header).toMatchObject({ sessionMode: 'advisory' })
+    expect(agent.session.header.cwd).toBeUndefined()
+    expect((await ctx.systemPrompt.assemble({ scope: agent })).contexts).toEqual([])
+    expect(dynamicContextEvaluations).toBe(0)
+    expect(ctx.get('tools')!.schemas(agent)).toEqual([])
+    agent.ctx!.inject(['tools'], (scope) => {
+      scope.tools.register(defineContentToolFixture({
+        name: 'late-advisory-tool',
+        description: 'must remain hidden',
+        parameters: {},
+        execute: () => Promise.resolve([{ type: 'text' as const, text: 'must not execute' }]),
+      }))
+    })
+    expect(ctx.get('tools')!.schemas(agent)).toEqual([])
+    await expect(ctx.get('tools')!.execute({
+      signal: new AbortController().signal,
+      callId: CallId('advisory-late-tool'),
+      name: 'late-advisory-tool',
+      arguments: {},
+      agent,
+    })).resolves.toMatchObject({ content: [{ type: 'text', text: 'Error: unknown tool "late-advisory-tool"' }], isError: true })
+    await expect(ctx.get('tools')!.execute({
+      signal: new AbortController().signal,
+      callId: CallId('advisory-host-tool'),
+      name: 'host-tool',
+      arguments: {},
+      agent,
+    })).resolves.toMatchObject({ content: [{ type: 'text', text: 'Error: unknown tool "host-tool"' }], isError: true })
+    await expect(ctx.get('tools')!.execute({
+      signal: new AbortController().signal,
+      callId: CallId('advisory-run-code'),
+      name: 'run_code',
+      arguments: { code: 'return {}', description: 'must be denied' },
+      agent,
+    })).resolves.toMatchObject({ content: [{ type: 'text', text: 'Error: unknown tool "run_code"' }], isError: true })
+    expect(await api.sessions.getToolPolicy(request({ sessionId: SessionId('advisory') }))).toMatchObject({
+      result: { ok: true, value: created.result.ok ? created.result.value.toolPolicy : undefined },
+    })
+    expect(await api.host.describe(request({}))).toMatchObject({
+      result: { ok: true, value: { advisoryPolicyVersions: [1] } },
+    })
+  })
+
+  it('rejects advisory workspace, cwd, and executable-composition inputs', async () => {
+    const { api } = await harness(['standard'])
+    for (const payload of [
+      { sessionMode: 'advisory' as const, cwd: '/tmp/not-attached' },
+      { sessionMode: 'advisory' as const, agentPreset: 'standard' },
+    ]) {
+      await expect(api.sessions.create(request(payload))).resolves.toMatchObject({
+        result: { ok: false, error: { code: 'advisory-session-invalid' } },
+      })
+    }
+  })
+
+  it('keeps an advisory mode immutable on identity reuse', async () => {
+    const { api } = await harness(['standard'])
+    await api.sessions.create(request({ sessionId: SessionId('fixed'), sessionMode: 'advisory' }))
+    await expect(api.sessions.create(request({ sessionId: SessionId('fixed') }))).resolves.toMatchObject({
+      result: { ok: false, error: { code: 'session-mode-conflict' } },
+    })
+  })
+
+  it('keeps the advisory marker through session restoration', () => {
+    const restored = Session.fromRestore(SessionId('cold-advisory'), [], {
+      version: 0,
+      id: SessionId('cold-advisory'),
+      createdAt: 1,
+      sessionMode: 'advisory',
+    })
+    expect(restored.header).toMatchObject({ sessionMode: 'advisory' })
   })
 })

@@ -42,7 +42,8 @@ export interface HostApi {
    * no explicit default (the adapter falls back internally);
    * attachedSessions = count of currently attached sessions (those with a live agent);
    * home = the host account home directory (Web display abbreviation on POSIX);
-   * canOpenPath = whether this deployment can hand a path to a user-visible native desktop.
+   * canOpenPath = whether this deployment can hand a path to a user-visible native desktop;
+   * advisoryPolicyVersions = immutable advisory-session policy attestations supported by this host.
    */
   describe(request: RpcRequest<{}>): Promise<RpcResponse<{
     version: string
@@ -52,6 +53,7 @@ export interface HostApi {
     attachedSessions: number
     home: string
     canOpenPath: boolean
+    advisoryPolicyVersions?: number[]
   }>>
 
   /**

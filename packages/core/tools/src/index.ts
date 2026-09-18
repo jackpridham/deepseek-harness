@@ -714,6 +714,8 @@ export type ToolGuard = (execution: Readonly<ToolExecution>) => string | undefin
 class ToolLayer implements ScopeLayer {
   readonly tools: NamedEntries<ToolDefinition>
   readonly restrictions = new AnonymousEntries<CompiledToolRestriction>()
+  /** Final capability mask for a scope that must expose no tool at all. */
+  readonly denyAll = new AnonymousEntries<true>()
   readonly guards = new AnonymousEntries<ToolGuard>()
   /**
    * Presentation this scope's agent declared for itself, shadowing the
@@ -730,7 +732,7 @@ class ToolLayer implements ScopeLayer {
 
   /** Whether every contribution table in this aggregate layer is empty. */
   isEmpty(): boolean {
-    return this.tools.isEmpty() && this.restrictions.isEmpty() && this.guards.isEmpty()
+    return this.tools.isEmpty() && this.restrictions.isEmpty() && this.denyAll.isEmpty() && this.guards.isEmpty()
       && this.mode === undefined
   }
 
@@ -1098,6 +1100,23 @@ export class ToolRuntime extends Service {
   }
 
   /**
+   * Hide every tool from one agent scope, including its own later
+   * registrations and Code Mode's reserved transport. Unlike {@link restrict},
+   * this is a final capability boundary rather than an inherited-tool filter.
+   * @returns the exact disposer that restores the scope's visible registry.
+   */
+  denyAllTools(): () => void {
+    if (scopeOf(this.ctx) === undefined) {
+      throw new Error('tools.denyAllTools() requires a scoped context (agent.ctx): a context-global denial would mask every agent')
+    }
+    return this.layers.effect(
+      this.ctx,
+      layer => layer.denyAll.append(true),
+      { label: 'tools.denyAllTools()' },
+    )
+  }
+
+  /**
    * Register a monotonic guard after the extensible `tools/pre-execute`
    * waterfall. A plain-context guard applies globally; one registered through
    * `agent.ctx` applies only to that agent. Any matching guard may deny by
@@ -1189,6 +1208,9 @@ export class ToolRuntime extends Service {
     if (this.modeFor(scope) !== 'native') {
       visible.set(RUN_CODE_NAME, this.requireCodeTransport())
     }
+    // A final scoped boundary applies after own registrations and the Code
+    // Mode transport, neither of which ordinary restrictions may remove.
+    if (layers.some(layer => !layer.denyAll.isEmpty())) visible.clear()
     return { visible, knownNames, restrictableNames }
   }
 
