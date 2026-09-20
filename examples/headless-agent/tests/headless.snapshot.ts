@@ -475,6 +475,36 @@ describe('headless stream-json snapshots', () => {
     expect(normalized).not.toContain('ByteString')
   }, LOADER_SMOKE_TEST_TIMEOUT_MS)
 
+  it('replays a tool result after a large input with the automatic output default', async () => {
+    const result = await runLoaderSmoke({
+      label: 'long context automatic output budget',
+      tempDirPrefix: 'headless-snapshot-output-budget-',
+      binScript,
+      libBinScript: binScript,
+      configPath: reasoningConfigPath,
+      binArgs: [reasoningConfigPath, 'inventory '.repeat(6000)],
+      tsconfigPath,
+      env: { DSH_CLI_MOCK_LONG_CONTEXT: '1' },
+    })
+    expect(result.stderr).toBe('')
+    const records = parseJsonl(result.stdout)
+    const events = records.flatMap(record => record.type === 'session_event' ? [record.event as JsonObject] : [])
+    const budgets = events.filter(event => event.type === 'output/budget').map(event => event.data as JsonObject)
+    expect(budgets).toHaveLength(2)
+    expect(budgets[1]?.inputTokens).toBeLessThan(21_000)
+    const transcript = events.flatMap<JsonObject>((event) => {
+      const data = event.data as JsonObject
+      if (event.type === 'output/budget') return [{ type: event.type, step: data.step, requested: data.requested, effective: data.effective, contextWindow: data.contextWindow }]
+      if (event.type === 'tool/result' || event.type === 'assistant/message') {
+        return [{ type: event.type, content: (data.message as JsonObject).content }]
+      }
+      if (event.type === 'turn/end') return [{ type: event.type, reason: data.reason }]
+      return []
+    })
+    expect(transcript).toMatchSnapshot()
+    expect(events.find(event => event.type === 'turn/end')?.data).toMatchObject({ reason: { kind: 'completed' } })
+  }, LOADER_SMOKE_TEST_TIMEOUT_MS)
+
   it('logs the model default and a dynamic next-step reasoning effort', async () => {
     const result = await runLoaderSmoke({
       label: 'reasoning effort headless stream-json snapshot',

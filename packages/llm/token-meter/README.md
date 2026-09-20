@@ -23,6 +23,8 @@ The fold tracks full request-header snapshots, step boundaries, surface appends 
 
 Usage accounting sums disjoint input, cache-read, cache-write, and output buckets; reasoning is not added again. Every successful call records an assistant anchor, including content-less calls. An explicit empty `sourceEventSeqs` list means a known empty provider stream, while an absent legacy list conservatively treats the durable assistant output as provider output.
 
+The usage anchor includes the complete input preceding the assistant message, including user input entered after `step/start` and pre-request compaction replacements. Those inputs are already included in provider usage and are not added again as later growth. Tool results and subsequent entered input contribute signed deltas until the next successful call replaces the anchor.
+
 ## Session projections
 
 When the composition provides `ctx.sessionProjections`, token-meter registers three units through an optional child fiber.

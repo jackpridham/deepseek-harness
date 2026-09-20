@@ -33,6 +33,7 @@ function appendUnchecked(session: Session, event: SessionEvent): void {
 }
 
 interface SuccessfulCallOptions {
+  enteredText?: string
   turn?: number
   step?: number
   providerText?: string
@@ -52,6 +53,11 @@ function appendSuccessfulCall(
   const durableText = options.durableText ?? providerText
   const provenance = options.provenance ?? 'exact'
   session.append('step/start', { turn, step })
+  if (options.enteredText !== undefined) {
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: options.enteredText }], source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+  }
   appendHeader(session, value)
 
   const sources: number[] = []
@@ -242,6 +248,51 @@ describe('TokenMeter pricing', () => {
 })
 
 describe('replay anchors and surface folds', () => {
+  it('counts input entered after step/start once, including on replay and later steps', () => {
+    const service = meter()
+    const session = Session.create(SessionId('entered-input'))
+    const requestHeader = header('large-context')
+    appendSuccessfulCall(session, requestHeader, {
+      enteredText: 'inventory '.repeat(60_000),
+      usage: { inputTokens: 165_170, outputTokens: 64 },
+    })
+    expect(service.measure(session)).toMatchObject({
+      baseline: { kind: 'usage', tokens: 165_234 },
+      surfaceDeltaTokens: 0,
+      totalTokens: 165_234,
+    })
+    const tail = createUserMessage({
+      content: [{ type: 'text', text: 'tool result 71071' }], source: { kind: 'user' },
+    })
+    session.append('user/message', tail, { surfaceOp: 'append' })
+    expect(service.measure(session).totalTokens).toBe(165_234 + service.estimateMessage(tail))
+    const replay = Session.create(SessionId('entered-input-replay'), session.events)
+    expect(service.measure(replay).totalTokens).toBe(service.measure(session).totalTokens)
+
+    appendSuccessfulCall(session, requestHeader, {
+      step: 2,
+      enteredText: 'follow-up '.repeat(1000),
+      usage: { inputTokens: 170_000, outputTokens: 10 },
+    })
+    expect(service.measure(session)).toMatchObject({ totalTokens: 170_010, surfaceDeltaTokens: 0 })
+  })
+
+  it.each([undefined, { inputTokens: 1, outputTokens: 1 }])(
+    'prices the full entered input when usage is absent or below the estimate (%j)',
+    (usage) => {
+      const service = meter()
+      const session = Session.create(SessionId('entered-input-estimate'))
+      appendSuccessfulCall(session, header('large-context'), {
+        enteredText: 'inventory '.repeat(1000),
+        ...usage === undefined ? {} : { usage },
+      })
+      expect(service.measure(session)).toMatchObject({
+        baseline: { kind: 'estimated' }, surfaceDeltaTokens: 0,
+      })
+      expect(service.measure(session).totalTokens).toBe(service.measure(session, header('other')).totalTokens)
+    },
+  )
+
   const USAGE: TokenUsage = {
     inputTokens: 20,
     cacheReadTokens: 3,

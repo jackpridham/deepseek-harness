@@ -36,7 +36,7 @@ interface ReplayState {
   header: EpochHeader | undefined
   surface: TokenSurfaceNode[]
   surfaceTokens: number
-  stepStart: { turn: number; step: number; surfaceTokens: number } | undefined
+  stepStart: { turn: number; step: number } | undefined
   anchor: MeasurementAnchor | undefined
 }
 
@@ -104,6 +104,8 @@ export class TokenMeter extends Service {
    * request envelope matches `requestHeader` and its total is no lower than
    * that call's full heuristic anchor; otherwise the complete envelope and
    * surface are heuristically repriced.
+   * The anchor includes input entered after step/start and any pre-request
+   * replacements; only changes after the sampled input contribute a delta.
    *
    * `requestHeader` affects request pressure only; surface fields always
    * describe the current session surface. Every call clones those positional
@@ -200,7 +202,7 @@ export class TokenMeter extends Service {
             `token meter: step/start at seq ${event.seq} arrived before turn ${state.stepStart.turn}/step ${state.stepStart.step} ended`,
           )
         }
-        nextStepStart = { ...event.data, surfaceTokens: state.surfaceTokens }
+        nextStepStart = { ...event.data }
         break
       case 'step/end':
         if (state.stepStart === undefined
@@ -235,7 +237,9 @@ export class TokenMeter extends Service {
           event,
           eventTokens,
         )
-        const anchorSurfaceTokens = stepStart.surfaceTokens + providerAssistantTokens
+        // Entered input and pre-request compaction follow step/start. Anchor
+        // against the complete input preceding this assistant, not that boundary.
+        const anchorSurfaceTokens = state.surfaceTokens + providerAssistantTokens
         const providerTokens = usageTokens(event.data.usage)
         const estimatedAnchorTokens = estimateHeader(nextHeader) + anchorSurfaceTokens
         nextAnchor = {
@@ -248,7 +252,7 @@ export class TokenMeter extends Service {
             : { kind: 'estimated', tokens: estimatedAnchorTokens },
         }
       } else {
-        const anchorSurfaceTokens = stepStart.surfaceTokens + eventTokens
+        const anchorSurfaceTokens = state.surfaceTokens + eventTokens
         nextAnchor = {
           header: nextHeader,
           surfaceTokens: anchorSurfaceTokens,
