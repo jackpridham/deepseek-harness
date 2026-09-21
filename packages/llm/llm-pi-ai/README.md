@@ -11,6 +11,8 @@ When that snapshot reports a scheduler transition, dispatch waits with cancellat
 
 Ordinary chat readiness waits forward measured worker-load stages to the host lifecycle observer. Each wait has a local display correlation ID, never a backend operation ID to poll. Progress changes update that row; readiness, failure or cancellation settles it without retaining a percentage. Inference-operation polling forwards the same optional progress contract after dispatch.
 
+OpenAI-completions requests with no active tools omit `tools` and `tool_choice` while preserving prior tool calls/results. The maintained pi-ai patch retains the empty-array history fallback only for Claude model IDs (`claude-*` or a slash-qualified `*/claude-*`) used through compatible proxies. A differently named proxy alias does not opt into that fallback. This allows caller closeout finalization on endpoints that reject empty tool arrays without restoring tool access.
+
 ## Config
 
 Configure credentials, the model catalog, and deployment-specific transport settings per provider, keyed by the provider route itself. Each profile may set a `retryPolicy`; omission uses normal mode with five retries. `apiKeyEnv` is a credential *reference* resolved per request, so no secret enters this file. Omitting it leaves the route unauthenticated, which for an installed catalog route means pi-ai's provider-native ambient discovery; a configured reference that resolves to nothing fails the request with `MISSING_CREDENTIAL` instead, because falling through would authenticate with whatever unrelated key the environment happens to hold. One credential serves every model on its route.

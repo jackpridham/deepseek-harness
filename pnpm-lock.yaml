@@ -30,7 +30,7 @@ overrides:
   undici@>=7.0.0 <7.29.0: ^7.29.0
 
 patchedDependencies:
-  '@earendil-works/pi-ai@0.82.1': 9f0ad067b965332bc5e0ed01cdd9c7c43ef9efa2db1958d8aa15d2e651bc164c
+  '@earendil-works/pi-ai@0.82.1': f682d5b8f710cedb4005c46e3bce37c27f1741f0a125bd45b68ffabffd030ca5
   node-pty@1.2.0-beta.15: b40ae545608897914bd25fb009c97eeac478c34e8a910298ddcb01b746534bb0
 
 importers:
@@ -5553,7 +5553,7 @@ importers:
         version: link:../../../vendor/schemastery
       '@earendil-works/pi-ai':
         specifier: ^0.82.1
-        version: 0.82.1(patch_hash=9f0ad067b965332bc5e0ed01cdd9c7c43ef9efa2db1958d8aa15d2e651bc164c)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+        version: 0.82.1(patch_hash=f682d5b8f710cedb4005c46e3bce37c27f1741f0a125bd45b68ffabffd030ca5)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: workspace:^
@@ -15380,7 +15380,7 @@ snapshots:
     transitivePeerDependencies:
       - '@algolia/client-search'
 
-  '@earendil-works/pi-ai@0.82.1(patch_hash=9f0ad067b965332bc5e0ed01cdd9c7c43ef9efa2db1958d8aa15d2e651bc164c)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
+  '@earendil-works/pi-ai@0.82.1(patch_hash=f682d5b8f710cedb4005c46e3bce37c27f1741f0a125bd45b68ffabffd030ca5)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
     dependencies:
       '@anthropic-ai/sdk': 0.91.1(zod@4.4.3)
       '@aws-sdk/client-bedrock-runtime': 3.1048.0

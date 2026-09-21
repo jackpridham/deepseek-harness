@@ -1,5 +1,5 @@
 diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
-index ed81baa3860fa20cf9d38885f9dd4b6b2f639045..343f6bf05b839429e7616568e724748dcba89aed 100644
+index ed81baa3860fa20cf9d38885f9dd4b6b2f639045..95aa9f2e2a57161f00d7b658535b4da3886c22a0 100644
 --- a/dist/api/openai-completions.js
 +++ b/dist/api/openai-completions.js
 @@ -450,6 +450,17 @@ export const stream = (model, context, options) => {
@@ -20,7 +20,25 @@ index ed81baa3860fa20cf9d38885f9dd4b6b2f639045..343f6bf05b839429e7616568e724748d
              // Some providers via OpenRouter give additional information in this field.
              // normalizeProviderError already stringifies the parsed body (error.error)
              // into errorMessage, so only append the raw metadata when it is not already
-@@ -573,12 +584,18 @@ function buildParams(model, context, options, compat = getCompat(model), cacheRe
+@@ -547,14 +558,14 @@ function buildParams(model, context, options, compat = getCompat(model), cacheRe
+             params.tool_stream = true;
+         }
+     }
+-    else if (hasToolHistory(context.messages)) {
+-        // Anthropic (via LiteLLM/proxy) requires tools param when conversation has tool_calls/tool_results
++    else if (/(^|\/)claude-/.test(model.id) && hasToolHistory(context.messages)) {
++        // Claude via LiteLLM/proxy needs this history fallback; other endpoints may reject empty tools.
+         params.tools = [];
+     }
+     if (cacheControl) {
+         applyAnthropicCacheControl(messages, params.tools, cacheControl);
+     }
+-    if (options?.toolChoice) {
++    if (activeTools?.length && options?.toolChoice) {
+         params.tool_choice = options.toolChoice;
+     }
+     if (compat.thinkingFormat === "zai" && model.reasoning) {
+@@ -570,12 +581,18 @@ function buildParams(model, context, options, compat = getCompat(model), cacheRe
      }
      else if (compat.thinkingFormat === "qwen" && model.reasoning) {
          params.enable_thinking = !!options?.reasoningEffort;
