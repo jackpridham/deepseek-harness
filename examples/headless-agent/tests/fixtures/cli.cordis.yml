@@ -6,6 +6,10 @@
   config:
     path: ../../cordis.yml
     patches:
+      - id: compaction-basic
+        name: '@deepseek-ai/dsh-compaction-basic'
+        config:
+          auto: !!js process.env.DSH_CLI_MOCK_COMPACTION === undefined
       - id: llm-deepseek
         name: '@deepseek-ai/dsh-llm-deepseek'
         disabled: true

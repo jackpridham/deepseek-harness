@@ -822,6 +822,35 @@ describe('optional model-free tool-result pruning', () => {
     expect(session.surface.replaceGeneration).toBe(threshold === 5_500 ? 3 : 4)
   })
 
+  it('declines a non-reducing output-budget checkpoint without replacing or retrying history', async () => {
+    const ctx = createContext(10_000)
+    const compact = new TestCompactionEngine(ctx, { auto: false, retainTokens: 50 })
+    compact.summary = [{ type: 'text', text: 'expanded checkpoint '.repeat(10_000) }]
+    const session = conversation()
+    const before = session.deriveMessages()
+    expect(await compact.compactForOutputBudget(agent(session, MODEL), session.requestHeader()!, 10_000, 9_900, SIGNAL)).toBeNull()
+    expect(compact.calls).toHaveLength(1)
+    expect(session.deriveMessages()).toEqual(before)
+    expect(session.surface.replaceGeneration).toBe(0)
+    const end = session.events.at(-1)
+    expect(end?.type).toBe('compaction/end')
+    if (end?.type === 'compaction/end') expect(end.data.error).toContain('summary is not smaller')
+  })
+
+  it('output-budget recovery preserves unrelated summarizer failures and cancellation', async () => {
+    const ctx = createContext(10_000)
+    const compact = new TestCompactionEngine(ctx, { auto: false, retainTokens: 50 })
+    const session = conversation()
+    compact.error = new Error('provider unavailable')
+    await expect(compact.compactForOutputBudget(agent(session, MODEL), session.requestHeader()!, 10_000, 9_900, SIGNAL)).rejects.toThrow('provider unavailable')
+    compact.error = undefined
+    compact.summary = [{ type: 'text', text: 'expanded checkpoint '.repeat(10_000) }]
+    const abort = new AbortController()
+    compact.mutateDuringSummary = () => { abort.abort(new Error('cancelled by caller')) }
+    await expect(compact.compactForOutputBudget(agent(session, MODEL), session.requestHeader()!, 10_000, 9_900, abort.signal)).rejects.toThrow('cancelled by caller')
+    expect(session.surface.replaceGeneration).toBe(0)
+  })
+
   it('summarizes the pruned surface when pruning is insufficient', async () => {
     const ctx = createContext(2_000)
     void new ToolResultPruner(ctx, pruneConfig)

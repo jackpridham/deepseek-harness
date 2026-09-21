@@ -10,7 +10,7 @@ import { CompactionEngine, ManualCompactionError } from '@deepseek-ai/dsh-compac
 import type { CompactionResult, CompactionTrigger } from '@deepseek-ai/dsh-compaction'
 import type { TokenMeter } from '@deepseek-ai/dsh-token-meter'
 import type { EpochHeader, Session } from '@deepseek-ai/dsh-session'
-import { CONTEXT_WINDOW_EXCEEDED_CODE, assertNever } from '@deepseek-ai/dsh-llm'
+import { CONTEXT_WINDOW_EXCEEDED_CODE, assertNever, LlmError } from '@deepseek-ai/dsh-llm'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { CommandId } from '@deepseek-ai/dsh-commands/brand'
@@ -338,7 +338,9 @@ export class BasicCompactionEngine extends CompactionEngine {
    * @param contextWindow - resolved selected context capacity for that request.
    * @param reserveTokens - output allowance plus estimator safety margin.
    * @param signal - live turn cancellation signal.
-   * @returns the final replacement, or `null` when no safe region exists.
+   * A non-reducing summary leaves history intact and returns to the caller's
+   * output admission check; it never authorizes an over-capacity request.
+   * @returns the final replacement, or `null` when no safe reduction landed.
    */
   async compactForOutputBudget(
     agent: Agent,
@@ -366,7 +368,13 @@ export class BasicCompactionEngine extends CompactionEngine {
     for (let attempt = 0; attempt <= spec.compactionRetries; attempt += 1) {
       const range = selectCompactableRange(agent.session, measurement, spec.retainTokens)
       if (range === null) return result
-      result = await this.compactRegion(range.start, range.end, agent, signal)
+      try {
+        result = await this.compactRegion(range.start, range.end, agent, signal)
+      } catch (error: unknown) {
+        signal.throwIfAborted()
+        if (!(error instanceof LlmError) || error.code !== 'COMPACTION_NO_REDUCTION') throw error
+        return result
+      }
       measurement = meter.measure(agent.session, header)
       if (measurement.totalTokens <= threshold) return result
     }

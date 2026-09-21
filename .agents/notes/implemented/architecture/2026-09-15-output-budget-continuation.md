@@ -14,10 +14,13 @@ The agent loop measures the actual durable surface with its provisional header b
 
 Summary truncation has its own bounded recovery and typed `COMPACTION_SUMMARY_TRUNCATED` failure. Output admission catches only that failure, remeasures the preserved surface, and sends a reduced response allowance if space remains. Cancellation takes precedence, and an exhausted context preserves the specific summary diagnostic. This behavior applies to resumed sessions with old failed compaction records without changing their event format or replacing incomplete checkpoints.
 
+A completed checkpoint that is not smaller than its selected region has a separate `COMPACTION_NO_REDUCTION` failure. Output-budget compaction catches only that typed rejection after cancellation checks and returns the last committed reduction, if any. The shrink guard and failed lifecycle record stay intact; unchanged history is not retried within that admission. The loop still measures the full request before deciding whether a smaller output allowance fits. Retention and tool-pair balancing can leave a small historical prefix even when the complete request nearly fills context, so rejection of that checkpoint alone does not prove that the next model request is unsafe.
+
 A capped response retains text and reasoning, drops every tool call from the assembled message, and appends one durable continuation input. At most three additional requests are scheduled per turn. A repeated or empty text/reasoning result, continuation error, direct `AgentOptions.maxTokens` cap, or exhausted continuation bound ends recovery. `output/continuation` records the outcome. A successful continuation is a completed turn; an unrecovered cap remains `max-tokens`.
 
 ## Alternatives considered
 
+- **Dropping the net-reduction guard or swallowing all compaction failures** — can expand history or conceal provider, lifecycle and cancellation failures. Only a completed non-reducing candidate is declined by output-budget compaction.
 - **A browser-only continue action** — would not recover goals, SDK children, or reconnecting sessions.
 - **Executing a capped tool call** — partial arguments are not safe actions.
 - **Treating all numeric caps as hard caller limits** — session output selection also resolves to a numeric request cap and must remain continuable.
@@ -28,7 +31,7 @@ The shared picker puts selectable models first and exposes catalog modes and out
 
 ## Validation
 
-Validation for this development deployment consists of source review, TypeScript and bundle builds, and installation integrity checks. Browser, CLI functional and inference acceptance are reserved for the user.
+Keyless runnable headless snapshots cover non-reducing compaction with available output space and with exhausted context; package regressions preserve history, cancellation and unrelated failures. Live inference and deployment acceptance remain separate.
 
 ## Consequences
 

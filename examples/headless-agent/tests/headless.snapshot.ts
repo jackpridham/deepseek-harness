@@ -505,6 +505,32 @@ describe('headless stream-json snapshots', () => {
     expect(events.find(event => event.type === 'turn/end')?.data).toMatchObject({ reason: { kind: 'completed' } })
   }, LOADER_SMOKE_TEST_TIMEOUT_MS)
 
+  it.each(['fits', 'full'])('admits output after a non-reducing checkpoint only when the request fits: %s', async (capacity) => {
+    const result = await runLoaderSmoke({
+      label: 'non-reducing checkpoint output admission',
+      tempDirPrefix: 'headless-snapshot-no-reduction-',
+      binScript,
+      libBinScript: binScript,
+      configPath: reasoningConfigPath,
+      binArgs: [reasoningConfigPath, 'inventory '.repeat(80)],
+      tsconfigPath,
+      env: { DSH_CLI_MOCK_COMPACTION: capacity },
+    })
+    expect(result.stderr).toBe('')
+    const events = parseJsonl(result.stdout).flatMap(record => record.type === 'session_event' ? [record.event as JsonObject] : [])
+    const transcript = events.flatMap<JsonObject>((event) => {
+      const data = event.data as JsonObject
+      if (event.type === 'output/budget') return [{ type: event.type, step: data.step, requested: data.requested, effective: data.effective, contextWindow: data.contextWindow }]
+      if (event.type === 'compaction/end') return [{ type: event.type, error: data.error }]
+      if (event.type === 'turn/end') return [{ type: event.type, reason: data.reason }]
+      return []
+    })
+    expect(transcript).toMatchSnapshot()
+    expect(events.filter(event => event.type === 'compaction/end')).toHaveLength(1)
+    expect(events.some(event => event.type === 'compaction/summary')).toBe(false)
+    expect(events.find(event => event.type === 'turn/end')?.data).toMatchObject({ reason: capacity === 'fits' ? { kind: 'completed' } : { kind: 'error', error: { code: 'OUTPUT_BUDGET_EXCEEDED' } } })
+  }, LOADER_SMOKE_TEST_TIMEOUT_MS)
+
   it('logs the model default and a dynamic next-step reasoning effort', async () => {
     const result = await runLoaderSmoke({
       label: 'reasoning effort headless stream-json snapshot',

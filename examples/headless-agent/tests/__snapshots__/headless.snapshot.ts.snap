@@ -1,5 +1,60 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`headless stream-json snapshots > admits output after a non-reducing checkpoint only when the request fits: fits 1`] = `
+[
+  {
+    "contextWindow": 32768,
+    "effective": 8192,
+    "requested": 8192,
+    "step": 1,
+    "type": "output/budget",
+  },
+  {
+    "error": "summary is not smaller than the shadowed content (1415 estimated framed tokens >= 208)",
+    "type": "compaction/end",
+  },
+  {
+    "contextWindow": 32768,
+    "effective": 2495,
+    "requested": 8192,
+    "step": 2,
+    "type": "output/budget",
+  },
+  {
+    "reason": {
+      "kind": "completed",
+    },
+    "type": "turn/end",
+  },
+]
+`;
+
+exports[`headless stream-json snapshots > admits output after a non-reducing checkpoint only when the request fits: full 1`] = `
+[
+  {
+    "contextWindow": 32768,
+    "effective": 8192,
+    "requested": 8192,
+    "step": 1,
+    "type": "output/budget",
+  },
+  {
+    "error": "summary is not smaller than the shadowed content (1415 estimated framed tokens >= 208)",
+    "type": "compaction/end",
+  },
+  {
+    "reason": {
+      "error": {
+        "code": "OUTPUT_BUDGET_EXCEEDED",
+        "message": "no output space remains after context budgeting",
+      },
+      "kind": "error",
+    },
+    "type": "turn/end",
+  },
+]
+`;
+
 exports[`headless stream-json snapshots > replays a tool result after a large input with the automatic output default 1`] = `
 [
   {
