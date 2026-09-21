@@ -55,6 +55,39 @@ exports[`headless stream-json snapshots > admits output after a non-reducing che
 ]
 `;
 
+exports[`headless stream-json snapshots > bounds unusable summary recovery in the real headless composition: empty-fail 1`] = `
+{
+  "budgets": [
+    {
+      "contextWindow": 32768,
+      "effective": 8192,
+      "requested": 8192,
+    },
+  ],
+  "completed": false,
+  "summaries": 0,
+}
+`;
+
+exports[`headless stream-json snapshots > bounds unusable summary recovery in the real headless composition: empty-recover 1`] = `
+{
+  "budgets": [
+    {
+      "contextWindow": 32768,
+      "effective": 8192,
+      "requested": 8192,
+    },
+    {
+      "contextWindow": 32768,
+      "effective": 2593,
+      "requested": 8192,
+    },
+  ],
+  "completed": true,
+  "summaries": 1,
+}
+`;
+
 exports[`headless stream-json snapshots > replays a tool result after a large input with the automatic output default 1`] = `
 [
   {

@@ -15,6 +15,7 @@ const compactionCase = process.env.DSH_CLI_MOCK_COMPACTION
 
 /** Keyless headless-agent adapter: one real bash call followed by a final answer. */
 class CliMockAdapter extends LlmAdapter {
+  private summaryAttempts = 0
   override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     return {
       provider,
@@ -37,7 +38,17 @@ class CliMockAdapter extends LlmAdapter {
 
   async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     if (compactionCase !== undefined && options.purpose === 'compaction') {
-      const text = 'Expanded checkpoint. '.repeat(250)
+      this.summaryAttempts++
+      if (compactionCase.startsWith('empty-')) {
+        if (this.summaryAttempts > 2) throw new Error('unbounded empty-summary retry')
+        if (this.summaryAttempts === 1 || compactionCase === 'empty-fail') {
+          yield { type: 'block-start', index: 0, blockType: 'reasoning' }
+          yield { type: 'reasoning-delta', index: 0, text: 'private unusable output' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+          return
+        }
+      }
+      const text = compactionCase === 'empty-recover' ? 'Keep the completed tool result.' : 'Expanded checkpoint. '.repeat(250)
       yield { type: 'block-start', index: 0, blockType: 'text' }
       yield { type: 'text-delta', index: 0, text }
       yield { type: 'block-end', index: 0, block: { type: 'text', text } }
@@ -54,7 +65,7 @@ class CliMockAdapter extends LlmAdapter {
       yield { type: 'block-start', index: 0, blockType: 'tool-call' }
       yield { type: 'tool-call-delta', index: 0, id: CallId('cli-smoke-call'), name: 'bash', argumentsDelta: args }
       yield { type: 'block-end', index: 0, block: { type: 'tool-call', id: CallId('cli-smoke-call'), name: 'bash', arguments: args } }
-      yield { type: 'usage', usage: { inputTokens: compactionCase === 'fits' ? 24_000 : compactionCase === 'full' ? 28_000 : longContext ? 20_000 : 11, outputTokens: 3, cacheReadTokens: 2 } }
+      yield { type: 'usage', usage: { inputTokens: (compactionCase === 'fits' || compactionCase?.startsWith('empty-')) ? 24_000 : compactionCase === 'full' ? 28_000 : longContext ? 20_000 : 11, outputTokens: 3, cacheReadTokens: 2 } }
       yield { type: 'finish', reason: { kind: 'tool-calls' } }
       return
     }

@@ -1158,6 +1158,9 @@ describe('compaction region transaction', () => {
 })
 
 class ScriptedAdapter extends LlmAdapter {
+  requests: GenerateOptions[] = []
+  outputs: ContentBlock[][] = []
+  afterStream?: () => void
   lastOptions: GenerateOptions | undefined
   usage: TokenUsage | undefined
 
@@ -1170,7 +1173,8 @@ class ScriptedAdapter extends LlmAdapter {
 
   override async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.lastOptions = options
-    for (const [index, block] of this.blocks.entries()) {
+    this.requests.push(options)
+    for (const [index, block] of (this.outputs.shift() ?? this.blocks).entries()) {
       yield { type: 'block-start', index, blockType: block.type }
       if (block.type === 'text') {
         yield { type: 'text-delta', index, text: block.text }
@@ -1182,6 +1186,7 @@ class ScriptedAdapter extends LlmAdapter {
     }
     if (this.usage !== undefined) yield { type: 'usage', usage: this.usage }
     yield { type: 'finish', reason: this.finish }
+    this.afterStream?.()
   }
 }
 
@@ -1421,7 +1426,7 @@ describe('default one-shot summarizer', () => {
     [{ kind: 'error', failure: { message: 'provider failed', code: 'PROVIDER' } }, 'PROVIDER', /provider failed/],
     [{ kind: 'error', failure: { message: 'opaque', code: 'UNKNOWN' } }, 'UNKNOWN', /opaque/],
     [{ kind: 'aborted', failure: { message: 'summarization aborted', code: 'ABORTED' } }, 'ABORTED', /aborted/],
-    [{ kind: 'max-tokens' }, 'MAX_TOKENS', /token cap/],
+    [{ kind: 'max-tokens' }, 'COMPACTION_SUMMARY_TRUNCATED', /token cap/],
   ] as Array<[(StreamChunk & { type: 'finish' })['reason'], string | undefined, RegExp]>) (
     'rejects terminal finish %#',
     async (finish, code, pattern) => {
@@ -1438,10 +1443,61 @@ describe('default one-shot summarizer', () => {
     },
   )
 
-  it('rejects empty or reasoning-only successful output', async () => {
-    const { compact } = await summarizerHarness([{ type: 'reasoning', text: 'private' }])
+  it.each(([
+    [], [{ type: 'text', text: '  ' }], [{ type: 'reasoning', text: 'private' }],
+    [{ type: 'tool-call', id: CallId('unexecuted'), name: 'read', arguments: '{}' }],
+  ] as ContentBlock[][]).map(blocks => ({ blocks })))('bounds recovery for unusable successful summary %#', async ({ blocks }) => {
+    const { adapter, compact } = await summarizerHarness(blocks)
     await expect(compact.runSummarize(promptInput('history'), agent(conversation(1), MODEL)))
-      .rejects.toThrow(/no text summary content/)
+      .rejects.toMatchObject({ code: 'COMPACTION_SUMMARY_EMPTY' })
+    expect(adapter.requests).toHaveLength(2)
+  })
+
+  it('retries a reasoning-only summary once with a fresh concise instruction and keeps the valid checkpoint', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'valid checkpoint' }])
+    adapter.outputs = [[{ type: 'reasoning', text: 'private first attempt' }]]
+    const owner = agent(conversation(1), MODEL)
+    const result = await compact.runSummarize(promptInput('history'), owner)
+    expect(adapter.requests).toHaveLength(2)
+    expect(result.summary).toEqual([{ type: 'text', text: 'valid checkpoint' }])
+    expect(adapter.requests[1]!.messages.slice(0, -1)).toEqual(adapter.requests[0]!.messages.slice(0, -1))
+    expect(adapter.requests[1]!.messages.at(-1)).not.toEqual(adapter.requests[0]!.messages.at(-1))
+    expect(adapter.requests[1]!.maxTokens).toBeLessThanOrEqual(adapter.requests[0]!.maxTokens!)
+  })
+
+  it('keeps history intact and records diagnostic facts after both empty attempts', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'reasoning', text: 'private output' }])
+    const session = conversation(1)
+    const before = session.deriveMessages()
+    await expect(compact.compactRegion(session.surface.nodes[0]!, session.surface.nodes.at(-1)!, agent(session, MODEL)))
+      .rejects.toMatchObject({ code: 'COMPACTION_SUMMARY_EMPTY' })
+    expect(adapter.requests).toHaveLength(2)
+    expect(session.deriveMessages()).toEqual(before)
+    const end = session.events.findLast(event => event.type === 'compaction/end')
+    expect(end?.data.error).toContain('"finish":"stop"')
+    expect(end?.data.error).toContain('"blockTypes":["reasoning"]')
+    expect(end?.data.error).not.toContain('private output')
+    expect(session.events.some(event => event.type === 'compaction/summary')).toBe(false)
+  })
+
+  it('does not retry unusable output after cancellation', async () => {
+    const { adapter, compact } = await summarizerHarness([])
+    const abort = new AbortController()
+    adapter.afterStream = () => { abort.abort(new Error('cancelled summary')) }
+    await expect(compact.runSummarize(promptInput('history'), agent(conversation(1), MODEL), abort.signal))
+      .rejects.toThrow('cancelled summary')
+    expect(adapter.requests).toHaveLength(1)
+  })
+
+  it('applies the net-reduction guard to the recovered summary', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'too large '.repeat(10000) }])
+    adapter.outputs = [[]]
+    const session = conversation(1)
+    const before = session.deriveMessages()
+    await expect(compact.compactRegion(session.surface.nodes[0]!, session.surface.nodes.at(-1)!, agent(session, MODEL)))
+      .rejects.toMatchObject({ code: 'COMPACTION_NO_REDUCTION' })
+    expect(adapter.requests).toHaveLength(2)
+    expect(session.deriveMessages()).toEqual(before)
   })
 
   it('rejects image summary output instead of silently dropping it', async () => {

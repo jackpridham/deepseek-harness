@@ -36,3 +36,10 @@ Keyless runnable headless snapshots cover non-reducing compaction with available
 ## Consequences
 
 The session log exposes the selected request allowance after runtime reduction and continuation history to both SDK transports without a second protocol. A direct child or SDK request that supplies `maxTokens` remains a hard per-request bound. The fixed estimator is intentionally conservative through `outputSafetyMargin`; increase it only when provider overflow evidence shows it is insufficient.
+
+
+### September 21 retry handoff: unusable summaries
+
+A retained Flash turn failed after eleven successful compactions because the default summarizer found no nonblank text. The raw failed response and finish metadata were not retained; nearby provider counters do not establish whether the response was empty, reasoning-only, tool-only or misclassified. The existing concise second attempt now covers completed unusable output as well as token-cap finishes, with at most two calls total and the same context/headroom checks. A second unusable response raises `COMPACTION_SUMMARY_EMPTY` without a checkpoint. Provider failures, cancellation, image rejection and net reduction remain guards. Retry warnings and terminal empty-summary errors include non-content call facts.
+
+Focused tests cover empty, whitespace, reasoning and tool blocks, successful recovery, bounded failure, cancellation, and net-reduction rejection after retry. Real headless Loader snapshots cover successful recovery and terminal exhaustion. No benchmark prompts, model selections, requested limits or case data changed.

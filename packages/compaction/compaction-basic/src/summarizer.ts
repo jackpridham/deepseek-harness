@@ -125,11 +125,16 @@ export type SummaryResult = {
   }
 )
 
-/** Complete usable output from one summary stream, or `undefined` at its token cap. */
+/** Complete usable output from one summary stream. */
 interface SummaryStreamResult {
   readonly summary: Array<Extract<ContentBlock, { type: 'text' }>>
   readonly rawOutput: ContentBlock[]
   readonly usage?: TokenUsage
+}
+
+interface UnusableSummary {
+  readonly reason: 'empty' | 'max-tokens'
+  readonly diagnostic: string
 }
 
 /**
@@ -215,7 +220,7 @@ export async function summarizeWithLlm(
   const firstCap = capFor(config.maxTokens, firstMessages)
   if (firstCap <= 0) throw noHeadroomError()
   const first = await streamSummary(ctx, optionsFor(firstMessages, firstCap))
-  if (first !== undefined) return {
+  if (!('reason' in first)) return {
     ...first,
     llmStreamCall: true,
     provider: target.provider,
@@ -223,15 +228,22 @@ export async function summarizeWithLlm(
     maxTokens: firstCap,
   }
 
+  ctx.logger.warn(`compaction: retrying unusable summary: ${first.diagnostic}`)
   const retryMessages = messagesFor(CONCISE_COMPACTION_INSTRUCTION)
-  const retryRequested = contextWindow !== undefined && info.maxTokens !== undefined
+  const retryRequested = first.reason === 'max-tokens' && contextWindow !== undefined && info.maxTokens !== undefined
     ? Math.max(firstCap, config.maxTokens * 2)
     : firstCap
   const retryCap = capFor(retryRequested, retryMessages)
   if (retryCap <= 0) throw noHeadroomError()
   signal?.throwIfAborted()
   const retry = await streamSummary(ctx, optionsFor(retryMessages, retryCap))
-  if (retry === undefined) throw truncatedError(retryCap)
+  if ('reason' in retry) {
+    if (retry.reason === 'max-tokens') throw truncatedError(retryCap)
+    throw new LlmError(
+      `summarization produced no text summary content after two attempts; no checkpoint was committed. ${first.diagnostic}; ${retry.diagnostic}`,
+      'COMPACTION_SUMMARY_EMPTY',
+    )
+  }
   return {
     ...retry,
     provider: target.provider,
@@ -240,17 +252,23 @@ export async function summarizeWithLlm(
   }
 }
 
-/** Stream one complete text-only summary, returning `undefined` only for a token-cap finish. */
-async function streamSummary(ctx: Context, options: GenerateOptions): Promise<SummaryStreamResult | undefined> {
+/** Retry only completed but unusable output; provider failures and cancellation propagate. */
+async function streamSummary(ctx: Context, options: GenerateOptions): Promise<SummaryStreamResult | UnusableSummary> {
   const assembler = new BlockAssembler()
   for await (const chunk of ctx.llm.stream(options)) assembler.push(chunk)
-  if (assembler.finish.kind === 'max-tokens') return undefined
   const error = finishError(assembler.finish)
   if (error !== undefined) throw error
   const rawOutput = assembler.blocks()
   const summary = summaryText(rawOutput)
-  if (!summary.some(block => block.text.trim().length > 0)) {
-    throw new Error('summarization produced no text summary content')
+  if (assembler.finish.kind === 'max-tokens' || !summary.some(block => block.text.trim().length > 0)) {
+    return {
+      reason: assembler.finish.kind === 'max-tokens' ? 'max-tokens' : 'empty',
+      diagnostic: JSON.stringify({
+        sessionId: options.sessionId, requestedProvider: options.provider, requestedModel: options.model,
+        contextWindow: options.contextWindow, maxTokens: options.maxTokens, finish: assembler.finish.kind,
+        blockTypes: rawOutput.map(block => block.type), usage: assembler.usage,
+      }),
+    }
   }
   return {
     summary,

@@ -531,6 +531,28 @@ describe('headless stream-json snapshots', () => {
     expect(events.find(event => event.type === 'turn/end')?.data).toMatchObject({ reason: capacity === 'fits' ? { kind: 'completed' } : { kind: 'error', error: { code: 'OUTPUT_BUDGET_EXCEEDED' } } })
   }, LOADER_SMOKE_TEST_TIMEOUT_MS)
 
+  it.each(['empty-recover', 'empty-fail'])('bounds unusable summary recovery in the real headless composition: %s', async (scenario) => {
+    const result = await runLoaderSmoke({
+      label: 'empty summary recovery',
+      tempDirPrefix: 'headless-snapshot-empty-summary-',
+      binScript, libBinScript: binScript, configPath: reasoningConfigPath,
+      binArgs: [reasoningConfigPath, 'inventory '.repeat(80)], tsconfigPath,
+      env: { DSH_CLI_MOCK_COMPACTION: scenario },
+    })
+    const events = parseJsonl(result.stdout).flatMap(record => record.type === 'session_event' ? [record.event as JsonObject] : [])
+    const summaries = events.filter(event => event.type === 'compaction/summary')
+    expect(summaries).toHaveLength(scenario === 'empty-recover' ? 1 : 0)
+    expect(JSON.stringify(summaries)).not.toContain('private unusable output')
+    const end = events.find(event => event.type === 'turn/end')?.data as JsonObject
+    expect(end).toMatchObject({ reason: scenario === 'empty-recover'
+      ? { kind: 'completed' } : { kind: 'error', error: { code: 'COMPACTION_SUMMARY_EMPTY' } } })
+    const budgets = events.filter(event => event.type === 'output/budget').map((event) => {
+      const data = event.data as JsonObject
+      return { requested: data.requested, effective: data.effective, contextWindow: data.contextWindow }
+    })
+    expect({ summaries: summaries.length, budgets, completed: scenario === 'empty-recover' }).toMatchSnapshot()
+  }, LOADER_SMOKE_TEST_TIMEOUT_MS)
+
   it('logs the model default and a dynamic next-step reasoning effort', async () => {
     const result = await runLoaderSmoke({
       label: 'reasoning effort headless stream-json snapshot',
