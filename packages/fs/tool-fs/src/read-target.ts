@@ -24,7 +24,7 @@ export async function resolveRegularReadTarget(
 ): Promise<{ target: FsTarget; info: FsInfo }> {
   const policy = ctx.fs.sandboxMode === undefined
     ? undefined
-    : ctx.sandboxPolicy.resolve(exec.agent === undefined ? {} : { session: exec.agent.session })
+    : ctx.get('sandboxPolicy')?.resolve(exec.agent === undefined ? {} : { session: exec.agent.session })
   const target = await ctx.fs.resolve(requestedPath, sessionResolveOptions(exec, requestedPath, policy))
   const info = await ctx.fs.stat(target, exec.signal)
   if (info === undefined) {

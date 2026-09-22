@@ -53,6 +53,8 @@ The tool passes `exec` (the tool-execution context) as the opaque `actor` on eve
 
 When `ctx.fs.sandboxMode` reports confinement, write/edit advertise `sandbox_permissions` and `justification` and resolve approved retries through `ctx.approval`. The policy owner contributes capability-neutral standing policy; the tool results retain operation-specific denial and retry guidance.
 
+Under a confining filesystem, `read` and `read_image` also resolve the calling session's sandbox policy and pass it to path resolution, preserving protected-path restrictions and session mode overrides. The optional policy service is accessed through `ctx.get('sandboxPolicy')`; plugin initialization rejects a confining filesystem without it.
+
 ## `fs/observed` is fire-and-forget
 
 `fs/observed` fires AFTER the read/read_image/write/edit already succeeded, via a plain `ctx.emit`. A listener is contractually a synchronous, side-effect-only recorder (`@deepseek-ai/dsh-fs-observation-policy`'s is a `WeakMap.set`); the tool does not guard the emit, so a listener that throws would surface as the tool's `isError` result — async or fallible observation does not belong on this event.
