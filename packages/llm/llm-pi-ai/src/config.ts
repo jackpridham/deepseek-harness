@@ -205,7 +205,14 @@ export interface ResolvedPiAiProviderProfile
     unavailableReason?: string
   }>>
   /** Endpoint-owned selector and current runtime state by logical model id. */
-  modelStates: ReadonlyMap<string, { selectable: boolean; active: boolean; supportsTools?: boolean }>
+  modelStates: ReadonlyMap<string, {
+    selectable: boolean
+    active: boolean
+    supportsTools?: boolean
+    description?: string
+    releaseDate?: string
+    url?: string
+  }>
   /** Endpoint-owned load choices and freshly observed worker identity. */
   loadModes: ReadonlyMap<string, {
     defaultLoadMode?: string

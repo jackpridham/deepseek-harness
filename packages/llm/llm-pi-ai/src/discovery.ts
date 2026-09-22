@@ -54,6 +54,9 @@ interface ListingEntry {
   /** Common gateway extensions; absent from the official listings. */
   name?: unknown
   display_name?: unknown
+  description?: unknown
+  release_date?: unknown
+  url?: unknown
   context_window?: unknown
   context_length?: unknown
   max_tokens?: unknown
@@ -300,6 +303,9 @@ function readListing(body: unknown): LlmDiscoveredModel[] {
     const id = label(entry?.id)
     if (id === undefined) continue
     const name = label(entry?.name, entry?.display_name)
+    const description = label(entry?.description)
+    const releaseDate = label(entry?.release_date)
+    const url = label(entry?.url)
     const contextWindow = capacity(entry?.context_window, entry?.context_length)
     const contexts = contextWindows(entry?.context_windows)
     const reasoningInfo = reasoning(entry?.reasoning, id)
@@ -321,6 +327,9 @@ function readListing(body: unknown): LlmDiscoveredModel[] {
       selectable: entry?.selectable !== false,
       ...capabilities?.tools === undefined ? {} : { supportsTools: capabilities.tools },
       ...name === undefined ? {} : { name },
+      ...description === undefined ? {} : { description },
+      ...releaseDate === undefined ? {} : { releaseDate },
+      ...url === undefined ? {} : { url },
       ...input === undefined ? {} : { inputModalities: input },
       ...contextWindow === undefined ? {} : { contextWindow },
       ...contexts === undefined ? {} : { contextWindows: contexts },

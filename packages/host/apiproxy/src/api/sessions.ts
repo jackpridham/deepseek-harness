@@ -147,6 +147,10 @@ export interface ModelCatalogModel {
   name: string
   /** Optional provider-supplied description. */
   description?: string
+  /** Upstream release date as YYYY-MM-DD; absent when unknown. */
+  releaseDate?: string
+  /** HTTP(S) model card or download page. */
+  url?: string
   /** Whether an ordinary conversation may select this model. */
   selectable?: boolean
   /** Whether the provider explicitly verifies native tool-call support. */

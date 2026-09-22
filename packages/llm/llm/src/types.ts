@@ -224,6 +224,12 @@ export interface LlmDiscoveredModel {
   id: string
   /** Human-readable name when the endpoint supplies one. */
   name?: string
+  /** Provider-supplied description of strengths and intended uses. */
+  description?: string
+  /** Upstream release date as YYYY-MM-DD; absent when unknown. */
+  releaseDate?: string
+  /** HTTP(S) model card or download page. */
+  url?: string
   /** Accepted request modalities when the endpoint supplies them. */
   inputModalities?: readonly ModelModality[]
   /** Maximum combined request and response context, when disclosed. */
@@ -327,6 +333,10 @@ export interface LlmModelInfo {
   name: string
   /** Optional user-facing distinction from otherwise similar models. */
   description?: string
+  /** Upstream release date as YYYY-MM-DD; absent when unknown. */
+  releaseDate?: string
+  /** HTTP(S) model card or download page. */
+  url?: string
   /** Accepted request modalities; absent means unknown, while an explicit omission is negative capability. */
   inputModalities?: readonly ModelModality[]
   /** Whether an ordinary conversation may select this model; omission means yes. */

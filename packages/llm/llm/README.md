@@ -103,3 +103,5 @@ Pass-through; the registry preserves the assembled request prefix, while the sel
 - **`BlockAssembler` handles core block kinds only** — a plugin-added block type whose stream is never closed by `block-end` makes `blocks()` throw.
 - **`APP_IDENTITY.url` names a repository that does not exist yet** — the public home must be reachable before release.
 - **`GenerateOptions.sessionId` is a locally-declared brand** — importing dsh-session's `SessionId` would cycle; a future ids-owning package would dissolve the workaround.
+
+Model discovery and catalog listings retain optional `description`, `releaseDate` (`YYYY-MM-DD`), and `url` metadata for consumer presentation. These fields do not change model resolution or request parameters.

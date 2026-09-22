@@ -306,6 +306,8 @@ async function buildModelCatalog(ctx: Context): Promise<{
               id: model.id,
               name: model.name,
               ...model.description === undefined ? {} : { description: model.description },
+              ...model.releaseDate === undefined ? {} : { releaseDate: model.releaseDate },
+              ...model.url === undefined ? {} : { url: model.url },
               ...model.selectable === undefined ? {} : { selectable: model.selectable },
               ...resolved.supportsTools === undefined ? {} : { supportsTools: resolved.supportsTools },
               ...model.active === undefined ? {} : { active: model.active },
@@ -2521,7 +2523,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           const cwd = policy?.workspace === false ? undefined : workspace?.path ?? request.payload.cwd ?? defaults.cwd
           const requestedPreset = request.payload.agentPreset
           try {
-            await ensureSession(sessionId, cwd, request.payload.sessionId !== undefined, requestedPreset, request.payload.instructions, sessionPolicy)
+            await ensureSession(
+              sessionId, cwd, request.payload.sessionId !== undefined, requestedPreset, request.payload.instructions, sessionPolicy,
+            )
           } catch (error: unknown) {
             if (error instanceof SessionPolicyConflict) {
               return err(request, {

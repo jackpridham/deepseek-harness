@@ -125,7 +125,10 @@ function CatalogModel({ provider, model, renderSlot }: {
   return (
     <li className={styles['catalogModel']}>
       <div className={styles['catalogModelHeading']}>
-        <span className={styles['catalogModelName']} title={model.name}>{model.name}</span>
+        {model.url !== undefined && /^https?:\/\//i.test(model.url)
+          ? <a className={styles['catalogModelName']} href={model.url} target="_blank" rel="noopener noreferrer" title={model.url}>{model.name}</a>
+          : <span className={styles['catalogModelName']} title={model.name}>{model.name}</span>}
+        <span className={styles['catalogModelRelease']}>{model.releaseDate ? <>Released <time dateTime={model.releaseDate}>{model.releaseDate}</time></> : 'Release date unknown'}</span>
         {model.selectable === false ? <span className={styles['rowTag']}>Backend inventory</span> : null}
         <span className={styles['catalogActions']}>{renderSlot('settings.models.catalog.actions', {
           provider,
@@ -135,6 +138,7 @@ function CatalogModel({ provider, model, renderSlot }: {
           active: model.active,
         })}</span>
       </div>
+      {model.description ? <p className={styles['catalogModelDescription']}>{model.description}</p> : null}
       <span className={styles['catalogModelId']} title={model.id}>{model.id}</span>
       {model.context === undefined ? null : <span className={styles['catalogContexts']}>Context: {model.context.contextWindows.map(option => `${contextLabel(option.contextWindow)}${option.contextWindow === model.context?.defaultContextWindow ? ' (default)' : ''}${option.available ? '' : ' (best try)'}`).join(', ')}</span>}
     </li>
@@ -149,7 +153,7 @@ function Catalog({ groups, failures, renderSlot }: { groups: readonly ModelProvi
       {groups.map(group => (
         <section className={styles['catalogGroup']} key={group.id}>
           <h4 className={styles['catalogProvider']}>{group.name}</h4>
-          <ul className={styles['catalogModels']}>{[...group.models].sort((a, b) => Number(a.selectable === false) - Number(b.selectable === false)).map(model => <CatalogModel key={model.id} provider={group.id} model={model} renderSlot={renderSlot} />)}</ul>
+          <ul className={styles['catalogModels']}>{[...group.models].sort((a, b) => (b.releaseDate ?? '').localeCompare(a.releaseDate ?? '')).map(model => <CatalogModel key={model.id} provider={group.id} model={model} renderSlot={renderSlot} />)}</ul>
         </section>
       ))}
       {failures.map(failure => <p className={styles['catalogFailure']} key={failure.id}>{`${failure.name}: ${failure.message}`}</p>)}

@@ -1,0 +1,21 @@
+- heading "Research catalog" [level=4]
+- list:
+  - listitem:
+    - link "Newer Image":
+      - /url: https://huggingface.co/example/newest
+    - text: Released
+    - time: 2026-01-20
+    - text: Backend inventory
+    - paragraph: Image generation with readable text.
+    - text: newest
+  - listitem:
+    - link "Older Chat":
+      - /url: https://huggingface.co/example/older
+    - text: Released
+    - time: 2024-07-23
+    - paragraph: General conversation and summaries.
+    - text: "older Context: 256K (default)"
+  - listitem:
+    - text: Undated Chat Release date unknown
+    - paragraph: No verified public release date.
+    - text: "unknown Context: 256K (default)"

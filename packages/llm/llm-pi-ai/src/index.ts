@@ -499,6 +499,9 @@ export function apply(ctx: Context, config: Config): void {
     const modelStates = new Map(advertised.map(model => [model.id, {
       selectable: model.selectable ?? true,
       active: model.active ?? false,
+      ...model.description === undefined ? {} : { description: model.description },
+      ...model.releaseDate === undefined ? {} : { releaseDate: model.releaseDate },
+      ...model.url === undefined ? {} : { url: model.url },
       ...model.supportsTools === undefined ? {} : { supportsTools: model.supportsTools },
     }] as const))
     const loadModes = new Map(advertised.map(model => [model.id, {

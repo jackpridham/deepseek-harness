@@ -113,6 +113,9 @@ describe('draft-provider model discovery', () => {
           {
             id: 'acme-large',
             display_name: 'Acme Large',
+            description: 'Code and mathematics.',
+            release_date: '2026-01-20',
+            url: 'https://huggingface.co/acme/large',
             context_length: 65_536,
             context_windows: [
               { context_window: 32_768, model: 'acme-large--ctx-32768' },
@@ -152,6 +155,9 @@ describe('draft-provider model discovery', () => {
         selectable: false,
         supportsTools: false,
         name: 'Acme Large',
+        description: 'Code and mathematics.',
+        releaseDate: '2026-01-20',
+        url: 'https://huggingface.co/acme/large',
         inputModalities: ['text', 'image'],
         contextWindow: 65_536,
         contextWindows: [

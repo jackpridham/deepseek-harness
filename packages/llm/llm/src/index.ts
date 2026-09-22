@@ -552,6 +552,9 @@ export class LlmRuntime extends Service {
       models.push({
         id: model.id,
         ...model.name === undefined ? {} : { name: model.name },
+        ...model.description === undefined ? {} : { description: model.description },
+        ...model.releaseDate === undefined ? {} : { releaseDate: model.releaseDate },
+        ...model.url === undefined ? {} : { url: model.url },
         ...inputModalities === undefined ? {} : { inputModalities },
         ...model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow },
         ...model.contextWindows === undefined
@@ -623,6 +626,8 @@ export class LlmRuntime extends Service {
         id: model.id,
         name: model.name,
         ...model.description === undefined ? {} : { description: model.description },
+        ...model.releaseDate === undefined ? {} : { releaseDate: model.releaseDate },
+        ...model.url === undefined ? {} : { url: model.url },
         ...inputModalities === undefined ? {} : { inputModalities },
         ...model.selectable === undefined ? {} : { selectable: model.selectable },
         ...model.supportsTools === undefined ? {} : { supportsTools: model.supportsTools },

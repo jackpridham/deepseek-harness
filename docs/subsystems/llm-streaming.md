@@ -437,14 +437,30 @@ interface LlmModelInfo {
   name: string
   /** Optional user-facing distinction from otherwise similar models. */
   description?: string
+  /** Upstream release date as YYYY-MM-DD; absent when unknown. */
+  releaseDate?: string
+  /** HTTP(S) model card or download page. */
+  url?: string
   /** Accepted request modalities; absent means unknown, while an explicit omission is negative capability. */
   inputModalities?: readonly ModelModality[]
   /** Whether an ordinary conversation may select this model; omission means yes. */
   selectable?: boolean
+  /** Whether the provider explicitly verifies native tool-call support. */
+  supportsTools?: boolean
   /** Whether this model or one of its private runtime routes is currently loaded. */
   active?: boolean
   /** Bounded context choices, with the model default identified separately. */
   contextOptions?: LlmModelContextOptions
+  /** Maximum output tokens the adapter/model can accept. */
+  maxTokens?: number
+  /** Catalog default worker load mode. */
+  defaultLoadMode?: string
+  /** Catalog-declared worker load modes. */
+  loadModes?: readonly LlmLoadMode[]
+  /** Exact backend routes for context/mode/option selections. */
+  loadRoutes?: readonly LlmLoadRoute[]
+  /** Freshly observed loaded worker facts. */
+  loaded?: LlmLoadedWorker
 }
 ```
 
@@ -627,6 +643,12 @@ interface LlmDiscoveredModel {
   id: string
   /** Human-readable name when the endpoint supplies one. */
   name?: string
+  /** Provider-supplied description of strengths and intended uses. */
+  description?: string
+  /** Upstream release date as YYYY-MM-DD; absent when unknown. */
+  releaseDate?: string
+  /** HTTP(S) model card or download page. */
+  url?: string
   /** Accepted request modalities when the endpoint supplies them. */
   inputModalities?: readonly ModelModality[]
   /** Maximum combined request and response context, when disclosed. */
@@ -635,12 +657,22 @@ interface LlmDiscoveredModel {
   contextWindows?: readonly LlmDiscoveredContextWindow[]
   /** Whether an ordinary conversation may select this model; omission means yes. */
   selectable?: boolean
+  /** Whether the endpoint explicitly verifies native tool-call support. */
+  supportsTools?: boolean
   /** Whether this model or one of its private runtime routes is currently loaded. */
   active?: boolean
   /** Bounded reasoning choices and transport advertised by the endpoint. */
   reasoning?: LlmDiscoveredReasoningInfo
   /** Maximum output tokens, when disclosed. */
   maxTokens?: number
+  /** Catalog default worker load mode. */
+  defaultLoadMode?: string
+  /** Catalog-declared worker load modes. */
+  loadModes?: readonly LlmLoadMode[]
+  /** Exact backend routes for context/mode/option selections. */
+  loadRoutes?: readonly LlmLoadRoute[]
+  /** Verified worker configuration currently loaded for this model. */
+  loaded?: LlmLoadedWorker
 }
 ```
 

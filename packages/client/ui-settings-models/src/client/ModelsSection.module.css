@@ -95,6 +95,16 @@
   font-weight: 500;
 }
 
+.catalogModelDescription {
+  grid-column: 1 / -1;
+  margin: 4px 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.catalogModelRelease,
 .catalogModelState,
 .catalogModelId,
 .catalogContexts,

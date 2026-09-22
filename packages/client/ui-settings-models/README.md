@@ -36,4 +36,4 @@ None; this package neither assembles nor sends a provider request.
 - **Interrogation covers OpenAI-compatible endpoints** — the adapter reads only that model-list response format, so a gateway speaking another protocol reports that it cannot be asked and its models are entered by hand.
 - **Undeclared live routes render nowhere** — a route registered without a configurable-provider declaration has no settings address; it stays visible in pickers but not on this page's rows.
 
-Available-model runtime controls own their live status, so catalog inventory does not display a competing loaded-state label. The shared session picker and inventory retain selectable-first ordering; runtime Load/Unload operations remain separate from chat selection.
+Available-model runtime controls own their live status, so catalog inventory does not display a competing loaded-state label. The inventory shows provider descriptions, release dates, and model-name links to HTTP(S) model cards. Within each provider, release dates sort newest first, with unknown dates last; the session picker retains its existing ordering. Runtime Load/Unload operations remain separate from chat selection.
