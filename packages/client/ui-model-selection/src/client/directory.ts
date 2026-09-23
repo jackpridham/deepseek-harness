@@ -93,7 +93,9 @@ export class ModelDirectory {
    * updates the shared current; failure surfaces on the store and throws so
    * each entry's own retry surface engages.
    * @param selection - provider, provider-owned model id, and optional adapter-owned effort.
- */
+   * @param resolution - Explicit choice to adopt the loaded worker or switch it.
+   * @param expectedWorkerConfigIdentity - Observed worker identity; omission uses the directory snapshot.
+   */
   async select(selection: ModelSelection, resolution?: 'adopt-loaded' | 'switch-worker', expectedWorkerConfigIdentity?: string): Promise<void> {
     this.assertAvailable()
     const generation = ++this.generation

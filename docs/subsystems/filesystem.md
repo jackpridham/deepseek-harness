@@ -301,7 +301,7 @@ Abstract filesystem provider. Targets must preserve identity across aliases; rea
  * @param opts - optional cwd override and cancellation signal.
  * @returns the stable target; the same file yields the same `targetKey`.
  */
-abstract resolve(path: string, opts?: { cwd?: string; signal?: AbortSignal }): Promise<FsTarget>
+abstract resolve(path: string, opts?: { cwd?: string; signal?: AbortSignal; sandboxPolicy?: SandboxExecutionPolicy }): Promise<FsTarget>
 
 /**
  * Return the canonical absolute path a subprocess in this filesystem's

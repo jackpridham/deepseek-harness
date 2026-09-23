@@ -13,6 +13,8 @@ Source: [`packages/core/system-prompt/src/index.ts`](../../packages/core/system-
 ```ts type-equiv
 /** Merge-extensible context for one prompt assembly. */
 interface AssembleContext {
+  /** Read-only inspection or inference admission. Omitted means inference; never derive from agent status. */
+  purpose?: 'inference' | 'inspection'
   /** Session whose durable instructions apply; diagnostics may omit it. */
   session?: Session
   /**
@@ -158,7 +160,7 @@ variable(name: string, provider: (context: AssembleContext) => string | undefine
 async assemble(context: AssembleContext = {}): Promise<PromptAssembly>
 ```
 
-Source: [`packages/core/system-prompt/src/index.ts:338`](../../packages/core/system-prompt/src/index.ts)
+Source: [`packages/core/system-prompt/src/index.ts:347`](../../packages/core/system-prompt/src/index.ts)
 
 <a id="system-prompt-events"></a>
 
@@ -188,7 +190,7 @@ Expert waterfall over the assembled sections, contexts, tools, and variables. Sc
 
 Types: [Scoped](scope.md)
 
-Source: [`packages/core/system-prompt/src/index.ts:31`](../../packages/core/system-prompt/src/index.ts)
+Source: [`packages/core/system-prompt/src/index.ts:32`](../../packages/core/system-prompt/src/index.ts)
 
 <a id="system-promptchange--emit"></a>
 
@@ -205,5 +207,5 @@ Emitted when any prompt provider changes. This registry notification is unfilter
 'system-prompt/change'(): void
 ```
 
-Source: [`packages/core/system-prompt/src/index.ts:37`](../../packages/core/system-prompt/src/index.ts)
+Source: [`packages/core/system-prompt/src/index.ts:38`](../../packages/core/system-prompt/src/index.ts)
 <!-- END GENERATED cordis-surface -->

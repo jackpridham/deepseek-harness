@@ -698,7 +698,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Abstract filesystem provider. Targets must preserve identity across aliases; reads expose regular UTF-8 text or typed errors, listings are stable and content-free, and mutations are atomic. Optional guards add stale protection without changing the unguarded provider contract.',
     methods: [
       {
-        signature: 'abstract resolve(path: string, opts?: { cwd?: string; signal?: AbortSignal }): Promise<FsTarget>',
+        signature: 'abstract resolve(path: string, opts?: { cwd?: string; signal?: AbortSignal; sandboxPolicy?: SandboxExecutionPolicy }): Promise<FsTarget>',
         description: 'Resolve a model/plugin-supplied path into a stable FsTarget. May perform I/O (a remote/sandboxed backend may need a round-trip to map a path to a stable identity), hence async even though the local backend only normalizes + realpaths.',
         parameters: [{ name: 'path', description: 'the path to resolve; relative paths resolve against `opts.cwd`.' }, { name: 'opts', description: 'optional cwd override and cancellation signal.' }],
         returns: 'the stable target; the same file yields the same `targetKey`.',
@@ -993,6 +993,19 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'llmRequestLifecycle',
+    summary: 'Actual request-stream milestones that a host may persist for its session UI.',
+    description: 'Actual request-stream milestones that a host may persist for its session UI.',
+    methods: [
+      {
+        signature: 'observe(event: { sessionId?: string provider: string model: string contextWindow?: number mode?: string options?: Readonly<Record<string, string | number | boolean>> workerConfigIdentity?: string turn?: number step?: number /** Local requests use requesting/executing; managed backends supply their actual scheduler phase. */ phase: string outcome?: string operationId?: string reason?: { code?: string; message?: string } swap?: unknown progress?: ModelLoadProgress }): Promise<void>',
+        description: 'Record a request milestone for the host session view.',
+        parameters: [{ name: 'event', description: 'Observed request phase and backend correlation facts.' }],
+        returns: 'Resolves when the host has processed the observation.',
+      },
+    ],
+  },
+  {
     key: 'lsp',
     summary: 'The LSP capability seam (`ctx.lsp`).',
     description: 'The LSP capability seam (`ctx.lsp`). Owns provider registration/selection and normalized query execution; exposes exactly the four operations and no protocol escape hatch.',
@@ -1122,6 +1135,11 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [],
       },
       {
+        signature: 'readonly protectedPaths: readonly string[]',
+        description: 'Canonical deployment paths hidden from lower-permission sessions.',
+        parameters: [],
+      },
+      {
         signature: 'resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy',
         description: 'Resolve the complete policy for one capability call. An approved explicit mode outranks the session\'s last `sandbox/mode` event, which outranks the deployment default. A session cwd is its workspace-write boundary; the configured root is the fallback for agentless calls and sessions without a cwd.',
         parameters: [{ name: 'request', description: 'optional session and approved mode override.' }],
@@ -1240,31 +1258,43 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   {
     key: 'sessionProjections',
     summary: '`ctx.sessionProjections`: the projection unit table and its drive.',
-    description: '`ctx.sessionProjections`: the projection unit table and its drive. The service subscribes to `session/event` once; every committed event passes every registered unit\'s `apply` (eager drive), and a changed state reference notifies the change feed with the schema-validated view. Cells build lazily — a unit registered after events flowed, or a session older than the registry, folds `init` over the in-memory log on first touch (event or read). Registration is an effect (disposer rides the calling fiber): an unloaded domain plugin\'s key disappears from snapshots and clients read it as capability absence. Domain plugins register under `ctx.inject([\'sessionProjections\'], …)` so headless assemblies without the registry stay unaffected. Registrants sharing a key share one unit and are counted: the same tool package mounted in N agent presets registers N times, and the key survives until the last one unloads.',
+    description: '`ctx.sessionProjections`: the projection unit table and its drive. The service subscribes to `session/event` once; every committed event passes every registered unit\'s `apply` (eager drive), and a changed state reference in a client-visible unit notifies the change feed with the schema-validated view. Cells build lazily — a unit registered after events flowed, or a session older than the registry, folds `init` over the in-memory log on first touch (event or read). Registration is an effect (disposer rides the calling fiber): an unloaded domain plugin\'s key disappears from snapshots and clients read it as capability absence. Domain plugins register under `ctx.inject([\'sessionProjections\'], …)` so headless assemblies without the registry stay unaffected. Registrants sharing a key share one unit and are counted: the same tool package mounted in N agent presets registers N times, and the key survives until the last one unloads.',
     methods: [
       {
-        signature: 'register<K extends keyof SessionProjectionMap, S>(definition: ProjectionDefinition<K, S>): () => void',
+        signature: 'register< K extends keyof SessionProjectionMap, S extends SessionProjectionStateMap[K], >( definition: Omit<ProjectionDefinition<K, S>, \'wire\'> & { wire: NonNullable<ProjectionDefinition<K, S>[\'wire\']> }, ): () => void',
         description: 'Register one domain\'s unit. The registration is an effect on the calling context\'s fiber: disposing the fiber (or calling the returned disposer) removes the key — and the unit\'s cached cells — from subsequent drives and snapshots.',
+        parameters: [{ name: 'definition', description: 'key, state schema, pure unit functions, and stateVersion.' }],
+        returns: 'the exact disposer that unregisters this unit.',
+      },
+      {
+        signature: 'register< K extends Exclude<keyof SessionProjectionStateMap, keyof SessionProjectionMap>, S extends SessionProjectionStateMap[K], >( definition: Omit<ProjectionDefinition<K, S>, \'wire\'>, ): () => void',
+        description: 'Register one host-only unit. Its state is omitted from client snapshots and always checkpointed like every other unit.',
         parameters: [{ name: 'definition', description: 'key, state schema, pure unit functions, and stateVersion.' }],
         returns: 'the exact disposer that unregisters this unit.',
       },
       {
         signature: 'onChanged(listener: ProjectionChangeListener): () => void',
         description: 'Subscribe to the change feed. The registration is an effect on the calling context\'s fiber.',
-        parameters: [{ name: 'listener', description: 'called once per unit whose state reference changed, per committed event.' }],
+        parameters: [{ name: 'listener', description: 'called once per client-visible unit whose state reference changed, per committed event.' }],
         returns: 'the exact disposer that unsubscribes.',
       },
       {
+        signature: 'stateOf<K extends keyof SessionProjectionStateMap>( session: Session, key: K, ): SessionProjectionStateMap[K] | undefined',
+        description: 'Read one unit\'s current host state without computing unrelated views. The returned value is live; callers must not mutate it.',
+        parameters: [{ name: 'session', description: 'the session whose state is read.' }, { name: 'key', description: 'the registered unit key.' }],
+        returns: 'current state, or `undefined` when the key is not registered.',
+      },
+      {
         signature: 'snapshot(session: Session): ProjectionSnapshot',
-        description: 'One consistent cut over every registered unit for one session, read from the watermark cache (missing cells fold lazily over the in-memory log). Fully synchronous — every value and `asOfSeq` reflect the same log position. Each value passes its unit\'s schema before leaving.',
+        description: 'One consistent cut over every registered client-visible unit for one session, read from the watermark cache (missing cells fold lazily over the in-memory log). Fully synchronous — every value and `asOfSeq` reflect the same log position. Each value passes its unit\'s `viewSchema` before leaving.',
         parameters: [{ name: 'session', description: 'the session whose projection values are read.' }],
-        returns: 'the snapshot; `values` is empty when no unit is registered.',
+        returns: 'the snapshot; `values` is empty when no client-visible unit is registered.',
       },
       {
         signature: 'checkpoint(session: Session): ProjectionCheckpoint',
-        description: 'State-level checkpoint of every registered unit for one session, read from the watermark cache (missing cells fold lazily over the in-memory log). This is the write side of the persisted projection cache: the returned rows are the `(key → {ver, seq, val})` part of the durable `(sessionId, key, ver, seq, val)` rows. Every `val` is a DETACHED structured clone — never the live cell reference: the watermark cache is this registry\'s authoritative mutable state, and a caller reaching the live reference could corrupt every subsequent snapshot and frame through it (plain JSON by the unit contract, so the clone is total).',
+        description: 'State-level checkpoint of every persisted unit for one session, read from the watermark cache (missing cells fold lazily over the in-memory log). This is the write side of the persisted projection cache: the returned rows are the `(key → {ver, seq, val})` part of the durable `(sessionId, key, ver, seq, val)` rows. Every `val` is a DETACHED structured clone — never the live cell reference: the watermark cache is this registry\'s authoritative mutable state, and a caller reaching the live reference could corrupt every subsequent snapshot and frame through it (plain JSON by the unit contract, so the clone is total).',
         parameters: [{ name: 'session', description: 'the session whose unit states are checkpointed.' }],
-        returns: 'one row per registered key; empty when no unit is registered.',
+        returns: 'one row per registered key.',
       },
       {
         signature: 'restoreFloor(checkpoint: ProjectionCheckpoint): number | undefined',
@@ -1274,13 +1304,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'viewCheckpoint(checkpoint: ProjectionCheckpoint): Partial<SessionProjectionMap>',
-        description: 'View a checkpoint\'s rows without any log read: for every registered unit whose row\'s `ver` matches, serve the schema-validated `view` of the stored state; mismatched or absent rows leave their key absent (a cold or listing consumer treats it as not-yet-available and a fuller read path refolds it). The zero-I/O rung of the read ladder — values are as stale as their rows, never wrong.',
+        description: 'View a checkpoint\'s rows without any log read: for every registered client-visible unit whose row\'s `ver` matches, serve the schema-validated `view` of the schema-validated stored state; mismatched, malformed, or absent rows leave their key absent (a cold or listing consumer treats it as not-yet-available and a fuller read path refolds it). The zero-I/O rung of the read ladder — values are as stale as their rows, never wrong.',
         parameters: [{ name: 'checkpoint', description: 'persisted rows for one session (possibly stale or empty).' }],
         returns: 'whole values per key with a usable row; empty when none.',
       },
       {
-        signature: 'restore(checkpoint: ProjectionCheckpoint, events: readonly SessionEvent[], baseSeq: number): { snapshot: ProjectionSnapshot; checkpoint: ProjectionCheckpoint }',
-        description: 'Cold read: fold every registered unit over a stored log suffix, seeding each from its checkpoint row when usable — the one read recipe (cached state + forward tail replay + `view`) applied without a live `Session`. Call with the events returned by a persistence `readFrom(id, restoreFloor(checkpoint))` and that same floor as `baseSeq`; the floor\'s one-below anchor makes the supplied end honest, so a shrunk log is detected here. A row is usable iff its `ver` matches the live unit\'s `stateVersion`, it does not predate `baseSeq` (`seq >= baseSeq - 1`), and it does not claim events past the supplied end (`seq <= endSeq`); an unusable row is discarded and its key refolds from `init` — which is only sound over the full log, so a discarded row with `baseSeq > 0` throws (the caller re-reads from seq 0, e.g. after a crash-repair truncation shrank the log below a row\'s watermark).',
+        signature: 'restore( checkpoint: ProjectionCheckpoint, events: readonly SessionEvent[], baseSeq: number, ): { snapshot: ProjectionSnapshot; checkpoint: ProjectionCheckpoint }',
+        description: 'Cold read: fold every persisted unit over a stored log suffix, seeding each from its checkpoint row when usable — the one read recipe (cached state + forward tail replay + `view`) applied without a live `Session`. Call with the events returned by a persistence `readFrom(id, restoreFloor(checkpoint))` and that same floor as `baseSeq`; the floor\'s one-below anchor makes the supplied end honest, so a shrunk log is detected here. A row is usable iff its `ver` matches the live unit\'s `stateVersion`, it does not predate `baseSeq` (`seq >= baseSeq - 1`), and it does not claim events past the supplied end (`seq <= endSeq`); an unusable row is discarded and its key refolds from `init` — which is only sound over the full log, so a discarded row with `baseSeq > 0` throws (the caller re-reads from seq 0, e.g. after a crash-repair truncation shrank the log below a row\'s watermark).',
         parameters: [{ name: 'checkpoint', description: 'persisted rows for one session (possibly stale or empty).' }, { name: 'events', description: 'the stored events with `seq >= baseSeq`, in seq order.' }, { name: 'baseSeq', description: 'the seq `events` starts at (its first event\'s seq when non-empty).' }],
         returns: 'the snapshot cut at the supplied log end (`asOfSeq` is the last supplied event\'s seq, `baseSeq - 1` for an empty tail) plus the refreshed checkpoint rows at that cut, ready for a durable write-back.',
       },
@@ -1990,7 +2020,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     methods: [
       {
         signature: 'measure(session: Session, requestHeader?: EpochHeader): TokenMeasurement',
-        description: 'Measure current request pressure and surface through the durable tail.\n\nProvider usage is reused only when the latest successful call\'s canonical request envelope matches `requestHeader` and its total is no lower than that call\'s full heuristic anchor; otherwise the complete envelope and surface are heuristically repriced.\n\n`requestHeader` affects request pressure only; surface fields always describe the current session surface. Every call clones those positional nodes, so measurement is O(surface).',
+        description: 'Measure current request pressure and surface through the durable tail.\n\nProvider usage is reused only when the latest successful call\'s canonical request envelope matches `requestHeader` and its total is no lower than that call\'s full heuristic anchor; otherwise the complete envelope and surface are heuristically repriced. The anchor includes input entered after step/start and any pre-request replacements; only changes after the sampled input contribute a delta.\n\n`requestHeader` affects request pressure only; surface fields always describe the current session surface. Every call clones those positional nodes, so measurement is O(surface).',
         parameters: [{ name: 'session', description: 'session to replay through its current durable tail.' }, { name: 'requestHeader', description: 'optional effective request envelope replacing the latest logged header.' }],
         returns: 'a detached deeply immutable pressure and surface measurement.',
       },
@@ -2867,7 +2897,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'AssembleContext',
-    declaration: 'export interface AssembleContext {\n    scope?: ScopeKey;\n    signal?: AbortSignal;\n}',
+    declaration: 'export interface AssembleContext {\n    purpose?: \'inference\' | \'inspection\';\n    session?: Session;\n    scope?: ScopeKey;\n    signal?: AbortSignal;\n}',
   },
   {
     name: 'AssembledContext',
@@ -2875,7 +2905,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'AssembledSection',
-    declaration: 'export interface AssembledSection {\n    name: string;\n    text: string;\n}',
+    declaration: 'export interface AssembledSection {\n    literal?: boolean;\n    name: string;\n    text: string;\n}',
   },
   {
     name: 'AssistantMessage',
@@ -3075,7 +3105,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'CreateAgentOptions',
-    declaration: 'export interface CreateAgentOptions {\n    readonly sessionId: SessionId;\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly sessionPolicy?: SessionPolicyId;\n        readonly parentSession?: SessionId;\n        readonly seedLength?: number;\n        readonly origin?: \'subagent\';\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n    readonly seed?: readonly SessionEvent[];\n    readonly agentOptions?: AgentOptions;\n    readonly signal?: AbortSignal;\n    readonly setup?: AgentSetup;\n}',
+    declaration: 'export interface CreateAgentOptions {\n    readonly instructions?: import(\'@deepseek-ai/dsh-session\').SessionInstructions;\n    readonly sessionId: SessionId;\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly sessionPolicy?: SessionPolicyId;\n        readonly parentSession?: SessionId;\n        readonly seedLength?: number;\n        readonly origin?: \'subagent\';\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n    readonly seed?: readonly SessionEvent[];\n    readonly agentOptions?: AgentOptions;\n    readonly signal?: AbortSignal;\n    readonly setup?: AgentSetup;\n}',
   },
   {
     name: 'CreateGoalRequest',
@@ -3087,7 +3117,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'CreateSessionOptions',
-    declaration: 'export interface CreateSessionOptions {\n    readonly seed?: readonly SessionEvent[];\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly sessionPolicy?: SessionPolicyId;\n        readonly parentSession?: SessionId;\n        readonly createdAt?: number;\n        readonly seedLength?: number;\n        readonly origin?: \'subagent\';\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n}',
+    declaration: 'export interface CreateSessionOptions {\n    readonly instructions?: SessionInstructions;\n    readonly seed?: readonly SessionEvent[];\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly sessionPolicy?: SessionPolicyId;\n        readonly parentSession?: SessionId;\n        readonly createdAt?: number;\n        readonly seedLength?: number;\n        readonly origin?: \'subagent\';\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n}',
   },
   {
     name: 'CreateTeamTaskRequest',
@@ -3279,7 +3309,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'GenerateOptions',
-    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    contextWindow?: number;\n    bestTryContext?: boolean;\n    messages: Message[];\n    system?: string;\n    tools?: ToolSchema[];\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\';\n}',
+    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    contextWindow?: number;\n    bestTryContext?: boolean;\n    mode?: string;\n    options?: Readonly<Record<string, ModelServingOption>>;\n    workerConfigIdentity?: string;\n    messages: Message[];\n    system?: string;\n    tools?: ToolSchema[];\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\';\n}',
   },
   {
     name: 'GenericCallView',
@@ -3344,6 +3374,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'InboxTarget',
     declaration: 'export type InboxTarget = \'next-turn\' | \'next-step\';',
+  },
+  {
+    name: 'InstructionBlock',
+    declaration: 'export interface InstructionBlock {\n    id: string;\n    text: string;\n}',
+  },
+  {
+    name: 'InstructionContextSources',
+    declaration: 'export interface InstructionContextSources {\n    harnessInstructions?: \'inherit\' | \'off\';\n    workspaceInstructions?: \'inherit\' | \'off\';\n    skillCatalog?: \'inherit\' | \'off\';\n    runtimeFacts?: \'inherit\' | \'off\';\n}',
   },
   {
     name: 'InvariantFailure',
@@ -3455,7 +3493,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LlmCallConfig',
-    declaration: 'export interface LlmCallConfig {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    contextWindow?: number;\n    bestTryContext?: boolean;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n}',
+    declaration: 'export interface LlmCallConfig {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    contextWindow?: number;\n    bestTryContext?: boolean;\n    mode?: string;\n    options?: Readonly<Record<string, ModelServingOption>>;\n    workerConfigIdentity?: string;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n}',
   },
   {
     name: 'LlmCallConfigAdapterDefaults',
@@ -3471,7 +3509,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LlmDiscoveredModel',
-    declaration: 'export interface LlmDiscoveredModel {\n    id: string;\n    name?: string;\n    inputModalities?: readonly ModelModality[];\n    contextWindow?: number;\n    contextWindows?: readonly LlmDiscoveredContextWindow[];\n    selectable?: boolean;\n    active?: boolean;\n    reasoning?: LlmDiscoveredReasoningInfo;\n    maxTokens?: number;\n}',
+    declaration: 'export interface LlmDiscoveredModel {\n    id: string;\n    name?: string;\n    description?: string;\n    releaseDate?: string;\n    url?: string;\n    inputModalities?: readonly ModelModality[];\n    contextWindow?: number;\n    contextWindows?: readonly LlmDiscoveredContextWindow[];\n    selectable?: boolean;\n    supportsTools?: boolean;\n    active?: boolean;\n    reasoning?: LlmDiscoveredReasoningInfo;\n    maxTokens?: number;\n    defaultLoadMode?: string;\n    loadModes?: readonly LlmLoadMode[];\n    loadRoutes?: readonly LlmLoadRoute[];\n    loaded?: LlmLoadedWorker;\n}',
   },
   {
     name: 'LlmDiscoveredReasoningEffort',
@@ -3484,6 +3522,22 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'LlmFailure',
     declaration: 'export interface LlmFailure {\n    readonly message: string;\n    readonly code: string;\n    readonly status?: number;\n    readonly providerRetryAfterMs?: number;\n    readonly requestId?: ProviderRequestId;\n}',
+  },
+  {
+    name: 'LlmLoadedWorker',
+    declaration: 'export interface LlmLoadedWorker {\n    contextWindow?: number;\n    mode?: string;\n    options?: Readonly<Record<string, ModelServingOption>>;\n    identity: string;\n}',
+  },
+  {
+    name: 'LlmLoadMode',
+    declaration: 'export interface LlmLoadMode {\n    id: string;\n    name: string;\n    inputModalities?: readonly ModelModality[];\n    options?: readonly LlmLoadModeOption[];\n}',
+  },
+  {
+    name: 'LlmLoadModeOption',
+    declaration: 'export interface LlmLoadModeOption {\n    id: string;\n    name: string;\n    type: \'integer\' | \'number\' | \'string\' | \'boolean\';\n    default?: ModelServingOption;\n    choices?: readonly ModelServingOption[];\n}',
+  },
+  {
+    name: 'LlmLoadRoute',
+    declaration: 'export interface LlmLoadRoute {\n    model: string;\n    contextWindow: number;\n    mode: string;\n    options?: Readonly<Record<string, ModelServingOption>>;\n    identity: string;\n}',
   },
   {
     name: 'LlmModelContext',
@@ -3503,7 +3557,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LlmModelInfo',
-    declaration: 'export interface LlmModelInfo {\n    provider: string;\n    id: string;\n    name: string;\n    description?: string;\n    inputModalities?: readonly ModelModality[];\n    selectable?: boolean;\n    active?: boolean;\n    contextOptions?: LlmModelContextOptions;\n}',
+    declaration: 'export interface LlmModelInfo {\n    provider: string;\n    id: string;\n    name: string;\n    description?: string;\n    releaseDate?: string;\n    url?: string;\n    inputModalities?: readonly ModelModality[];\n    selectable?: boolean;\n    supportsTools?: boolean;\n    active?: boolean;\n    contextOptions?: LlmModelContextOptions;\n    maxTokens?: number;\n    defaultLoadMode?: string;\n    loadModes?: readonly LlmLoadMode[];\n    loadRoutes?: readonly LlmLoadRoute[];\n    loaded?: LlmLoadedWorker;\n}',
   },
   {
     name: 'LlmModelReasoningInfo',
@@ -3555,7 +3609,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LspQueryRequest',
-    declaration: 'export interface LspQueryRequest {\n    readonly operation: LspOperation;\n    readonly filePath: string;\n    readonly position: LspPosition;\n    readonly workspaceRoot: string;\n}',
+    declaration: 'export interface LspQueryRequest {\n    readonly operation: LspOperation;\n    readonly filePath: string;\n    readonly position: LspPosition;\n    readonly workspaceRoot: string;\n    readonly sandboxPolicy?: SandboxExecutionPolicy;\n}',
   },
   {
     name: 'LspQueryResult',
@@ -3735,7 +3789,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ProjectionDefinition',
-    declaration: 'export interface ProjectionDefinition<K extends keyof SessionProjectionMap, S> {\n    key: K;\n    schema: ZodType<SessionProjectionMap[K]>;\n    init(): S;\n    apply(state: S, event: SessionEvent): S;\n    view(state: S): SessionProjectionMap[K];\n    stateVersion: number;\n}',
+    declaration: 'export interface ProjectionDefinition<K extends keyof SessionProjectionStateMap, S extends SessionProjectionStateMap[K] = SessionProjectionStateMap[K]> {\n    key: K;\n    stateSchema: ZodType<S>;\n    init(): NoInfer<S>;\n    apply(state: NoInfer<S>, event: SessionEvent): NoInfer<S>;\n    wire?: K extends keyof SessionProjectionMap ? {\n        viewSchema: ZodType<SessionProjectionMap[K]>;\n        view(state: NoInfer<S>): SessionProjectionMap[K];\n    } : never;\n    stateVersion: number;\n}',
   },
   {
     name: 'ProjectionSnapshot',
@@ -3743,7 +3797,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'PromptAssembly',
-    declaration: 'export interface PromptAssembly {\n    sections: AssembledSection[];\n    contexts: AssembledContext[];\n    tools: ToolSchema[];\n    variables: Record<string, string | undefined>;\n}',
+    declaration: 'export interface PromptAssembly {\n    contextSourceStatus?: Partial<Record<keyof InstructionContextSources, boolean>>;\n    sections: AssembledSection[];\n    contexts: AssembledContext[];\n    tools: ToolSchema[];\n    variables: Record<string, string | undefined>;\n}',
   },
   {
     name: 'PromptContext',
@@ -3871,7 +3925,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SandboxExecutionPolicy',
-    declaration: 'export interface SandboxExecutionPolicy {\n    mode: SandboxMode;\n    workspaceRoot: string;\n    sessionId?: SessionId;\n}',
+    declaration: 'export interface SandboxExecutionPolicy {\n    mode: SandboxMode;\n    workspaceRoot: string;\n    protectedPaths?: readonly string[];\n    sessionId?: SessionId;\n}',
   },
   {
     name: 'SandboxMode',
@@ -3951,7 +4005,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionEventMap',
-    declaration: 'export interface SessionEventMap {\n    \'turn/start\': {\n        turn: number;\n    };\n    \'turn/end\': {\n        turn: number;\n        reason: TurnEndReason;\n    };\n    \'step/start\': {\n        turn: number;\n        step: number;\n    };\n    \'step/end\': {\n        turn: number;\n        step: number;\n    };\n    \'user/message\': UserMessage;\n    \'assistant/chunk\': {\n        turn: number;\n        step: number;\n        chunk: StreamChunk;\n    };\n    \'assistant/message\': {\n        turn: number;\n        step: number;\n        message: AssistantMessage;\n        usage?: TokenUsage;\n        interrupted?: true;\n    };\n    \'tool/call\': {\n        turn: number;\n        step: number;\n        callId: CallId;\n        name: string;\n        arguments: string;\n    };\n    \'tool/result\': {\n        turn: number;\n        step: number;\n        message: ToolResultMessage;\n        error?: {\n            name: string;\n            code: string;\n        };\n        meta?: JsonValue;\n    };\n    \'todo/write\': {\n        todos: TodoItem[];\n    };\n    \'request/header\': {\n        header: EpochHeader;\n        reason: RequestHeaderReason;\n    };\n    \'request/context\': RequestContext;\n    \'session/end-seed\': Record<string, never>;\n}',
+    declaration: 'export interface SessionEventMap {\n    \'turn/start\': {\n        turn: number;\n        instructionsRevision?: number;\n    };\n    \'session/instructions\': {\n        revision: number;\n        instructions: SessionInstructions;\n    };\n    \'turn/end\': {\n        turn: number;\n        reason: TurnEndReason;\n    };\n    \'step/start\': {\n        turn: number;\n        step: number;\n    };\n    \'step/end\': {\n        turn: number;\n        step: number;\n    };\n    \'user/message\': UserMessage;\n    \'assistant/chunk\': {\n        turn: number;\n        step: number;\n        chunk: StreamChunk;\n    };\n    \'assistant/message\': {\n        turn: number;\n        step: number;\n        message: AssistantMessage;\n        usage?: TokenUsage;\n        interrupted?: true;\n    };\n    \'tool/call\': {\n        turn: number;\n        step: number;\n        callId: CallId;\n        name: string;\n        arguments: string;\n    };\n    \'tool/result\': {\n        turn: number;\n        step: number;\n        message: ToolResultMessage;\n        error?: {\n            name: string;\n            code: string;\n        };\n        meta?: JsonValue;\n    };\n    \'todo/write\': {\n        todos: TodoItem[];\n    };\n    \'request/header\': {\n        header: EpochHeader;\n        reason: RequestHeaderReason;\n    };\n    \'request/context\': RequestContext;\n    \'session/end-seed\': Record<string, never>;\n}',
   },
   {
     name: 'SessionEventMetadataFilter',
@@ -4026,6 +4080,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionInspection {\n    readonly meta: SessionHeader;\n    readonly events: readonly SessionEvent[];\n}',
   },
   {
+    name: 'SessionInstructions',
+    declaration: 'export interface SessionInstructions {\n    version: 1;\n    systemPrompt?: {\n        base?: {\n            mode: \'inherit\';\n        } | {\n            mode: \'replace\';\n            text: string;\n        };\n        prepend?: InstructionBlock[];\n        append?: InstructionBlock[];\n    };\n    contextSources?: InstructionContextSources;\n}',
+  },
+  {
     name: 'SessionLineageNode',
     declaration: 'export interface SessionLineageNode {\n    session: SessionRecord;\n    descendants: SessionLineageNode[];\n}',
   },
@@ -4051,7 +4109,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionPolicy',
-    declaration: 'export interface SessionPolicy {\n    readonly id: SessionPolicyId;\n    readonly workspace: boolean;\n    readonly presets: boolean;\n    readonly fork: boolean;\n    readonly attestation: Readonly<Record<string, JsonValue>>;\n    apply(agent: Agent): void;\n}',
+    declaration: 'export interface SessionPolicy {\n    readonly id: SessionPolicyId;\n    readonly instructions: boolean;\n    readonly workspace: boolean;\n    readonly presets: boolean;\n    readonly fork: boolean;\n    readonly attestation: Readonly<Record<string, JsonValue>>;\n    apply(agent: Agent): void;\n}',
   },
   {
     name: 'SessionPolicyId',
@@ -4068,6 +4126,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionProjectionMap',
     declaration: 'export interface SessionProjectionMap {\n}',
+  },
+  {
+    name: 'SessionProjectionStateMap',
+    declaration: 'export interface SessionProjectionStateMap {\n}',
   },
   {
     name: 'SessionRawArtifact',
@@ -4431,7 +4493,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubprocessSpawnSpec',
-    declaration: 'export interface SubprocessSpawnSpec {\n    argv: readonly string[];\n    cwd: string;\n    stdio: SubprocessStdio;\n    graceMs: number;\n    signal?: AbortSignal | undefined;\n    env?: NodeJS.ProcessEnv | undefined;\n}',
+    declaration: 'export interface SubprocessSpawnSpec {\n    argv: readonly string[];\n    cwd: string;\n    stdio: SubprocessStdio;\n    graceMs: number;\n    signal?: AbortSignal | undefined;\n    env?: NodeJS.ProcessEnv | undefined;\n    sandboxPolicy?: SandboxExecutionPolicy | undefined;\n}',
   },
   {
     name: 'SubprocessStdinMode',
@@ -4455,7 +4517,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubprocessTerminalSpawnSpec',
-    declaration: 'export interface SubprocessTerminalSpawnSpec {\n    argv: readonly string[];\n    cwd: string;\n    env?: Record<string, string> | undefined;\n    rows: number;\n    cols: number;\n    graceMs: number;\n    signal?: AbortSignal | undefined;\n}',
+    declaration: 'export interface SubprocessTerminalSpawnSpec {\n    argv: readonly string[];\n    cwd: string;\n    env?: Record<string, string> | undefined;\n    rows: number;\n    cols: number;\n    graceMs: number;\n    signal?: AbortSignal | undefined;\n    sandboxPolicy?: SandboxExecutionPolicy | undefined;\n}',
   },
   {
     name: 'SurfaceEvent',

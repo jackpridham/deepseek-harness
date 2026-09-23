@@ -222,10 +222,10 @@ describe('ui-model-selection dual entry', () => {
     const options = await b.contribution().ui.options(projection('s1'), new AbortController().signal)
     const pro = options.find((o: SelectOption) => o.label === 'DeepSeek-V4-Pro')!
     await b.contribution().ui.onSelect(pro, projection('s1'))
+    // An unset reasoning preference stays unset; the host owns default resolution.
     expect(seatFace.directory.getSnapshot().current).toEqual({
       provider: 'deepseek-official',
       model: 'deepseek-v4-pro',
-      reasoningEffort: 'high',
     })
   })
 

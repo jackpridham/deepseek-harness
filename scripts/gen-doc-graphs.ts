@@ -341,6 +341,15 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Owns live Agent handles, the create/resume factory seam, and process-local initiator propagation.',
   },
   {
+    key: 'llmRequestLifecycle',
+    pkg: 'agent',
+    title: 'Request lifecycle observations',
+    mode: 'core',
+    implementations: ['host-apiproxy'],
+    consumers: ['llm-pi-ai'],
+    note: 'The optional host observer records actual request phases and managed-worker progress for the session UI.',
+  },
+  {
     key: 'agentDefaultModel',
     pkg: 'agent-default-model',
     title: 'Default Agent model selection',

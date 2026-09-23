@@ -66,6 +66,7 @@ export const SERVICE_PAGE: Record<string, string> = {
   webServer: 'web-server.md',
   invariants: 'invariants.md',
   llm: 'llm-streaming.md',
+  llmRequestLifecycle: 'core.md',
   lsp: 'lsp.md',
   messageFeedback: 'feedback.md',
   permissionPresets: 'permission-presets.md',
@@ -121,6 +122,7 @@ export const SERVICE_PAGE: Record<string, string> = {
  * to a model as `cordis_runtime_inspect what:"client"`).
  */
 export const SERVICE_WALK_EXEMPTIONS: Record<string, string> = {
+  modelControls: 'deployment-provided interface declared under src/api, outside the top-level service projection — packages/host/apiproxy/README.md owns the managed-model controller API',
   agent: 'not a service: the DX accessor field on Agent.ctx (root accessor defaulting to undefined) — docs/subsystems/core.md owns the Agent handle',
   appExit: 'not a service: launcher-provided bounded process-exit callback — packages/boot/cmdline/README.md owns the launcher contract',
   cmdlineArgs: 'not a service: launcher-provided immutable app argument accessor — packages/boot/cmdline/README.md owns the launcher contract',
@@ -214,6 +216,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   AgentFactory: 'core.md',
   AgentHandle: 'core.md',
   ModelSelection: 'core.md',
+  ModelLoadProgress: 'core.md',
   AgentOptions: 'core.md',
   AgentStatus: 'core.md',
   ContentBlock: 'llm-streaming.md',

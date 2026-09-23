@@ -175,6 +175,10 @@ Durable content is the authoritative record; replay state only restores native f
 - pi-ai's `off` thinking level crosses the Harness capability seam unchanged and becomes an omitted pi-ai common `reasoning` option at dispatch.
 - `GenerateOptions.stop` is rejected with `UNSUPPORTED_OPTION` because pi-ai's common streaming UI cannot guarantee it across providers.
 
+## Request lifecycle observations
+
+Managed ordinary-chat inference operations publish lifecycle updates until their stream settles; title and compaction calls retain backend correlation without creating conversation rows. Settlement immediately publishes the streamed terminal outcome, then optionally enriches it from backend status. A status poll still in flight at settlement cannot publish a stale pending phase afterward.
+
 ## App attribution
 
 Every request carries the shared attribution header from dsh-llm's `attributionHeaders()`, merged through pi-ai's `headers` stream option. Provider-specific app-attribution headers are not synthesized. See [dsh-llm § App attribution](../llm/README.md#app-attribution-attributionts).
@@ -204,8 +208,6 @@ Conversion preserves logical request order without adding text, while the select
 #### What the model sees
 
 pi-ai events become harness reasoning, text, tool-call, usage, and finish chunks. The adapter passes parsed tool arguments to the harness as raw JSON strings.
-
-Managed ordinary-chat inference operations publish lifecycle updates until their stream settles; title and compaction calls retain backend correlation without creating conversation rows. Settlement immediately publishes the streamed terminal outcome, then optionally enriches it from backend status. A status poll still in flight at settlement cannot publish a stale pending phase afterward.
 
 #### Token effect
 

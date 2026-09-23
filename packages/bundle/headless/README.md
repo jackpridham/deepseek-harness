@@ -18,7 +18,7 @@ The JSON file is the starting configuration. An explicit system flag replaces it
 
 #### What the model sees
 
-The task remains an ordinary user message. Optional instruction flags configure the same session-owned system composition and automatic context sources as the HTTP API. Without those flags, prompts and tools retain the base and headless bundle defaults.
+The task remains an ordinary user message. Optional instruction flags such as `--system-prompt` configure the same session-owned system composition and automatic context sources as the HTTP API. Without those flags, prompts and tools retain the base and headless bundle defaults.
 
 #### Token effect
 

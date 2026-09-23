@@ -72,6 +72,10 @@ The `settings.*`, `credentials.*`, and `llm.*` domains are the configuration-pag
 
 Version 1 accepts `systemPrompt.base` as `{mode:"inherit"}` or `{mode:"replace",text:"..."}`, ordered `prepend` and `append` arrays of `{id,text}`, and `contextSources` switches for `harnessInstructions`, `workspaceInstructions`, `skillCatalog`, and `runtimeFacts`. Each switch is `inherit` or `off`. Fields other than `version:1` are optional. Block ids must be unique across both lists. Text and ids survive persistence exactly. The API accepts resolved text, never caller file paths. Replacement changes system text only; source suppression and tool enforcement are independent. The first version has no live updates or turn overrides: future versions must explicitly define next-turn/whole-turn application without mutating running turns.
 
+## Managed-model controller
+
+A deployment may provide `ctx.modelControls` using the [ModelControls interface](src/api/models.ts). The `vortex.models` RPCs forward read-only `snapshot` and `operationStatus` requests and explicit `operation` load/unload requests to that provider. Results report backend-observed phase, outcome, correlation, and optional measured progress; the gateway does not load models itself.
+
 ## Model Experience
 
 None, as the package defines the client↔host wire contract and carriers; nothing here reaches a model request.

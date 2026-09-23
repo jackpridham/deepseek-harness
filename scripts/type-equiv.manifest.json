@@ -3,6 +3,11 @@
   "entries": [
     {
       "doc": "docs/subsystems/core.md",
+      "symbol": "ModelLoadProgress",
+      "source": "packages/core/agent/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/core.md",
       "symbol": "Branded",
       "source": "packages/util/brand/src/index.ts"
     },

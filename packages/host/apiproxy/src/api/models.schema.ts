@@ -25,12 +25,15 @@ const envelope = z.object({
   workers: z.unknown().optional(),
 }) satisfies z.ZodType<Wire<ModelControlEnvelope>>
 
+/** Requested model and optional worker configuration for a read-only snapshot. */
 export const vortexModelsSnapshotRequestSchema = z.object({
   model: z.string().min(1), context: z.number().int().positive().optional(), mode: z.string().min(1).optional(),
 }) satisfies z.ZodType<Wire<RequestPayload<'vortex.models.snapshot'>>>
 
+/** Observed model-control state returned by a snapshot. */
 export const vortexModelsSnapshotValueSchema = envelope satisfies z.ZodType<Wire<ResponseValue<'vortex.models.snapshot'>>>
 
+/** Explicit load or unload request with optional worker identity and request correlation. */
 export const vortexModelsOperationRequestSchema = z.object({
   operationId: z.string().min(1).optional(),
   action: z.enum(['load', 'unload']),
@@ -48,10 +51,13 @@ export const vortexModelsOperationRequestSchema = z.object({
   callId: z.string().min(1).optional(),
 }) satisfies z.ZodType<Wire<RequestPayload<'vortex.models.operation'>>>
 
+/** Model-control state returned after submitting an operation. */
 export const vortexModelsOperationValueSchema = envelope satisfies z.ZodType<Wire<ResponseValue<'vortex.models.operation'>>>
 
+/** Operation identity to inspect without submitting another operation. */
 export const vortexModelsOperationStatusRequestSchema = z.object({
   operationId: z.string().min(1),
 }) satisfies z.ZodType<Wire<RequestPayload<'vortex.models.operationStatus'>>>
 
+/** Observed state and progress of the requested operation. */
 export const vortexModelsOperationStatusValueSchema = envelope satisfies z.ZodType<Wire<ResponseValue<'vortex.models.operationStatus'>>>

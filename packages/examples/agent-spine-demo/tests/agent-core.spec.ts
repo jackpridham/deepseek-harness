@@ -290,13 +290,15 @@ describe('dsh-agent-spine-demo bundle', () => {
     await ctx.fiber.dispose()
   })
 
-  it('forwards the global maxParallelToolCalls config to agent-loop', async () => {
+  it('forwards concurrency and output admission config to agent-loop', async () => {
     const ctx = await mount({
       agents: [{ id: SessionId('main'), provider: 'mock', model: 'mock' }],
       maxParallelToolCalls: 3,
+      outputSafetyMargin: 512,
       workspaceContext: false,
     })
     expect(ctx.get('agentLoop')?.config.maxParallelToolCalls).toBe(3)
+    expect(ctx.get('agentLoop')?.config.outputSafetyMargin).toBe(512)
     await ctx.fiber.dispose()
   })
 
@@ -733,6 +735,7 @@ describe('dsh-agent-spine-demo bundle', () => {
     const appConfig = {
       model: 'entrypoint-only',
       maxParallelToolCalls: 3,
+      outputSafetyMargin: 512,
       includeHarnessIdentity: false,
       includeRuntimeContext: false,
       persona: 'You are merged.',
@@ -751,6 +754,7 @@ describe('dsh-agent-spine-demo bundle', () => {
 
     expect(agentCore.pickSpineConfig(appConfig)).toEqual({
       maxParallelToolCalls: appConfig.maxParallelToolCalls,
+      outputSafetyMargin: appConfig.outputSafetyMargin,
       includeHarnessIdentity: appConfig.includeHarnessIdentity,
       includeRuntimeContext: appConfig.includeRuntimeContext,
       persona: appConfig.persona,

@@ -56,6 +56,8 @@ interface LspQueryRequest {
   readonly position: LspPosition
   /** The workspace root the provider resolves against and indexes; required, never defaulted. */
   readonly workspaceRoot: string
+  /** Resolved per-session process policy for a provider that starts a server, when confinement is active. */
+  readonly sandboxPolicy?: SandboxExecutionPolicy
 }
 ```
 
@@ -198,5 +200,5 @@ registerProvider(provider: LspProvider): () => void
 query(request: LspQueryRequest, signal?: AbortSignal): Promise<LspQueryResult>
 ```
 
-Source: [`packages/lsp/lsp/src/types.ts:113`](../../packages/lsp/lsp/src/types.ts)
+Source: [`packages/lsp/lsp/src/types.ts:116`](../../packages/lsp/lsp/src/types.ts)
 <!-- END GENERATED cordis-surface -->

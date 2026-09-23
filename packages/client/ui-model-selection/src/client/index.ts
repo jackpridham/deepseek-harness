@@ -12,15 +12,17 @@
  * history outside the direct-parent continuation path.
  */
 // Type-only: the carrier types, the forwarded Host-event face and the ctx.remote merge.
-import type { ModelSelection, SessionId, SessionModels } from '@deepseek-ai/dsh-api-remotes/client'
+import type { ModelSelection, SessionModels } from '@deepseek-ai/dsh-api-remotes/client'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type { CommandUiContract, SelectOption } from '@deepseek-ai/dsh-client-ui-commands/client'
 // Type-only: pulls the ui-conversation SlotMap merge (the input.model seat).
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+// Type-only: Settings owns the selection slot declaration.
+import type {} from '@deepseek-ai/dsh-client-ui-settings-models/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { createElement } from 'react'
-import type { PropsLocale, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsLocale, PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ModelDirectoryState } from './directory.ts'
 import { ModelDirectoryResolver } from './service.ts'
 import type { ModelSelectInjected } from './slots.ts'
@@ -33,17 +35,7 @@ export { ModelDirectoryResolver } from './service.ts'
 export type { ModelSelectInjected } from './slots.ts'
 export type { ModelKey } from './locales.ts'
 
-export interface SettingsModelSelectionOwnerProps {
-  /** Existing ordinary chat whose ModelDirectory owns this selection. */
-  sessionId: SessionId
-}
-
 declare module '@deepseek-ai/dsh-client-ui-slots' {
-  interface SlotMap {
-    /** Reuses the composer picker for an existing Settings-visible chat. */
-    'settings.models.selection': { kind: 'single'; scope: 'root'; owner: SettingsModelSelectionOwnerProps }
-  }
-
   interface LocaleNamespaceMap {
     /** The model selection surfaces' copy (/model popup + composer seat). */
     model: ModelKey
@@ -182,7 +174,7 @@ export function apply(ctx: ClientContext): void {
     scope.slots.inject('settings.models.selection', () => scope.slots.register({
       name: 'settings.models.selection',
       locale: NS,
-    }, ({ sessionId, t }: SettingsModelSelectionOwnerProps & PropsLocale<'model'>) => {
+    }, ({ sessionId, t }: PropsRuntime<'settings.models.selection'> & PropsLocale<'model'>) => {
       const directory = models.directoryFor(sessionId)
       const available = sessions.subagentAddress(sessionId) === undefined
       return createElement(ModelSelect, {

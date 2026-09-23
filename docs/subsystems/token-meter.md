@@ -64,6 +64,8 @@ Replay owner for one service-wide estimator and isolated per-session folds.
  * request envelope matches `requestHeader` and its total is no lower than
  * that call's full heuristic anchor; otherwise the complete envelope and
  * surface are heuristically repriced.
+ * The anchor includes input entered after step/start and any pre-request
+ * replacements; only changes after the sampled input contribute a delta.
  *
  * `requestHeader` affects request pressure only; surface fields always
  * describe the current session surface. Every call clones those positional

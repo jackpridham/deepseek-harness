@@ -115,7 +115,7 @@ Sources: [`packages/core/session/src/types.ts:362`](../packages/core/session/src
 }
 ```
 
-Source: [`packages/core/agent/src/types.ts:70`](../packages/core/agent/src/types.ts)
+Source: [`packages/core/agent/src/types.ts:75`](../packages/core/agent/src/types.ts)
 
 ### `agent-preset/*`
 
@@ -518,7 +518,7 @@ Source: [`packages/llm/llm-retry/src/types.ts:11`](../packages/llm/llm-retry/src
 }
 ```
 
-Source: [`packages/core/agent/src/types.ts:55`](../packages/core/agent/src/types.ts)
+Source: [`packages/core/agent/src/types.ts:60`](../packages/core/agent/src/types.ts)
 
 <a id="modelselection--log-only"></a>
 
@@ -529,7 +529,7 @@ Source: [`packages/core/agent/src/types.ts:55`](../packages/core/agent/src/types
 'model/selection': { selection: ModelSelection }
 ```
 
-Source: [`packages/core/agent/src/types.ts:53`](../packages/core/agent/src/types.ts)
+Source: [`packages/core/agent/src/types.ts:58`](../packages/core/agent/src/types.ts)
 
 ### `output/*`
 

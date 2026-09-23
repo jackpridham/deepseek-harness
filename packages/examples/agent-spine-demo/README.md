@@ -55,7 +55,7 @@ This applies the [Service Definition / Service Provider / Consumer separation](.
 
 ```ts
 import type { Config } from '@deepseek-ai/dsh-agent-spine-demo'
-// { agents?, maxParallelToolCalls?, includeHarnessIdentity?, includeRuntimeContext?, persona?, toolOrder?, tools?, dshHome?, sessionTitle?, skills?, workspaceContext, toolBash?, jobs?, toolJobs?, goals?, invariants? }
+// { agents?, maxParallelToolCalls?, outputSafetyMargin?, includeHarnessIdentity?, includeRuntimeContext?, persona?, toolOrder?, tools?, dshHome?, sessionTitle?, skills?, workspaceContext, toolBash?, jobs?, toolJobs?, goals?, invariants? }
 // workspaceContext requires { maxBytes } or false; the other owner schemas supply defaults.
 ```
 

@@ -4,6 +4,20 @@ English | [中文](core.zh.md)
 
 The **core** subsystem is [`packages/core`](../../packages/core/README.md) — the packages every composition boots: the event-sourced session log, system-prompt assembly, the tool registry, the agent types, and the concrete loop that drives them. This page explains what the `agent`/`agent-loop` pair declares — how an agent is created and owned, and the `Agent` handle's delivery, cancellation, and interception contracts — plus the two type patterns every subsystem follows. The group's dedicated pages and the rest of the folder are indexed in the [subsystems README](README.md).
 
+## Model loading progress
+
+Managed backends report measured loading progress through the optional host-owned request lifecycle observer.
+
+```ts type-equiv
+/** Backend-reported progress while a managed worker loads. */
+interface ModelLoadProgress {
+  stage: 'weights' | 'checkpoint_shards' | 'initializing'
+  completed?: number
+  total?: number
+  percent?: number
+}
+```
+
 ## The spine, package by package
 
 A turn flows through the six packages in one loop: the driver in [`agent-loop`](../../packages/core/agent-loop) claims a queued prompt, opens a turn on the [session log](session.md) (`ctx.sessions`), assembles the request prefix through [system-prompt](system-prompt.md) (`ctx.systemPrompt`) and derives history from the log, streams the model response through the [LLM seam](llm-streaming.md), dispatches tool calls through the [tool registry](tools.md) (`ctx.tools`), and appends every model-visible fact back onto the log before the next step derives from it. The conversation vocabulary the loop moves — `Message`, `ContentBlock`, `StreamChunk`, the model request — is declared by [`packages/llm`](../../packages/llm/README.md) and documented on [llm-streaming.md](llm-streaming.md).
@@ -340,7 +354,7 @@ currentSelection(): ModelSelection
 async saveSelection(next: ModelSelection): Promise<void>
 ```
 
-Source: [`packages/core/agent-default-model/src/index.ts:72`](../../packages/core/agent-default-model/src/index.ts)
+Source: [`packages/core/agent-default-model/src/index.ts:84`](../../packages/core/agent-default-model/src/index.ts)
 
 <a id="ctxagentloop--agentloop"></a>
 
@@ -379,7 +393,7 @@ async resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandl
 
 Types: [SessionHeader](persistence.md)
 
-Source: [`packages/core/agent-loop/src/index.ts:296`](../../packages/core/agent-loop/src/index.ts)
+Source: [`packages/core/agent-loop/src/index.ts:307`](../../packages/core/agent-loop/src/index.ts)
 
 <a id="ctxagentpresets--agentpresets"></a>
 
@@ -751,7 +765,24 @@ list(): Agent[]
 roots(): Agent[]
 ```
 
-Source: [`packages/core/agent/src/index.ts:277`](../../packages/core/agent/src/index.ts)
+Source: [`packages/core/agent/src/index.ts:281`](../../packages/core/agent/src/index.ts)
+
+<a id="ctxllmrequestlifecycle--llmrequestlifecycle"></a>
+
+### `ctx.llmRequestLifecycle` — `LlmRequestLifecycle`
+
+Actual request-stream milestones that a host may persist for its session UI.
+
+```ts cordis-catalog
+/**
+ * Record a request milestone for the host session view.
+ * @param event - Observed request phase and backend correlation facts.
+ * @returns Resolves when the host has processed the observation.
+ */
+observe(event: { sessionId?: string provider: string model: string contextWindow?: number mode?: string options?: Readonly<Record<string, string | number | boolean>> workerConfigIdentity?: string turn?: number step?: number /** Local requests use requesting/executing; managed backends supply their actual scheduler phase. */ phase: string outcome?: string operationId?: string reason?: { code?: string; message?: string } swap?: unknown progress?: ModelLoadProgress }): Promise<void>
+```
+
+Source: [`packages/core/agent/src/types.ts:19`](../../packages/core/agent/src/types.ts)
 
 <a id="agent-events"></a>
 
@@ -1074,7 +1105,7 @@ A declarative agent entry failed before it could publish a live agent. Consumers
 'agent-loop/config-start-failed'(payload: { sessionId: SessionId; error: unknown }): void
 ```
 
-Source: [`packages/core/agent-loop/src/index.ts:183`](../../packages/core/agent-loop/src/index.ts)
+Source: [`packages/core/agent-loop/src/index.ts:192`](../../packages/core/agent-loop/src/index.ts)
 
 <a id="agent-preset-events"></a>
 

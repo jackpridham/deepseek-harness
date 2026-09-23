@@ -17,6 +17,11 @@ export interface ModelLoadProgress {
 
 /** Actual request-stream milestones that a host may persist for its session UI. */
 export interface LlmRequestLifecycle {
+  /**
+   * Record a request milestone for the host session view.
+   * @param event - Observed request phase and backend correlation facts.
+   * @returns Resolves when the host has processed the observation.
+   */
   observe(event: {
     sessionId?: string
     provider: string

@@ -126,6 +126,12 @@ interface SubprocessSpawnSpec {
    * tombstone that removes an ordinary ambient entry from the child.
    */
   env?: NodeJS.ProcessEnv | undefined
+  /**
+   * Complete per-call filesystem policy. Local execution enforces a confined
+   * policy before spawn; remote providers reject one unless they can do so in
+   * their execution world.
+   */
+  sandboxPolicy?: SandboxExecutionPolicy | undefined
 }
 ```
 

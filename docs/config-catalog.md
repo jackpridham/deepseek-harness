@@ -100,7 +100,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/core/agent-default-model/src/index.ts:47`](../packages/core/agent-default-model/src/index.ts)
+Source: [`packages/core/agent-default-model/src/index.ts:56`](../packages/core/agent-default-model/src/index.ts)
 
 <a id="deepseek-aidsh-agent-instructions"></a>
 
@@ -109,6 +109,10 @@ Source: [`packages/core/agent-default-model/src/index.ts:47`](../packages/core/a
 ```ts config-catalog
 /** User-facing workspace instruction loader configuration. */
 export interface Config {
+  /** Load the Harness-home AGENTS file by default. */
+  includeHarnessInstructions?: boolean
+  /** Load workspace baseline and nested instructions by default. */
+  includeWorkspaceInstructions?: boolean
   /** Harness home containing the fixed user-global `AGENTS.md`; defaults to `$DSH_HOME` or `~/.dsh`. */
   dshHome?: string
   /** Directory entries that identify the project root while walking upward from the session cwd. */
@@ -146,6 +150,8 @@ export interface Config {
    * omission defaults to {@link DEFAULT_MAX_PARALLEL_TOOL_CALLS}.
    */
   maxParallelToolCalls?: number
+  /** Tokens held back from the context window during output admission. */
+  outputSafetyMargin?: number
   /** Agents created or resumed at plugin startup. */
   agents: (AgentOptions & {
     /** Stable config label used in logs and as the fresh combined-id prefix. */
@@ -162,7 +168,7 @@ export interface Config {
 
 Depends on: [`AgentOptions`](subsystems/core.md) · [`SessionId`](subsystems/core.md)
 
-Source: [`packages/core/agent-loop/src/index.ts:255`](../packages/core/agent-loop/src/index.ts)
+Source: [`packages/core/agent-loop/src/index.ts:264`](../packages/core/agent-loop/src/index.ts)
 
 <a id="deepseek-aidsh-agent-presets"></a>
 
@@ -235,6 +241,8 @@ export interface Config {
   agents?: AgentLoopConfig['agents']
   /** Agent-loop concurrency cap; `1` is serial. */
   maxParallelToolCalls?: AgentLoopConfig['maxParallelToolCalls']
+  /** Tokens held back from the context window during output admission. */
+  outputSafetyMargin?: AgentLoopConfig['outputSafetyMargin']
   /** Whether the system prompt includes the fixed Harness identity (default true). */
   includeHarnessIdentity?: SystemPromptConfig['includeHarnessIdentity']
   /** Whether model history includes dynamic runtime-context snapshots (default true). */
@@ -494,7 +502,7 @@ export interface CompactionPolicyConfig {
   summarizationProvider?: string
   /** Summary model; set together with `summarizationProvider`, or inherit the conversation target. */
   summarizationModel?: string
-  /** Provider generation cap for summarization. Defaults to `8192`. */
+  /** Initial summary cap, default `8192`; one truncation retry may double it within known model/context limits. */
   maxTokens?: number
   /** Extra attempts after the first compaction when pressure remains above threshold. Defaults to `1`. */
   compactionRetries?: number
@@ -666,7 +674,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/fs/fs-local/src/index.ts:41`](../packages/fs/fs-local/src/index.ts)
+Source: [`packages/fs/fs-local/src/index.ts:42`](../packages/fs/fs-local/src/index.ts)
 
 <a id="deepseek-aidsh-fs-sandbox"></a>
 
@@ -715,6 +723,8 @@ Requires: `agentDefaultModel` · `agents` · `sessions`
 export interface Config {
   /** The prompt text for the single run. */
   task: string
+  /** Session-owned instructions resolved before the first turn. */
+  instructions?: import('@deepseek-ai/dsh-session').SessionInstructions
 }
 ```
 
@@ -789,7 +799,7 @@ Source: [`packages/hooks/hooks-codex/src/index.ts:44`](../packages/hooks/hooks-c
 
 ## `@deepseek-ai/dsh-host-apiproxy`
 
-Requires: `agentDefaultModel` · `agents` · `attachments` · `directoryPicker` · `llm` · `sessionPersistence` · `sessions` · `subagents` · `sessionQuery` · `tools` · `userQuestions` · `workspaceRegistry`
+Requires: `agentDefaultModel` · `agents` · `attachments` · `directoryPicker` · `llm` · `sessionPersistence` · `sessions` · `subagents` · `sessionQuery` · `tools` · `userQuestions` · `workspaceRegistry` · `systemPrompt`
 
 ```ts config-catalog
 /** Gateway plugin configuration. */
@@ -819,6 +829,22 @@ export interface Config {
 
 Source: [`packages/host/apiproxy/src/index.ts:41`](../packages/host/apiproxy/src/index.ts)
 
+<a id="deepseek-aidsh-host-directory-picker-auto"></a>
+
+## `@deepseek-ai/dsh-host-directory-picker-auto`
+
+Requires: `webServer` · `loader`
+
+```ts config-catalog
+/** Validated adaptive chooser configuration. */
+export interface Config {
+  /** Directory the browse interaction opens when the caller supplies no path. */
+  defaultDirectory: string
+}
+```
+
+Source: [`packages/host/directory-picker-auto/src/index.ts:34`](../packages/host/directory-picker-auto/src/index.ts)
+
 <a id="deepseek-aidsh-host-directory-picker-browse"></a>
 
 ## `@deepseek-ai/dsh-host-directory-picker-browse`
@@ -828,6 +854,8 @@ Source: [`packages/host/apiproxy/src/index.ts:41`](../packages/host/apiproxy/src
 export interface Config {
   /** Complete-result bound of one listing level; see {@link BrowseDirectoryPicker.Config}. */
   maxEntries: number
+  /** Directory the first list opens. */
+  defaultDirectory: string
 }
 ```
 
@@ -1209,7 +1237,7 @@ export type PiAiThinkingFormat = NonNullable<OpenAICompletionsCompat['thinkingFo
 
 Depends on: `Api` (`@earendil-works/pi-ai`) · `CacheRetention` (`@earendil-works/pi-ai`) · `Model` (`@earendil-works/pi-ai`) · `ModelThinkingLevel` (`@earendil-works/pi-ai`) · `OpenAICompletionsCompat` (`@earendil-works/pi-ai`) · [`RetryPolicyConfig`](../packages/llm/llm/src/index.ts) · `ThinkingBudgets` (`@earendil-works/pi-ai`) · `Transport` (`@earendil-works/pi-ai`)
 
-Source: [`packages/llm/llm-pi-ai/src/config.ts:213`](../packages/llm/llm-pi-ai/src/config.ts)
+Source: [`packages/llm/llm-pi-ai/src/config.ts:230`](../packages/llm/llm-pi-ai/src/config.ts)
 
 <a id="deepseek-aidsh-llm-replay"></a>
 
@@ -1460,7 +1488,7 @@ export interface PresetSpec {
 
 Depends on: [`ApprovalPolicy`](subsystems/approval.md) · [`SandboxMode`](subsystems/sandbox.md)
 
-Source: [`packages/interaction/permission-presets/src/index.ts:140`](../packages/interaction/permission-presets/src/index.ts)
+Source: [`packages/interaction/permission-presets/src/index.ts:156`](../packages/interaction/permission-presets/src/index.ts)
 
 <a id="deepseek-aidsh-persona"></a>
 
@@ -1500,7 +1528,7 @@ export interface PlanModeConfig {
 }
 ```
 
-Source: [`packages/plan/plan-mode/src/index.ts:71`](../packages/plan/plan-mode/src/index.ts)
+Source: [`packages/plan/plan-mode/src/index.ts:70`](../packages/plan/plan-mode/src/index.ts)
 
 <a id="deepseek-aidsh-pwsh-local"></a>
 
@@ -1643,6 +1671,8 @@ export interface Config {
    * `process.cwd()`). Normal agent calls use their session cwd instead.
    */
   workspaceRoot?: string
+  /** Absolute host paths lower-permission sessions must not access. */
+  protectedPaths?: string[]
 }
 ```
 
@@ -2184,7 +2214,7 @@ export interface Config {
 export type PermissionPolicy = 'allow' | 'reject'
 ```
 
-Source: [`packages/subagent/subagent-acp/src/index.ts:27`](../packages/subagent/subagent-acp/src/index.ts)
+Source: [`packages/subagent/subagent-acp/src/index.ts:28`](../packages/subagent/subagent-acp/src/index.ts)
 
 <a id="deepseek-aidsh-subagent-claude-code"></a>
 
@@ -2217,7 +2247,7 @@ export interface Config {
 export type ClaudeCodePermissionMode = typeof CLAUDE_CODE_PERMISSION_MODES[number]
 ```
 
-Source: [`packages/subagent/subagent-claude-code/src/index.ts:38`](../packages/subagent/subagent-claude-code/src/index.ts)
+Source: [`packages/subagent/subagent-claude-code/src/index.ts:39`](../packages/subagent/subagent-claude-code/src/index.ts)
 
 <a id="deepseek-aidsh-subagent-codex"></a>
 
@@ -2248,7 +2278,7 @@ export type CodexPermissionMode =
   | 'dangerously-bypass-approvals-and-sandbox'
 ```
 
-Source: [`packages/subagent/subagent-codex/src/index.ts:36`](../packages/subagent/subagent-codex/src/index.ts)
+Source: [`packages/subagent/subagent-codex/src/index.ts:37`](../packages/subagent/subagent-codex/src/index.ts)
 
 <a id="deepseek-aidsh-subagent-dsh-sdk"></a>
 
@@ -2301,7 +2331,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/subagent/subagent-dsh-sdk/src/index.ts:29`](../packages/subagent/subagent-dsh-sdk/src/index.ts)
+Source: [`packages/subagent/subagent-dsh-sdk/src/index.ts:30`](../packages/subagent/subagent-dsh-sdk/src/index.ts)
 
 <a id="deepseek-aidsh-subagent-fork-in-process"></a>
 
@@ -2349,7 +2379,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/e2b/subprocess-e2b/src/index.ts:25`](../packages/e2b/subprocess-e2b/src/index.ts)
+Source: [`packages/e2b/subprocess-e2b/src/index.ts:26`](../packages/e2b/subprocess-e2b/src/index.ts)
 
 <a id="deepseek-aidsh-system-prompt"></a>
 
@@ -2376,7 +2406,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/core/system-prompt/src/index.ts:186`](../packages/core/system-prompt/src/index.ts)
+Source: [`packages/core/system-prompt/src/index.ts:195`](../packages/core/system-prompt/src/index.ts)
 
 <a id="deepseek-aidsh-terminal-bash"></a>
 
@@ -2636,7 +2666,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/lsp/tool-lsp/src/index.ts:58`](../packages/lsp/tool-lsp/src/index.ts)
+Source: [`packages/lsp/tool-lsp/src/index.ts:61`](../packages/lsp/tool-lsp/src/index.ts)
 
 <a id="deepseek-aidsh-tool-pwsh"></a>
 
@@ -2730,7 +2760,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/skill/tool-skill/src/index.ts:61`](../packages/skill/tool-skill/src/index.ts)
+Source: [`packages/skill/tool-skill/src/index.ts:62`](../packages/skill/tool-skill/src/index.ts)
 
 <a id="deepseek-aidsh-tool-str-replace-editor"></a>
 
@@ -3237,7 +3267,6 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 - `@deepseek-ai/dsh-fs-e2b` — requires `e2b` ([`packages/e2b/fs-e2b/src/index.ts`](../packages/e2b/fs-e2b/src/index.ts))
 - `@deepseek-ai/dsh-fs-observation-policy` ([`packages/fs/fs-observation-policy/src/index.ts`](../packages/fs/fs-observation-policy/src/index.ts))
 - `@deepseek-ai/dsh-goal-round-driver` — requires `agents` · `goals` · `sessions` ([`packages/goal/goal-round-driver/src/index.ts`](../packages/goal/goal-round-driver/src/index.ts))
-- `@deepseek-ai/dsh-host-directory-picker-auto` — requires `webServer` · `loader` ([`packages/host/directory-picker-auto/src/index.ts`](../packages/host/directory-picker-auto/src/index.ts))
 - `@deepseek-ai/dsh-host-directory-picker-native` ([`packages/host/directory-picker-native/src/index.ts`](../packages/host/directory-picker-native/src/index.ts))
 - `@deepseek-ai/dsh-host-plugin-inventory` — requires `loader` ([`packages/host/plugin-inventory/src/index.ts`](../packages/host/plugin-inventory/src/index.ts))
 - `@deepseek-ai/dsh-llm` ([`packages/llm/llm/src/index.ts`](../packages/llm/llm/src/index.ts))

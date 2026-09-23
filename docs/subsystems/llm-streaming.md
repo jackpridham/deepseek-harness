@@ -530,6 +530,12 @@ interface GenerateOptions {
   contextWindow?: number
   /** Permit one advertised host-constrained context tier for a best-effort request. */
   bestTryContext?: boolean
+  /** Catalog-declared worker load mode selected for this request. */
+  mode?: string
+  /** Catalog-declared serving options selected for this request. */
+  options?: Readonly<Record<string, ModelServingOption>>
+  /** Backend worker identity expected at admission. */
+  workerConfigIdentity?: string
   /**
    * Ordered conversation messages, exactly as the provider sees them (after
    * the `system` slot). A loop-built request assembles them as
@@ -699,6 +705,12 @@ interface LlmCallConfig {
   reasoningEffort?: ReasoningEffortId
   contextWindow?: number
   bestTryContext?: boolean
+  /** Catalog-declared worker load mode selected for this request. */
+  mode?: string
+  /** Catalog-declared serving options selected for this request. */
+  options?: Readonly<Record<string, ModelServingOption>>
+  /** Backend worker identity expected at admission; mismatch rejects before execution. */
+  workerConfigIdentity?: string
   temperature?: number
   maxTokens?: number
   stop?: string[]
@@ -952,7 +964,7 @@ The provider topology changed: an adapter registered or unregistered routes, or 
 'llm/adapters-updated'(): void
 ```
 
-Source: [`packages/llm/llm/src/types.ts:23`](../../packages/llm/llm/src/types.ts)
+Source: [`packages/llm/llm/src/types.ts:24`](../../packages/llm/llm/src/types.ts)
 
 <a id="llmstream--waterfall"></a>
 
