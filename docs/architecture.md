@@ -90,6 +90,8 @@ Token admission is estimate-based. Image attachments use their possible base64 w
 
 Session-owned instruction configuration is committed before the first turn and composed after plugin prompt assembly on every model step. Configured `turn/start` records the accepted revision; instruction events remain in the complete log after compaction. Automatic context loaders honor their independent session switches.
 
+Cancellation closes the durable turn before the driver becomes idle; the [loop's cancellation rules](../packages/core/agent-loop/README.md) keep live signal state separate from recorded outcomes.
+
 Input reaches the driver through one inbox. Some messages wake it immediately; injected context waits in the inbox until another message does.
 
 `agent/pre-step` decides what the model sees. Listeners may rewrite the claimed messages or reject them outright; a rejected or empty first claim still closes a durable turn that spent no step, so the log records the attempt. Each step reads the prompt sections and tool schemas that plugins registered.
