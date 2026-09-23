@@ -140,6 +140,8 @@ export class FakeApiClient implements IApiClient {
   // without built lib/, so IApiClient's indexed-access types collapse to any
   // and inferred parameters would trip no-unsafe-argument.
   readonly sessions: IApiClient['sessions'] = {
+    configureInstructions: () => Promise.reject(new Error('Instruction configuration is not implemented by this test fake')),
+    getInstructions: () => Promise.reject(new Error('Instruction inspection is not implemented by this test fake')),
     list: (payload: unknown) => this.record('session.list', payload, this.onList(payload)),
     search: (payload: unknown, signal?: AbortSignal) => {
       this.lastSearchSignal = signal

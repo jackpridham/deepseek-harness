@@ -107,6 +107,8 @@ export class FakeApiClient implements IApiClient {
   // lint lane runs without built artifacts, where IApiClient's wire types
   // (apiproxy subpath) resolve to any and inferred params trip no-unsafe-argument.
   readonly sessions: IApiClient['sessions'] = {
+    configureInstructions: () => Promise.reject(new Error('Instruction configuration is not implemented by this test fake')),
+    getInstructions: () => Promise.reject(new Error('Instruction inspection is not implemented by this test fake')),
     list: (payload: unknown) => this.record('session.list', payload, this.onList(payload)),
     search: (payload: unknown, signal?: AbortSignal) => {
       this.lastSearchSignal = signal
