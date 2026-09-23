@@ -2631,7 +2631,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         const found = await agentFor(request.payload.sessionId)
         if ('error' in found) return err(request, found.error)
         const state = found.agent.session.getInstructions()
-        const assembly = await ctx.systemPrompt.assemble(assembleContextFor(found.agent))
+        const assembly = await ctx.systemPrompt.assemble({ ...assembleContextFor(found.agent), purpose: 'inspection' })
         return ok(request, { ...state, effective: {
           enabledContextSources: {
             harnessInstructions: false, workspaceInstructions: false, skillCatalog: false, runtimeFacts: false,

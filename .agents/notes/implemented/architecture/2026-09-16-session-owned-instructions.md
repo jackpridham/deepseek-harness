@@ -10,9 +10,13 @@ Callers need durable role and standing instructions independent of task messages
 
 DSH stores exact version-1 instruction inputs as session events. Session creation and pre-first-turn updates call the same session method. System prompt assembly composes literal named blocks after plugin waterfalls, preserving replacement semantics independently of listener order. Automatic AGENTS, workspace, skill catalogue and runtime context sources own their suppression; removing a system section does not erase user-role instruction history.
 
+Instruction inspection explicitly supplies `purpose: 'inspection'` to assembly; absent purpose retains inference admission. Executor plugins can report disconnected state without inventing prior tool schemas or granting execution. Idle status does not identify inspection: a new real prompt can also arrive while idle.
+
 ## Alternatives considered
 
 Preset-specific prompt overrides and repeated user-message injection were rejected: they split ownership and duplicate instructions. The caller owns role and standing instruction text while DSH owns application, durability and diagnostics. Configuration is declarative and independent of task messages. Identical retries retain their revision. Freezing configuration before the first turn prevents false claims that changing a switch removes already-read instructions or compacted summaries. CLI files are resolved locally, and validation YAML can opt into the same text-bearing API without making the server interpret remote filenames.
+
+**Removing executor admission or inferring inspection from idle status.** Both allow normal prompting through a missing execution dependency. An explicit per-assembly purpose keeps inspection separate without another persistence format or API response schema.
 
 ## Consequences
 

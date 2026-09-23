@@ -41,6 +41,8 @@ declare module '@deepseek-ai/cordis' {
 
 /** Merge-extensible context for one prompt assembly. */
 export interface AssembleContext {
+  /** Read-only inspection or inference admission. Omitted means inference; never derive from agent status. */
+  purpose?: 'inference' | 'inspection'
   /** Session whose durable instructions apply; diagnostics may omit it. */
   session?: Session
   /**

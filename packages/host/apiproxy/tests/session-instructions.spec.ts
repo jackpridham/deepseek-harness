@@ -82,7 +82,15 @@ it('composes API instructions through the real Loader, persists through compacti
   expect(value(await client.sessions.create({ sessionId: id, instructions: configured })).instructionsRevision).toBe(1)
   expect(value(await client.sessions.configureInstructions({ sessionId: id, instructions: configured })).revision).toBe(1)
   expect(value(await client.sessions.create({ sessionId: id, instructions: configured })).instructionsRevision).toBe(1)
+  const purposes: (string | undefined)[] = []
+  ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
+    purposes.push(context.purpose)
+    return next()
+  })
+  const eventsBefore = ctx.agents.get(id)!.session.events.length
   const inspection = value(await client.sessions.getInstructions({ sessionId: id }))
+  expect(purposes).toEqual(['inspection'])
+  expect(ctx.agents.get(id)!.session.events).toHaveLength(eventsBefore)
   expect(inspection.instructions).toEqual(configured)
   expect(inspection.effective.systemPrompt).toMatchInlineSnapshot(`
     "FIRST
@@ -102,6 +110,7 @@ it('composes API instructions through the real Loader, persists through compacti
   ctx.llm.registerAdapter(['fixture'], mock)
   agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Perform a task with details. '.repeat(200) }], source: { kind: 'user' } }))
   await agent.whenIdle()
+  expect(purposes.slice(1)).not.toContain('inspection')
   expect(mock.requests, JSON.stringify(agent.session.events.filter(e => e.type === 'turn/end'))).toHaveLength(2)
   for (const req of mock.requests) {
     expect(req.system).toBe(inspection.effective.systemPrompt)
