@@ -8,6 +8,8 @@ import { CallId, createUserMessage } from '@deepseek-ai/dsh-llm'
  */
 
 import { describe, expect, it } from 'vitest'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { Context } from '@deepseek-ai/cordis'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId, TurnEndReason } from '@deepseek-ai/dsh-session'
@@ -55,6 +57,52 @@ function userTexts(agent: Agent): string[] {
 }
 
 describe('Agent.cancel()', () => {
+  it.each([
+    { kind: 'user' as const },
+    { kind: 'hook' as const, reason: 'closeout accepted' },
+  ])('retains a terminal event after fetch annotates the $kind cancellation cause', async (cause) => {
+    const started = Promise.withResolvers<undefined>()
+    const server = createServer(() => { started.resolve(undefined) })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+    const adapter = new MockAdapter([toolCallResponse('fetch-call', 'fetch-local', {})])
+    const ctx = await harness(adapter)
+    const agent = ctx.agentLoop.create(SessionId(`fetch-cancel-${cause.kind}`), { provider: 'mock', model: 'mock' })
+    const errors: unknown[] = []
+    let terminalAtIdle: TurnEndReason | undefined
+    ctx.on('agent/error', ({ error }) => { errors.push(error) })
+    ctx.on('agent/status', ({ agent: subject, status }) => {
+      if (subject === agent && status === 'idle') {
+        terminalAtIdle = agent.session.events.findLast(event => event.type === 'turn/end')?.data.reason
+      }
+    })
+    ctx.tools.register(defineContentToolFixture({
+      name: 'fetch-local', description: '', parameters: {},
+      async execute(_args, execution) {
+        await fetch(endpoint, { signal: execution.signal })
+        return []
+      },
+    }))
+    try {
+      send(agent, 'fetch until canceled')
+      await started.promise
+      agent.cancel(cause, { keepInbox: true })
+      await agent.whenIdle()
+      expect(errors).toEqual([])
+      expect(terminalAtIdle).toEqual({ kind: 'aborted', reason: cause.kind === 'hook'
+        ? { kind: 'hook', reason: 'closeout accepted' }
+        : { kind: 'user' } })
+      expect(agent.session.events.filter(event => event.type === 'turn/end')).toHaveLength(1)
+      expect(agent.session.events.at(-1)?.type).toBe('turn/end')
+    } finally {
+      server.closeAllConnections()
+      await new Promise<void>((resolve, reject) => server.close((error) => {
+        if (error) reject(error)
+        else resolve()
+      }))
+    }
+  })
+
   it('cancel() on an idle agent with nothing queued is a no-op; the next prompt runs (F2 leak guard)', async () => {
     const adapter = new MockAdapter([textResponse('reply')])
     const ctx = await harness(adapter)

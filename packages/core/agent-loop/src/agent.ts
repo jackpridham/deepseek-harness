@@ -359,7 +359,13 @@ export class ReactLoopAgent implements Agent {
       }
     } catch (error: unknown) {
       if (signal.aborted) {
-        turnEnds = { kind: 'aborted', reason: signal.reason as AgentCancelCause }
+        // Fetch may annotate the live abort cause with a non-enumerable stack.
+        // Persist only the declared cancellation fields, not that mutable object.
+        const cause = signal.reason as AgentCancelCause
+        const reason: AgentCancelCause = cause.kind === 'hook'
+          ? { kind: cause.kind, reason: cause.reason }
+          : { kind: cause.kind }
+        turnEnds = { kind: 'aborted', reason }
         throw error
       }
       // Every failure is structured: an `LlmError` keeps its facts, anything
