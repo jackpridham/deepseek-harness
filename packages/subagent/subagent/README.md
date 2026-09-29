@@ -6,6 +6,8 @@ The subagent seam lets one agent delegate work to a child through a named provid
 
 The [subagent family overview](../README.md) maps implementations and model-facing consumers. This package owns the provider registry, shared request and result contracts, durable descriptors, and continuable-child orchestration. Multiple named providers may coexist behind that contract.
 
+Diagnostic admission and restoration require the existing host compaction service. The web profile scopes it to `vortex-diagnostic-children-v1`; diagnostic sessions still disable presets, host tools and ambient instructions. Every normal request preserves its assignment’s numeric output allowance. Auxiliary requests are limited to compaction, use the admitted model/context/instructions and tool ceiling, obey cancellation, and reserve run-wide output budget. Summaries retain candidate identities, gaps and evidence references without becoming source evidence or accepted closeout. No caller API change is required.
+
 ## Service API
 
 `SubagentRuntime` has these operations:

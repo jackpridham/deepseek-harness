@@ -706,12 +706,21 @@ export class ReactLoopAgent implements Agent {
             summaryTruncated = error
           }
         }
+        signal.throwIfAborted()
         measurement = meter.measure(session, header)
         available = contextWindow - measurement.totalTokens - this.loopCtx.agentLoop.config.outputSafetyMargin
-        if (available <= 0 && summaryTruncated !== undefined) throw summaryTruncated
+        if (summaryTruncated !== undefined
+          && (available <= 0 || available < config.maxTokens && this.loopCtx.agents.policyFor(this.id)?.preserveOutputLimit))
+          throw summaryTruncated
       }
       if (available <= 0) {
         throw new LlmError('no output space remains after context budgeting', 'OUTPUT_BUDGET_EXCEEDED')
+      }
+      if (available < config.maxTokens && this.loopCtx.agents.policyFor(this.id)?.preserveOutputLimit) {
+        throw new LlmError(
+          `Cannot reserve ${config.maxTokens} output tokens: assembled input ${measurement.totalTokens} + safety margin ${this.loopCtx.agentLoop.config.outputSafetyMargin} exceeds context ${contextWindow}. Compaction is unavailable or could not reduce retained input enough; reduce immutable instructions or retained content, or start a new diagnostic run.`,
+          'OUTPUT_BUDGET_EXCEEDED',
+        )
       }
       const requested = config.maxTokens
       const effective = Math.min(requested, available)

@@ -6,6 +6,8 @@ The **basic compaction backend**: a `BasicCompactionEngine` implementing the `@d
 
 This package owns the Service Provider role of the compaction capability — see the [Service Definition package](../compaction/README.md) for its contract and the [capability-seam Agent Note](../../../.agents/notes/implemented/feature/2026-06-18-compaction-capability-seam.md) for the design.
 
+`sessionPolicies` optionally limits automatic pressure, output-budget and overflow compaction to named immutable session policies. Omitted or empty lists preserve unrestricted behavior. The web host config selects only diagnostic sessions, with `auto: true`, `thresholdRatio: 0.65`, `retainRatio: 0.16`, `maxTokens: 8192`, and one compaction and overflow retry. Ordinary web sessions continue using their isolated preset compactor. Output-budget compaction independently derives its threshold from the selected context minus each request’s output allowance and safety margin. Diagnostic summaries inherit the exact model/context/reasoning selection and cap their own allowance by the assignment ceiling.
+
 ## What it owns
 
 This backend owns the compaction policy:

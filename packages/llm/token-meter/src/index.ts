@@ -54,7 +54,13 @@ function optionalHeaderEquals(
   right: EpochHeader | undefined,
 ): boolean {
   if (left === undefined || right === undefined) return left === right
-  return headerEquals(left, right)
+  // Output allowance changes do not change provider input tokenization.
+  const inputHeader = (header: EpochHeader): EpochHeader => {
+    const { maxTokens: _maxTokens, ...config } = header.config
+    const { maxTokens: _defaultMaxTokens, ...adapterDefaults } = header.adapterDefaults ?? {}
+    return canonicalHeader({ ...header, config, adapterDefaults })
+  }
+  return headerEquals(inputHeader(left), inputHeader(right))
 }
 
 /** Reject stale or misspelled keys before defaults can hide them. */

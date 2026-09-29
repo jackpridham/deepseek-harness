@@ -406,7 +406,7 @@ Source: [`packages/compaction/compaction/src/types.ts:33`](../packages/compactio
 }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:123`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:124`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticchild-state--log-only"></a>
 
@@ -417,7 +417,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:123`](../packages/subagen
 'diagnostic/child-state': JsonValue
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:127`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:128`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticevidence-read--log-only"></a>
 
@@ -428,7 +428,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:127`](../packages/subagen
 'diagnostic/evidence-read': JsonValue
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:129`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:130`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticexecutor--log-only"></a>
 
@@ -439,7 +439,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:129`](../packages/subagen
 'diagnostic/executor': { kind: string; value: JsonValue }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:135`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:136`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticmember--log-only"></a>
 
@@ -450,7 +450,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:135`](../packages/subagen
 'diagnostic/member': { rootSessionId: string; runId: string; assignmentId: string }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:131`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:132`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticrequest--log-only"></a>
 
@@ -461,7 +461,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:131`](../packages/subagen
 'diagnostic/request': RequestData
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:133`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:134`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticreservation--log-only"></a>
 
@@ -472,7 +472,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:133`](../packages/subagen
 'diagnostic/reservation': AssignmentData
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:121`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:122`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticrun-state--log-only"></a>
 
@@ -483,7 +483,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:121`](../packages/subagen
 'diagnostic/run-state': RunData
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:119`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:120`](../packages/subagent/subagent/src/diagnostic.ts)
 
 ### `feedback/*`
 

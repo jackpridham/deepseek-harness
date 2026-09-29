@@ -6,10 +6,12 @@ import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import Persistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import Titles from '@deepseek-ai/dsh-session-title'
 import Projections from '@deepseek-ai/dsh-session-projection'
+import BasicCompaction from '@deepseek-ai/dsh-compaction-basic'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
-import Subagents, { DIAGNOSTIC_POLICY, parseDiagnosticAdmission } from '@deepseek-ai/dsh-subagent'
+import Subagents, { DIAGNOSTIC_POLICY, parseDiagnosticAdmission, diagnosticRecordDigest } from '@deepseek-ai/dsh-subagent'
 import type { DiagnosticBinding, DiagnosticAssignment } from '@deepseek-ai/dsh-subagent'
 import * as Spawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { MockAdapter, textResponse, toolCallResponse } from '../../../../packages/core/agent-loop/tests/mock-adapter.ts'
 
@@ -23,6 +25,7 @@ export async function apply(ctx: Context): Promise<void> {
   await ctx.plugin(Titles, { fallbackMaxWords: 8, fallbackMaxBytes: 80, maxTitleBytes: 80 })
   await ctx.plugin(Projections)
   await ctx.plugin(TokenMeter)
+  await ctx.plugin(BasicCompaction, { sessionPolicies: [DIAGNOSTIC_POLICY], thresholdRatio: 0.65 })
   await ctx.plugin(Subagents)
   await ctx.plugin(Spawn, { providerName: 'spawn' })
   const fixtures = JSON.parse(
@@ -38,15 +41,32 @@ export async function apply(ctx: Context): Promise<void> {
     idempotencyKey: string
     assignment: DiagnosticAssignment
   }
-  const adapter = new MockAdapter([
-    toolCallResponse('delegate', 'subagent', {
-      assignmentId: prepared.assignment.assignmentId,
-      run_in_background: true,
-    }),
-    textResponse('Source review complete.'),
-    textResponse('Child accepted.'),
-    textResponse('Child settled.'),
-  ])
+  input.maxOutputTokens = 2_000_000
+  for (const assignment of [input.coordinatorAssignment, prepared.assignment]) {
+    assignment.roleSettings.outputLimit = 65536
+    assignment.budget.maxOutputTokens = 1_000_000
+    assignment.digest = diagnosticRecordDigest(assignment, true)
+  }
+  let rootRequests = 0
+  const response = (options: import('@deepseek-ai/dsh-llm').GenerateOptions) => {
+    if (options.purpose === 'compaction') {
+      process.stdout.write(`${JSON.stringify({ type: 'diagnostic-summary', contextWindow: options.contextWindow, maxTokens: options.maxTokens })}\n`)
+      return textResponse('Candidate C1; pending gap G1; evidence reference read:159. Unvalidated.')
+    }
+    if (options.sessionId !== input.rootSessionId) return textResponse('Child accepted.')
+    if (rootRequests++ > 0) return textResponse('Child accepted.')
+    return toolCallResponse('delegate', 'subagent', { assignmentId: prepared.assignment.assignmentId, run_in_background: true })
+  }
+  class FixtureAdapter extends MockAdapter {
+    override async *stream(options: import('@deepseek-ai/dsh-llm').GenerateOptions) {
+      if (options.sessionId === input.rootSessionId && rootRequests > 0) {
+        const child = ctx.get('agents')!.list().find(agent => agent.session.header.parentSession === input.rootSessionId)
+        await child?.whenIdle()
+      }
+      yield* super.stream(options)
+    }
+  }
+  const adapter = new FixtureAdapter(Array.from({ length: 8 }, () => response))
   const contextWindow = input.coordinatorAssignment.commonModel.contextWindow
   adapter.resolveModel = async (provider, model) => ({
     provider,
@@ -71,7 +91,18 @@ export async function apply(ctx: Context): Promise<void> {
       admit: async () => {
         binding = { ...binding, state: 'active' }
       },
-      install: () => () => {},
+      install: (agent, assignment) => {
+        if (assignment.role === 'discovery' && !agent.session.events.some(event => event.type === 'request/header')) {
+          const snapshot = assignment.instructionSnapshot
+          agent.session.append('request/header', { reason: 'initial', header: {
+            config: { ...assignment.commonModel, maxTokens: 65536 },
+            system: [snapshot.baseContent, ...snapshot.expertise.map(asset => asset.content)].filter(Boolean).join('\n\n'),
+          } })
+          for (let i = 0; i < 8; i++) agent.session.append('user/message', createUserMessage({ source: { kind: 'user' },
+            content: [{ type: 'text', text: `Candidate C1 evidence read:159 gap G1 ${i}: ` + 'x'.repeat(100000) }] }), { surfaceOp: 'append' })
+        }
+        return () => {}
+      },
       cancel: async () => {},
       quiescent: () => true,
     }),

@@ -765,7 +765,7 @@ list(): Agent[]
 roots(): Agent[]
 ```
 
-Source: [`packages/core/agent/src/index.ts:283`](../../packages/core/agent/src/index.ts)
+Source: [`packages/core/agent/src/index.ts:285`](../../packages/core/agent/src/index.ts)
 
 <a id="ctxllmrequestlifecycle--llmrequestlifecycle"></a>
 

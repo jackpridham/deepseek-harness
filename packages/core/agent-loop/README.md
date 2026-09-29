@@ -6,6 +6,8 @@ THE concrete agent plugin and loop driver. Its package-internal implementation s
 
 This is the only package in the harness that contains concrete loop logic. Everything else is an abstract service or a plugin against extension points — new behavior goes into plugins, not here.
 
+Before every dispatch, output admission measures the assembled system instructions, tools and conversation against the selected context, output allowance and configured safety margin. It asks the existing compactor to reduce input when necessary and remeasures after replacement. Policies with `preserveOutputLimit` reject irreducible input with `OUTPUT_BUDGET_EXCEEDED`; other consumers retain reduced-cap fallback. This check uses the current numeric allowance at every size, independently of proactive pressure thresholds.
+
 ## Service: `AgentLoop` (ctx key: `agentLoop`)
 
 ### Public API

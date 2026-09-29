@@ -8,6 +8,8 @@ The optional `@deepseek-ai/dsh-agent/invariant` companion registers this package
 
 `LlmRequestLifecycle` and durable `model/lifecycle` events carry optional backend-reported `ModelLoadProgress`: weight or checkpoint-shard stage counters and percentage, or indeterminate initialization. Observers omit progress when loading settles; the agent contract does not estimate total loading time.
 
+`SessionPolicy.preserveOutputLimit` makes request admission preserve the resolved output allowance: compaction must make it fit, or the request fails with `OUTPUT_BUDGET_EXCEEDED`. Other policies retain the existing reduced-cap fallback.
+
 ## Service: `AgentRegistry` (ctx key: `agents`)
 
 Tracks live agents and carries the initiating Agent through asynchronous driver work without importing the concrete loop package.

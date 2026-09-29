@@ -230,6 +230,8 @@ export interface SessionPolicy {
   readonly fork: boolean
   /** Whether callers may select another model; omission preserves ordinary selection. */
   readonly models?: boolean
+  /** Reserve the authored output allowance; insufficient input capacity must fail rather than shrink it. */
+  readonly preserveOutputLimit?: boolean
   /** Provider-owned, JSON-serializable assertions returned after policy installation. */
   readonly attestation: Readonly<Record<string, JsonValue>>
   /**

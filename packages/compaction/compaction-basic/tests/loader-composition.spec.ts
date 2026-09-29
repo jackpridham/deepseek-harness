@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -55,6 +55,25 @@ async function loadYaml(lines: readonly string[]): Promise<Context> {
 }
 
 describe('real Loader composition', () => {
+  it('loads the shipped diagnostic-only host compactor without enabling ordinary-session compaction', async () => {
+    const patch = await readFile(new URL('../../../bundle/web-app/cordis.patch.yml', import.meta.url), 'utf8')
+    const row = patch.match(/- id: compaction-basic\n([\s\S]*?)(?=\n- |$)/)![1]!
+    const loaded = await loadYaml([
+      "- name: '@deepseek-ai/dsh-llm'",
+      "- name: '@deepseek-ai/dsh-session'",
+      "- name: '@deepseek-ai/dsh-token-meter'",
+      "- name: '@deepseek-ai/dsh-compaction-basic'",
+      ...row.trimEnd().split('\n'),
+    ])
+    const engine = loaded.compaction as BasicCompactionEngine
+    expect(engine.config).toMatchObject({ auto: true, thresholdRatio: 0.65, sessionPolicies: ['vortex-diagnostic-children-v1'] })
+    const ordinary = Session.create(SessionId('ordinary'))
+    ordinary.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'x'.repeat(50000) }] }), { surfaceOp: 'append' })
+    expect(await engine.compactForOutputBudget({ session: ordinary } as Agent,
+      { config: { provider: 'fixture', model: 'fixture' } }, 10000, 8000, new AbortController().signal)).toBeNull()
+    expect(ordinary.surface.replaceGeneration).toBe(0)
+  })
+
   it('loads the shipped token-meter, pruning, and compaction-basic YAML order', async () => {
     const loaded = await loadYaml([
       "- name: '@deepseek-ai/dsh-llm'",

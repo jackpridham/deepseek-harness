@@ -411,6 +411,20 @@ describe('replay anchors and surface folds', () => {
     expect(switchedBack.surfaceDeltaTokens).toBe(0)
   })
 
+  it('retains provider input calibration across output-only allowance and default changes', () => {
+    const service = meter()
+    const session = Session.create(SessionId('output-cap-anchor'))
+    const anchoredHeader = canonicalHeader({ config: { provider: 'mock', model: 'flash', maxTokens: 63183 }, system: 'fixed' })
+    appendSuccessfulCall(session, anchoredHeader, { usage: { inputTokens: 198000, outputTokens: 705 } })
+    const next = canonicalHeader({ ...anchoredHeader,
+      config: { ...anchoredHeader.config, maxTokens: 65536 }, adapterDefaults: { maxTokens: true } })
+    expect(service.measure(session, next).totalTokens).toBe(198705)
+    appendHeader(session, next)
+    expect(service.measure(session).baseline.kind).toBe('usage')
+    expect(meter().measure(session).totalTokens).toBe(198705)
+    expect(service.measure(session, { ...next, system: 'changed instructions' }).baseline.kind).toBe('estimated')
+  })
+
   it('invalidates usage for any canonical envelope change or explicit override', () => {
     const service = meter()
     const session = Session.create(SessionId('envelope'))

@@ -114,6 +114,7 @@ export class BasicCompactionEngine extends CompactionEngine {
     maxOverflowRetries: maxOverflowRetriesSchema,
     modelPolicies: z.array(modelPolicy),
     auto: z.boolean(),
+    sessionPolicies: z.array(z.string()),
   })
 
   /** Resolved and validated compaction configuration. */
@@ -130,10 +131,15 @@ export class BasicCompactionEngine extends CompactionEngine {
   }
 
   /**
-   * Register automatic between-step pressure and model-request overflow
-   * recovery. `compactIfNeeded` stays dynamically dispatched so subclass
-   * overrides are honored at event time.
+   * Whether this configured engine owns compaction for the session policy.
+   * @param session - persisted session identity.
+   * @returns whether the configured scope admits it.
    */
+  supports(session: Session): boolean {
+    return this.config.sessionPolicies === undefined || this.config.sessionPolicies.includes(session.header.sessionPolicy ?? '')
+  }
+
+  /** Register automatic pressure and bounded provider-overflow recovery. */
   private _registerAutomaticCompaction(): void {
     const { ctx } = this
     const logResult = (result: CompactionResult, trigger: string): void => {
@@ -180,7 +186,7 @@ export class BasicCompactionEngine extends CompactionEngine {
       { agent, failure, signal },
       next,
     ) => {
-      if (failure.code !== CONTEXT_WINDOW_EXCEEDED_CODE || signal.aborted) return next()
+      if (!this.supports(agent.session) || failure.code !== CONTEXT_WINDOW_EXCEEDED_CODE || signal.aborted) return next()
       this.overflowAgents.set(agent.session, agent)
       const target = routedTarget(agent.session)
       if (target === undefined) return next()
@@ -260,6 +266,7 @@ export class BasicCompactionEngine extends CompactionEngine {
     trigger: CompactionTrigger,
     signal: AbortSignal,
   ): Promise<CompactionResult | null> {
+    if (!this.supports(agent.session)) return null
     const target = routedTarget(agent.session)
     if (target === undefined) return null
     const policy = resolveTargetPolicy(this.config, target)
@@ -349,6 +356,7 @@ export class BasicCompactionEngine extends CompactionEngine {
     reserveTokens: number,
     signal: AbortSignal,
   ): Promise<CompactionResult | null> {
+    if (!this.supports(agent.session)) return null
     const target = { provider: header.config.provider, model: header.config.model }
     const policy = resolveTargetPolicy(this.config, target)
     const spec = resolveCompactSpec(policy, contextWindow)

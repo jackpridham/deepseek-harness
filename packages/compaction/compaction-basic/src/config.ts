@@ -39,6 +39,7 @@ const BASIC_COMPACT_CONFIG_KEYS: ReadonlySet<string> = new Set([
   ...POLICY_CONFIG_KEYS,
   'modelPolicies',
   'auto',
+  'sessionPolicies',
 ])
 
 /** Complete exact-target override key set. */
@@ -71,6 +72,9 @@ export function resolveConfig(config: BasicCompactionConfig = {}): ResolvedConfi
     throw new Error('BasicCompactionConfig: auto must be a boolean')
   }
 
+  if (config.sessionPolicies !== undefined && (!Array.isArray(config.sessionPolicies)
+    || config.sessionPolicies.some(policy => typeof policy !== 'string' || !policy)))
+    throw new Error('BasicCompactionConfig: sessionPolicies must be a list of nonempty policy identities')
   const thresholdRatio = config.thresholdRatio ?? DEFAULT_THRESHOLD_RATIO
   const retention = resolveRetention(config, { retainRatio: DEFAULT_RETAIN_RATIO })
   validateRatioRetention(thresholdRatio, retention, 'BasicCompactionConfig')
@@ -93,6 +97,7 @@ export function resolveConfig(config: BasicCompactionConfig = {}): ResolvedConfi
     maxOverflowRetries: config.maxOverflowRetries ?? 1,
     modelPolicies,
     auto: config.auto ?? true,
+    ...!config.sessionPolicies?.length ? {} : { sessionPolicies: [...config.sessionPolicies] },
   })
 }
 

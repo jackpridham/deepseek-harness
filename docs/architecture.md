@@ -6,6 +6,8 @@ Read this before changing anything under `packages/`. It assumes you know Cordis
 
 We recommend using an agent to explore the codebase and understand its architecture.
 
+Diagnostic session policy preserves the authored numeric output allowance. After full request assembly, the loop compacts and remeasures until input plus that allowance and the configured safety margin fits the selected context, or rejects before dispatch. This is dynamic for every supported context/output combination; proactive pressure compaction is additional headroom. Existing central history retains original events and durable compaction replacements.
+
 ## Cordis
 
 [Cordis](cordis-primer.md) is the framework under dsh: plugins contribute services, typed events, and reversible effects to a shared context. Every part of the product is a plugin, including the model adapter, the tool registry, the session log, and the agent loop itself, so every part is replaceable from configuration.

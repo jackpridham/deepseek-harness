@@ -1,4 +1,5 @@
 /** Diagnostic run admission and native child ownership over the central session log. */
+import type {} from '@deepseek-ai/dsh-compaction'
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
@@ -182,6 +183,7 @@ export class DiagnosticRuns {
       models: false,
       workspace: false,
       presets: false,
+      preserveOutputLimit: true,
       fork: true,
       attestation: { diagnosticChildrenVersion: 1, executorProtocolVersion: 2, trustedLanHistory: true },
       apply: agent => this.install(agent),
@@ -404,6 +406,7 @@ export class DiagnosticRuns {
   }> {
     const admission = diagnosticAdmissionSchema.parse(input)
     const root = this.root(SessionId(admission.rootSessionId))
+    this.requireCompaction(root)
     return this.transact(root.id, async () => {
       const admissionDigest = diagnosticRecordDigest(admission)
       const prior = this.run(root.session)
@@ -743,6 +746,15 @@ export class DiagnosticRuns {
     return { root, assignment: reservation.assignment }
   }
 
+  private requireCompaction(agent: Agent): void {
+    const compaction = agent.ctx.get('compaction') as {
+      supports?(session: Session): boolean
+      compactForOutputBudget?: unknown
+    } | undefined
+    if (typeof compaction?.compactForOutputBudget !== 'function' || compaction.supports?.(agent.session) === false)
+      throw new DiagnosticError('diagnostic-capability-unavailable', 'Diagnostic sessions require the host compaction service scoped to their session policy')
+  }
+
   private install(agent: Agent): void {
     this.installations.get(agent.id)?.()
     const member = this.membership(agent)
@@ -773,6 +785,7 @@ export class DiagnosticRuns {
       }),
     )
     if (member !== undefined) {
+      this.requireCompaction(agent)
       const admitted = this.run(member.root.session)
       if (admitted === undefined) throw new DiagnosticError('diagnostic-policy-rejected', 'Diagnostic admission is missing')
       const limits = admitted.admission
@@ -999,7 +1012,9 @@ export class DiagnosticRuns {
     const request = await this.transact(member.root.id, async () => {
       const run = this.requireRun(member.root)
       const expected = selection(member.assignment)
-      if (options.purpose === undefined) {
+      if (options.purpose !== undefined && options.purpose !== 'compaction')
+        throw new DiagnosticError('diagnostic-policy-rejected', 'Diagnostic auxiliary requests must be compaction')
+      {
         const snapshot = member.assignment.instructionSnapshot
         const system = [snapshot.baseContent, ...snapshot.expertise.map(asset => asset.content)]
           .filter(Boolean)
@@ -1029,7 +1044,8 @@ export class DiagnosticRuns {
         typeof maxTokens !== 'number' ||
         !Number.isSafeInteger(maxTokens) ||
         maxTokens <= 0 ||
-        maxTokens > member.assignment.roleSettings.outputLimit
+        maxTokens > member.assignment.roleSettings.outputLimit ||
+        options.purpose === undefined && maxTokens !== member.assignment.roleSettings.outputLimit
       )
         throw new DiagnosticError('diagnostic-policy-rejected', 'Effective model request widens the assignment')
       const charges = member.root.session.events

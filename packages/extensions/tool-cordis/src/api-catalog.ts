@@ -4140,7 +4140,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionPolicy',
-    declaration: 'export interface SessionPolicy {\n    readonly id: SessionPolicyId;\n    readonly instructions: boolean;\n    readonly workspace: boolean;\n    readonly presets: boolean;\n    readonly fork: boolean;\n    readonly models?: boolean;\n    readonly attestation: Readonly<Record<string, JsonValue>>;\n    apply(agent: Agent): void;\n}',
+    declaration: 'export interface SessionPolicy {\n    readonly id: SessionPolicyId;\n    readonly instructions: boolean;\n    readonly workspace: boolean;\n    readonly presets: boolean;\n    readonly fork: boolean;\n    readonly models?: boolean;\n    readonly preserveOutputLimit?: boolean;\n    readonly attestation: Readonly<Record<string, JsonValue>>;\n    apply(agent: Agent): void;\n}',
   },
   {
     name: 'SessionPolicyId',

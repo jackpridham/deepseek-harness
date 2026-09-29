@@ -174,7 +174,8 @@ export async function summarizeWithLlm(
 
   const inherited = configured === undefined ? latest : undefined
   const info = await ctx.llm.resolveModelInfo(target.provider, target.model, signal)
-  const reasoningEffort = info.reasoning?.efforts.find(effort => effort.id === ReasoningEffortId('off'))?.id
+  const preserveSelection = ctx.get('agents')?.policyFor(agent.id)?.preserveOutputLimit === true
+  const reasoningEffort = preserveSelection ? inherited?.reasoningEffort : info.reasoning?.efforts.find(effort => effort.id === ReasoningEffortId('off'))?.id
     ?? info.reasoning?.efforts[0]?.id
   const selectedContextWindow = inherited?.contextWindow ?? info.loaded?.contextWindow
   const contextWindow = selectedContextWindow
@@ -183,11 +184,12 @@ export async function summarizeWithLlm(
   const messagesFor = (instruction: string): Message[] => [
     ...input.messages,
     createUserMessage({
-      content: [{ type: 'text', text: instruction }],
+      content: [{ type: 'text', text: preserveSelection ? `${instruction}\nPreserve all candidate identities, unresolved gaps and exact evidence references. A checkpoint is not source evidence or independent validation; retain uncertainty and never promote a finding to validated status.` : instruction }],
       source: { kind: 'plugin', plugin: 'dsh-compaction-basic' },
     }),
   ]
   const capFor = (requested: number, messages: readonly Message[]): number => {
+    if (preserveSelection && inherited?.maxTokens !== undefined) requested = Math.min(requested, inherited.maxTokens)
     if (contextWindow === undefined) return info.maxTokens === undefined ? requested : Math.min(requested, info.maxTokens)
     const measurement = ctx.tokenMeter.measure(agent.session)
     const replayTokens = messages.reduce((total, message) => total + ctx.tokenMeter.estimateMessage(message), 0)
@@ -219,12 +221,13 @@ export async function summarizeWithLlm(
   const firstMessages = messagesFor(COMPACTION_INSTRUCTION)
   const firstCap = capFor(config.maxTokens, firstMessages)
   if (firstCap <= 0) throw noHeadroomError()
-  const first = await streamSummary(ctx, optionsFor(firstMessages, firstCap))
+  const firstOptions = optionsFor(firstMessages, firstCap)
+  const first = await streamSummary(ctx, firstOptions)
   if (!('reason' in first)) return {
     ...first,
     llmStreamCall: true,
-    provider: target.provider,
-    model: target.model,
+    provider: firstOptions.provider,
+    model: firstOptions.model,
     maxTokens: firstCap,
   }
 
@@ -236,7 +239,8 @@ export async function summarizeWithLlm(
   const retryCap = capFor(retryRequested, retryMessages)
   if (retryCap <= 0) throw noHeadroomError()
   signal?.throwIfAborted()
-  const retry = await streamSummary(ctx, optionsFor(retryMessages, retryCap))
+  const retryOptions = optionsFor(retryMessages, retryCap)
+  const retry = await streamSummary(ctx, retryOptions)
   if ('reason' in retry) {
     if (retry.reason === 'max-tokens') throw truncatedError(retryCap)
     throw new LlmError(
@@ -246,8 +250,9 @@ export async function summarizeWithLlm(
   }
   return {
     ...retry,
-    provider: target.provider,
-    model: target.model,
+    llmStreamCall: true,
+    provider: retryOptions.provider,
+    model: retryOptions.model,
     maxTokens: retryCap,
   }
 }

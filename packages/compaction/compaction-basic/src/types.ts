@@ -40,6 +40,8 @@ export interface BasicCompactionConfig extends CompactionPolicyConfig {
   modelPolicies?: ModelCompactPolicyConfig[]
   /** Enable automatic step-boundary pressure and overflow-recovery listeners. Defaults to `true`. */
   auto?: boolean
+  /** Optional host-composition scope; only these persisted session policies may use this engine. */
+  sessionPolicies?: string[]
 }
 
 /** Exactly one validated retention form. */
@@ -61,6 +63,7 @@ interface ResolvedPolicyFields {
 export type ResolvedConfig = ResolvedPolicyFields & ResolvedRetention & {
   readonly modelPolicies: readonly Readonly<ModelCompactPolicyConfig>[]
   readonly auto: boolean
+  readonly sessionPolicies?: readonly string[]
 }
 
 /** Fully merged policy for one routed conversation target, before capacity scaling. */
