@@ -728,6 +728,15 @@ export class DiagnosticRuns {
     const member = this.membership(agent)
     const disposers: (() => void)[] = []
     disposers.push(agent.ctx.tools.restrict({ allow: [] }))
+    const allowedTools = new Set<string>(member?.assignment.authority.tools ?? [])
+    // Child-local plugins register after inherited-tool restrictions are applied.
+    disposers.push(agent.ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
+      const assembly = await next()
+      assembly.tools = assembly.tools.filter(tool => allowedTools.has(tool.name))
+      return assembly
+    }))
+    disposers.push(agent.ctx.tools.guard(execution => allowedTools.has(execution.name)
+      ? undefined : 'Tool exceeds the diagnostic assignment'))
     disposers.push(
       agent.session.guardEvents((event) => {
         if (this.configuring.has(agent.id)) return

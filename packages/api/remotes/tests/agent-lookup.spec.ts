@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
-import SessionStore from '@deepseek-ai/dsh-session'
+import type { Agent, AgentHandle, SessionPolicy } from '@deepseek-ai/dsh-agent'
+import SessionStore, { SessionPolicyId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
-import { createApiRemoteAgentResolver } from '@deepseek-ai/dsh-api-remotes'
+import { createApiRemoteAgentResolver, inspectApiRemoteSession } from '@deepseek-ai/dsh-api-remotes'
 import { TypertLookupFailure } from '@deepseek-ai/dsh-typert-protocol'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 
@@ -51,6 +51,29 @@ describe('API Remote Agent resolver races', () => {
     const result = await createApiRemoteAgentResolver(ctx, {})(sessionId)
 
     expect(result).toMatchObject({ error: { code: 'session-not-found', details: { sessionId } } })
+    await ctx.fiber.dispose()
+  })
+
+  it('inspects a no-cwd session under a registered diagnostic policy', async () => {
+    const ctx = await createContext()
+    const sessionId = sid('diagnostic-history')
+    const policyId = SessionPolicyId('test-diagnostic-history-v1')
+    const { cwd: _cwd, ...withoutCwd } = header(sessionId)
+    const meta = { ...withoutCwd, sessionPolicy: policyId }
+    const policy: SessionPolicy = {
+      id: policyId,
+      instructions: false,
+      models: false,
+      workspace: false,
+      presets: false,
+      fork: true,
+      attestation: { diagnosticChildrenVersion: 1 },
+      apply() {},
+    }
+    ctx.agents.registerPolicy(policy)
+    provideSession(ctx, meta, () => Promise.resolve({ meta, events: [] }))
+
+    await expect(inspectApiRemoteSession(ctx, sessionId)).resolves.toEqual({ meta, events: [] })
     await ctx.fiber.dispose()
   })
 

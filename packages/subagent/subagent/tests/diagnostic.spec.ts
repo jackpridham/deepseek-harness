@@ -13,6 +13,7 @@ import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-test
 import JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import * as Spawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
+import * as Report from '../../tool-subagent-report/src/index.ts'
 import Subagents, { DIAGNOSTIC_POLICY, diagnosticCanonicalJson, diagnosticRecordDigest, parseDiagnosticAdmission, parseDiagnosticAssignment, diagnosticInstructions } from '../src/index.ts'
 import type { DiagnosticAdmission, DiagnosticBinding } from '../src/index.ts'
 
@@ -92,6 +93,7 @@ describe('diagnostic admission', () => {
     await ctx.plugin(SessionProjections)
     await ctx.plugin(Subagents)
     await ctx.plugin(Spawn, { providerName: 'spawn' })
+    await ctx.plugin(Report)
     const input = admission()
     const prepared = structuredClone(fixtures['prepare-discovery']) as { runId: string; rootSessionId: string; idempotencyKey: string; assignment: typeof input.coordinatorAssignment }
     const adapter = new MockAdapter([
@@ -122,6 +124,10 @@ describe('diagnostic admission', () => {
     expect(persisted.meta.sessionPolicy).toBe(DIAGNOSTIC_POLICY)
     expect(persisted.events.find(event => event.type === 'session/instructions')?.data.instructions).toEqual(diagnosticInstructions(prepared.assignment))
     expect(adapter.requests.some(request => request.sessionId === childId)).toBe(true)
+    expect(adapter.requests.find(request => request.sessionId === childId)?.tools?.some(tool => tool.name === 'report')).not.toBe(true)
+    const forbidden = await ctx.tools.execute({ name: 'report', callId: CallId('forbidden-report'), agent: child,
+      arguments: { output: 'must use accepted closeout' }, signal: new AbortController().signal })
+    expect(forbidden.isError).toBe(true)
     const followup = structuredClone(prepared)
     followup.idempotencyKey = 'followup-assignment'
     followup.assignment.assignmentId = 'followup-assignment'

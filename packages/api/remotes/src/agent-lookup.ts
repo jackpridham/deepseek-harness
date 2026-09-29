@@ -55,6 +55,31 @@ export class ApiRemoteSubagentSessionOwnership extends Error {
 }
 
 /**
+ * Whether a persisted no-workspace session belongs to the installed diagnostic
+ * protocol. Ordinary no-cwd records remain internal to the Host.
+ * @param ctx - Host Context carrying the live policy registry.
+ * @param meta - persisted session metadata to classify.
+ * @returns whether the metadata is suitable for diagnostic history inspection.
+ */
+function hasDiagnosticHistoryPolicy(ctx: Context, meta: SessionHeader): boolean {
+  const policyId = meta.sessionPolicy
+  if (policyId === undefined) return false
+  if (!ctx.agents.policyIds().includes(policyId)) return false
+  const policy = ctx.agents.requirePolicy(policyId)
+  return policy.workspace === false && policy.attestation.diagnosticChildrenVersion === 1
+}
+
+/**
+ * Whether persisted metadata can be inspected through the API.
+ * @param ctx - Host Context carrying the live policy registry.
+ * @param meta - persisted session metadata to classify.
+ * @returns whether the session is project-backed or a registered diagnostic session.
+ */
+function isApiRemoteInspectable(ctx: Context, meta: SessionHeader): boolean {
+  return meta.cwd !== undefined || hasDiagnosticHistoryPolicy(ctx, meta)
+}
+
+/**
  * Test whether generic Host routing must leave an identity to subagent routing.
  * @param ctx - Host Context carrying the live Agent registry.
  * @param session - attached or live Session metadata.
@@ -102,11 +127,11 @@ export async function inspectApiRemoteSession(
     throw new Error('session persistence is not configured (load a dsh-session-persistence backend)')
   }
   const meta = (await persistence.list()).find(candidate => candidate.id === sessionId)
-  if (meta === undefined || meta.cwd === undefined) {
+  if (meta === undefined || !isApiRemoteInspectable(ctx, meta)) {
     throw new ApiRemoteSessionNotFound(`session "${sessionId}" not found`)
   }
   const inspected = await persistence.inspect(sessionId)
-  if (inspected.meta.cwd === undefined) {
+  if (!isApiRemoteInspectable(ctx, inspected.meta)) {
     throw new ApiRemoteSessionNotFound(`session "${sessionId}" not found`)
   }
   return { meta: inspected.meta, events: [...inspected.events] }
