@@ -995,7 +995,7 @@ export class DiagnosticRuns {
         options.model !== expected.model ||
         options.contextWindow !== expected.contextWindow ||
         options.reasoningEffort !== expected.reasoningEffort ||
-        options.mode !== expected.mode ||
+        (options.mode ?? 'default') !== (expected.mode ?? 'default') ||
         options.options !== undefined ||
         typeof maxTokens !== 'number' ||
         !Number.isSafeInteger(maxTokens) ||
