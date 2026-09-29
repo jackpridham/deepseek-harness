@@ -9,10 +9,18 @@ import type { Wire } from './rpc.schema.ts'
 import { sessionPolicyIdSchema } from './sessions.schema.ts'
 
 /** host.describe request payload (empty object literal). */
-export const hostDescribeRequestSchema = z.object({}) satisfies z.ZodType<Wire<RequestPayload<'host.describe'>>>
+export const hostDescribeRequestSchema = z.object({ diagnosticChildrenVersion: z.literal(1).optional() }).strict() satisfies z.ZodType<Wire<RequestPayload<'host.describe'>>>
 
 /** host.describe response value. */
 export const hostDescribeValueSchema = z.object({
+  diagnosticChildren: z.object({
+    id: z.string(),
+    capabilityVersion: z.literal(1),
+    executorProtocolVersion: z.literal(2),
+    profiles: z.array(z.string()),
+    maxChildren: z.number().int().positive(),
+    maxConcurrentChildren: z.number().int().positive(),
+  }).optional(),
   instructionVersions: z.array(z.number()).optional(),
   version: z.string(),
   cwd: z.string(),

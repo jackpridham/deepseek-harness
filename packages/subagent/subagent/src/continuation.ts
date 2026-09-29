@@ -113,6 +113,8 @@ export interface SubagentReportOptions {
 
 /** What a caller asks for when starting a continuable background child. */
 export interface ContinuableStartSpec {
+  /** Trusted deployment policy required on creation and every subsequent resume. */
+  readonly sessionPolicy?: import('@deepseek-ai/dsh-session').SessionPolicyId
   /** The `ctx.subagents` provider whose continuable-creation capability establishes the child. */
   readonly provider: string
   /** The initial delegation's short `description`, persisted as the child's creation label. */
@@ -465,7 +467,10 @@ export class SubagentContinuationManager {
         childId,
         provider: spec.provider,
         parent,
-        create: { seed, meta: childSessionMeta(parent, childDepth, lineageSeedLength), delegatedPolicies },
+        create: { seed, meta: {
+          ...childSessionMeta(parent, childDepth, lineageSeedLength),
+          ...spec.sessionPolicy === undefined ? {} : { sessionPolicy: spec.sessionPolicy },
+        }, delegatedPolicies },
         agentOptions,
         ...selection === undefined ? {} : { selection },
         composition: { persona: request.persona, toolFilter: request.toolFilter },

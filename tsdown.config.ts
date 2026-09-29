@@ -25,6 +25,8 @@ export default defineConfig(({ env }) => {
     fixedExtension: false,
     dts: false,
     clean: false,
+    // Wire schemas have no shared runtime identity; keep the host artifact self-contained.
+    noExternal: ['@deepseek-ai/dsh-subagent/diagnostic-schema'],
     plugins: client ? [] : [typertPlugin({ mode: 'workspace', faces: ['host'] })],
   }
 })

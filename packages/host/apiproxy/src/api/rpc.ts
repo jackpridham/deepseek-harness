@@ -30,6 +30,14 @@ export function RpcId(id: string): RpcId {
 
 /** Error code → details type map (a second table isomorphic to RpcMethodMap). New code = one row here + one branch in the error schema. */
 export interface RpcErrorDetailsMap {
+  'diagnostic-capability-unavailable': { retryable: false; operationState: 'not-started' | 'unknown'; reconcileWith: 'none' | 'history' }
+  'diagnostic-policy-rejected': { retryable: false; operationState: 'not-started' | 'unknown'; reconcileWith: 'none' | 'history' }
+  'diagnostic-instructions-invalid': { retryable: false; operationState: 'not-started' | 'unknown'; reconcileWith: 'none' | 'history' }
+  'diagnostic-binding-stale': { retryable: false; operationState: 'not-started' | 'unknown'; reconcileWith: 'none' | 'history' }
+  'diagnostic-parent-stale': { retryable: false; operationState: 'not-started' | 'unknown'; reconcileWith: 'none' | 'history' }
+  'diagnostic-assignment-conflict': { retryable: false; operationState: 'not-started' | 'unknown'; reconcileWith: 'none' | 'history' }
+  'diagnostic-budget-exhausted': { retryable: false; operationState: 'not-started' | 'unknown'; reconcileWith: 'none' | 'history' }
+  'diagnostic-child-unsettled': { retryable: false; operationState: 'not-started' | 'unknown'; reconcileWith: 'none' | 'history' }
   'bad-request': { issues: ZodIssue[] }
   'cancelled': {}
   'session-not-found': { sessionId: SessionId }

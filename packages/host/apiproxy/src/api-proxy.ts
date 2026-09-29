@@ -24,7 +24,7 @@ import type {
 } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { SessionQueryError, type SessionSearchCursor } from '@deepseek-ai/dsh-session-query'
-import { SubagentError } from '@deepseek-ai/dsh-subagent'
+import { DiagnosticError, SubagentError } from '@deepseek-ai/dsh-subagent'
 import type { SubagentListEntry as CatalogSubagentListEntry } from '@deepseek-ai/dsh-subagent'
 import { isUserInvocable } from '@deepseek-ai/dsh-skill'
 import type { Workspace, WorkspaceRecord } from '@deepseek-ai/dsh-workspace'
@@ -2608,6 +2608,26 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         })
       },
 
+      async admitDiagnosticRun(request) {
+        const diagnostics = ctx.get('subagents')?.diagnostics
+        if (diagnostics === undefined) return err(request, { code: 'diagnostic-capability-unavailable', message: 'Diagnostic children are unavailable', details: { retryable: false, operationState: 'not-started', reconcileWith: 'none' } })
+        try { return ok(request, await diagnostics.admit(request.payload)) }
+        catch (error) {
+          if (error instanceof DiagnosticError) return err(request, { code: error.code, message: error.message, details: error.details })
+          return err(request, { code: 'diagnostic-policy-rejected', message: 'Diagnostic request validation or persistence failed; inspect session history before retrying', details: { retryable: false, operationState: 'unknown', reconcileWith: 'history' } })
+        }
+      },
+
+      async prepareDiagnosticAssignment(request) {
+        const diagnostics = ctx.get('subagents')?.diagnostics
+        if (diagnostics === undefined) return err(request, { code: 'diagnostic-capability-unavailable', message: 'Diagnostic children are unavailable', details: { retryable: false, operationState: 'not-started', reconcileWith: 'none' } })
+        try { return ok(request, await diagnostics.prepare(request.payload)) }
+        catch (error) {
+          if (error instanceof DiagnosticError) return err(request, { code: error.code, message: error.message, details: error.details })
+          return err(request, { code: 'diagnostic-policy-rejected', message: 'Diagnostic request validation or persistence failed; inspect session history before retrying', details: { retryable: false, operationState: 'unknown', reconcileWith: 'history' } })
+        }
+      },
+
       async configureInstructions(request) {
         const found = await agentFor(request.payload.sessionId)
         if ('error' in found) return err(request, found.error)
@@ -2727,6 +2747,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         } = request.payload
         const found = await agentFor(sessionId)
         if ('error' in found) return err(request, found.error)
+        if (ctx.agents.policyFor(found.agent.id)?.models === false) {
+          return err(request, { code: 'model-unavailable', message: 'This session policy fixes the model selection', details: { provider, model } })
+        }
         return serializeImageAdmission(found.agent, async () => {
           try {
             const observed = resolution === 'adopt-loaded'
@@ -3515,9 +3538,12 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       describe(request) {
         // TODO: version should read apps/cli's package.json; placeholder for now.
         const selection = defaults.defaultModelSelection()
+        const diagnosticChildren = ctx.get('subagents')?.diagnostics.capability()
         return Promise.resolve(ok(request, {
           version: '0.0.1',
           instructionVersions: [1],
+          ...request.payload.diagnosticChildrenVersion === 1 && diagnosticChildren !== undefined
+            ? { diagnosticChildren } : {},
           // Same source as session.create's fallback: the UI's default project
           // must match where an unspecified-cwd session actually lands.
           cwd: defaults.cwd,

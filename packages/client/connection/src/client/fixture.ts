@@ -2267,6 +2267,8 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
 
   const api: ApiProxy = {
     sessions: {
+      admitDiagnosticRun: request => err(request, { code: 'diagnostic-capability-unavailable', message: 'Diagnostic admission requires a live host', details: { retryable: false, operationState: 'not-started', reconcileWith: 'none' } }),
+      prepareDiagnosticAssignment: request => err(request, { code: 'diagnostic-capability-unavailable', message: 'Diagnostic admission requires a live host', details: { retryable: false, operationState: 'not-started', reconcileWith: 'none' } }),
       configureInstructions: request => err(request, { code: 'internal', message: 'Instruction configuration needs a live DSH host', details: {} }),
       getInstructions: request => err(request, { code: 'internal', message: 'Instruction inspection needs a live DSH host', details: {} }),
       list: request => ok(request, { items: [...sessions].sort((a, b) => b.updatedAt - a.updatedAt) }),
@@ -3234,6 +3236,8 @@ export class FixtureApiClient extends AbstractApiClient {
     signal: AbortSignal,
   ): Promise<RpcResponse<unknown>> {
     switch (method) {
+      case 'session.admitDiagnosticRun': return this.api.sessions.admitDiagnosticRun(request)
+      case 'session.prepareDiagnosticAssignment': return this.api.sessions.prepareDiagnosticAssignment(request)
       case 'session.list': return this.api.sessions.list(request)
       case 'session.search': return this.api.sessions.search(request, signal)
       case 'session.create': return this.api.sessions.create(request)

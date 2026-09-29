@@ -1761,6 +1761,11 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Named provider registry with one-shot runs, durable discovery, and continuable-child operations.',
     methods: [
       {
+        signature: 'readonly diagnostics: DiagnosticRuns',
+        description: 'Opt-in caller-bound source-review admission and native child lifecycle.',
+        parameters: [],
+      },
+      {
         signature: 'async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>',
         description: 'Establish one durable continuable child and deliver its initial prompt. Resolves when the child\'s inbox accepts that prompt, without waiting for the turn to start or for the message to reach the Session log; any earlier failure rejects with no ids and rolls back the child entirely.',
         parameters: [{ name: 'spec', description: 'provider, delegation request, and caller cancellation.' }],
@@ -3069,7 +3074,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ContinuableStartSpec',
-    declaration: 'export interface ContinuableStartSpec {\n    readonly provider: string;\n    readonly label: string;\n    readonly childId?: SessionId;\n    readonly request: Omit<SubagentStartRequest, \'label\' | \'signal\' | \'outputSchema\'>;\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface ContinuableStartSpec {\n    readonly sessionPolicy?: import(\'@deepseek-ai/dsh-session\').SessionPolicyId;\n    readonly provider: string;\n    readonly label: string;\n    readonly childId?: SessionId;\n    readonly request: Omit<SubagentStartRequest, \'label\' | \'signal\' | \'outputSchema\'>;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'ContinuableSubagentDescriptorData',
@@ -3130,6 +3135,26 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'CredentialRef',
     declaration: 'export type CredentialRef = Branded<\'CredentialRef\'>;',
+  },
+  {
+    name: 'DiagnosticAdmission',
+    declaration: 'export type DiagnosticAdmission = z.infer<typeof diagnosticAdmissionSchema>;',
+  },
+  {
+    name: 'DiagnosticAssignment',
+    declaration: 'export type DiagnosticAssignment = z.infer<typeof diagnosticAssignmentSchema>;',
+  },
+  {
+    name: 'DiagnosticBinding',
+    declaration: 'export interface DiagnosticBinding {\n    executorBindingId: string;\n    bindingEpoch: number;\n    runId: string;\n    rootSessionId: string;\n    comparisonDigest: string;\n    sourceRefs: DiagnosticAdmission[\'sourceRefs\'];\n    state: \'awaiting-admission\' | \'active\' | \'reconciling\' | \'disconnected\';\n}',
+  },
+  {
+    name: 'DiagnosticExecutor',
+    declaration: 'export interface DiagnosticExecutor {\n    binding(root: SessionId): DiagnosticBinding;\n    admit(root: SessionId, bindingEpoch: number): Promise<void>;\n    install(agent: Agent, assignment: DiagnosticAssignment, root: SessionId): () => void;\n    cancel(root: SessionId): Promise<void>;\n    quiescent(root: SessionId): boolean;\n    closed?(root: SessionId, producer: SessionId, assignmentId: string): boolean;\n    activity?(root: SessionId, producer?: SessionId): {\n        activeCalls: number;\n        pendingResults: number;\n    };\n}',
+  },
+  {
+    name: 'DiagnosticRuns',
+    declaration: 'export class DiagnosticRuns {\n    constructor(private readonly ctx: Context, private readonly subagents: SubagentRuntime);\n    registerExecutor(executor: DiagnosticExecutor): () => void;\n    capability(): {\n        id: string;\n        capabilityVersion: 1;\n        executorProtocolVersion: 2;\n        profiles: string[];\n        maxChildren: number;\n        maxConcurrentChildren: number;\n    } | undefined;\n    async validateCloseout(agent: Agent, report: unknown): Promise<void>;\n    async rebind(rootId: SessionId, epoch: number): Promise<boolean>;\n    async admit(input: unknown): Promise<{\n        runId: string;\n        rootSessionId: string;\n        state: \'admitted\';\n        admissionDigest: string;\n        bindingEpoch: number;\n        duplicate: boolean;\n    }>;\n    async prepare(input: {\n        runId: string;\n        rootSessionId: string;\n        idempotencyKey: string;\n        assignment: unknown;\n    }): Promise<{\n        runId: string;\n        assignmentId: string;\n        assignmentDigest: string;\n        state: \'prepared\';\n        duplicate: boolean;\n    }>;\n    async refresh(rootId: SessionId): Promise<void>;\n    assertDelivery(parent: Agent, childId?: SessionId): void;\n    async cancel(rootId: SessionId): Promise<void>;\n}',
   },
   {
     name: 'DiffCallView',
@@ -3901,7 +3926,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'RpcErrorDetailsMap',
-    declaration: 'export interface RpcErrorDetailsMap {\n    \'bad-request\': {\n        issues: ZodIssue[];\n    };\n    \'cancelled\': {};\n    \'session-not-found\': {\n        sessionId: SessionId;\n    };\n    \'session-policy-unavailable\': {};\n    \'session-policy-conflict\': {\n        sessionId: SessionId;\n        requestedMode: string;\n        existingMode: string;\n    };\n    \'session-policy-invalid\': {};\n    \'model-unavailable\': {\n        provider: string;\n        model: string;\n    };\n    \'session-conflict\': {\n        sessionId: SessionId;\n        requestedCwd: string;\n        existingCwd?: string;\n    };\n    \'invalid-time-zone\': {\n        value: string;\n    };\n    \'workspace-attach-failed\': {\n        sessionId: SessionId;\n        workspaceId: string;\n    };\n    \'workspace-not-found\': {\n        workspaceId: string;\n    };\n    \'workspace-invalid-path\': {\n        path: string;\n    };\n    \'workspace-name-conflict\': {\n        name: string;\n    };\n    \'workspace-move-invalid\': {\n        workspaceId: string;\n        sessionId: SessionId;\n        beforeSessionId?: SessionId;\n    };\n    \'directory-unreadable\': {\n        path: string;\n    };\n    \'directory-exists\': {\n        path: string;\n    };\n    \'directory-create-failed\': {\n        path: string;\n    };\n    \'directory-picker-unavailable\': {\n        capability: string;\n    };\n    \'agent-preset-read-only\': {\n        agentPreset: string;\n        reason: string;\n    };\n    \'agent-preset-locked\': {\n        sessionId: SessionId;\n        agentPreset: string;\n     /* …truncated — full shape in source */',
+    declaration: 'export interface RpcErrorDetailsMap {\n    \'diagnostic-capability-unavailable\': {\n        retryable: false;\n        operationState: \'not-started\' | \'unknown\';\n        reconcileWith: \'none\' | \'history\';\n    };\n    \'diagnostic-policy-rejected\': {\n        retryable: false;\n        operationState: \'not-started\' | \'unknown\';\n        reconcileWith: \'none\' | \'history\';\n    };\n    \'diagnostic-instructions-invalid\': {\n        retryable: false;\n        operationState: \'not-started\' | \'unknown\';\n        reconcileWith: \'none\' | \'history\';\n    };\n    \'diagnostic-binding-stale\': {\n        retryable: false;\n        operationState: \'not-started\' | \'unknown\';\n        reconcileWith: \'none\' | \'history\';\n    };\n    \'diagnostic-parent-stale\': {\n        retryable: false;\n        operationState: \'not-started\' | \'unknown\';\n        reconcileWith: \'none\' | \'history\';\n    };\n    \'diagnostic-assignment-conflict\': {\n        retryable: false;\n        operationState: \'not-started\' | \'unknown\';\n        reconcileWith: \'none\' | \'history\';\n    };\n    \'diagnostic-budget-exhausted\': {\n        retryable: false;\n        operationState: \'not-started\' | \'unknown\';\n        reconcileWith: \'none\' | \'history\';\n    };\n    \'diagnostic-child-unsettled\': {\n        retryable: false;\n        operationState: \'not-started\' | \'unknown\';\n        reconcileWith: \'none\' | \'history\';\n    };\n    \'bad-request\': {\n        issues: ZodIssue[];\n    };\n    \'cancelled\': {};\n    \'session-not-found\': {\n        sessionId: SessionId;\n    };\n    \' /* …truncated — full shape in source */',
   },
   {
     name: 'RpcId',
@@ -4109,7 +4134,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionPolicy',
-    declaration: 'export interface SessionPolicy {\n    readonly id: SessionPolicyId;\n    readonly instructions: boolean;\n    readonly workspace: boolean;\n    readonly presets: boolean;\n    readonly fork: boolean;\n    readonly attestation: Readonly<Record<string, JsonValue>>;\n    apply(agent: Agent): void;\n}',
+    declaration: 'export interface SessionPolicy {\n    readonly id: SessionPolicyId;\n    readonly instructions: boolean;\n    readonly workspace: boolean;\n    readonly presets: boolean;\n    readonly fork: boolean;\n    readonly models?: boolean;\n    readonly attestation: Readonly<Record<string, JsonValue>>;\n    apply(agent: Agent): void;\n}',
   },
   {
     name: 'SessionPolicyId',
@@ -4449,7 +4474,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentRuntime',
-    declaration: 'export class SubagentRuntime extends Service {\n    constructor(ctx: Context);\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    async followup(parent: Agent, childId: SessionId, content: ContentBlock[], options: SubagentFollowupOptions): Promise<MessageId>;\n    interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;\n    async reportFrom(child: Agent, content: ContentBlock[], options: SubagentReportOptions): Promise<MessageId>;\n    registerContinuableSetup(contribution: ContinuableSetupContribution): () => void;\n    async drainContinuableDescendants(parents: readonly Agent[]): Promise<void>;\n    async drainContinuableChildren(parent: Agent, childIds: readonly SessionId[]): Promise<void>;\n    listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentListEntry[]>;\n    listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<SubagentDescendantListEntry[]>;\n    registerProvider(provider: SubagentProvider): () => void;\n    getProvider(name: string): SubagentProvider | undefined;\n    list(): string[];\n    async start(name: string, request: SubagentStartRequest): Promise<SubagentRun>;\n}',
+    declaration: 'export class SubagentRuntime extends Service {\n    readonly diagnostics: DiagnosticRuns;\n    constructor(ctx: Context);\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    async followup(parent: Agent, childId: SessionId, content: ContentBlock[], options: SubagentFollowupOptions): Promise<MessageId>;\n    interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;\n    async reportFrom(child: Agent, content: ContentBlock[], options: SubagentReportOptions): Promise<MessageId>;\n    registerContinuableSetup(contribution: ContinuableSetupContribution): () => void;\n    async drainContinuableDescendants(parents: readonly Agent[]): Promise<void>;\n    async drainContinuableChildren(parent: Agent, childIds: readonly SessionId[]): Promise<void>;\n    listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentListEntry[]>;\n    listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<SubagentDescendantListEntry[]>;\n    registerProvider(provider: SubagentProvider): () => void;\n    getProvider(name: string): SubagentProvider | undefined;\n    list(): string[];\n    async start(name: string, request: SubagentStartRequest): Promise<SubagentRun>;\n}',
   },
   {
     name: 'SubagentStartRequest',

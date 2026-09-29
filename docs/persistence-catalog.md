@@ -393,6 +393,96 @@ Types: [ContentBlock](subsystems/core.md) · [TokenUsage](subsystems/llm-streami
 
 Source: [`packages/compaction/compaction/src/types.ts:33`](../packages/compaction/compaction/src/types.ts)
 
+### `diagnostic/*`
+
+<a id="diagnosticassignment-state--log-only"></a>
+
+#### `diagnostic/assignment-state` — log-only
+
+```ts persistence-catalog
+/** Public assignment lifecycle without private delivery metadata. */
+'diagnostic/assignment-state': Omit<AssignmentData, 'state' | 'messageId'> & { state: 'prepared' | 'dispatched' | 'running' | 'uncertain' }
+```
+
+Source: [`packages/subagent/subagent/src/diagnostic.ts:82`](../packages/subagent/subagent/src/diagnostic.ts)
+
+<a id="diagnosticchild-state--log-only"></a>
+
+#### `diagnostic/child-state` — log-only
+
+```ts persistence-catalog
+/** Native child state derived from central requests, turns and caller receipts. */
+'diagnostic/child-state': JsonValue
+```
+
+Source: [`packages/subagent/subagent/src/diagnostic.ts:84`](../packages/subagent/subagent/src/diagnostic.ts)
+
+<a id="diagnosticevidence-read--log-only"></a>
+
+#### `diagnostic/evidence-read` — log-only
+
+```ts persistence-catalog
+/** Read provenance computed after the native tool result has durably committed. */
+'diagnostic/evidence-read': JsonValue
+```
+
+Source: [`packages/subagent/subagent/src/diagnostic.ts:86`](../packages/subagent/subagent/src/diagnostic.ts)
+
+<a id="diagnosticexecutor--log-only"></a>
+
+#### `diagnostic/executor` — log-only
+
+```ts persistence-catalog
+/** Bridge-owned durable receipts in the central log; credentials must never be included. */
+'diagnostic/executor': { kind: string; value: JsonValue }
+```
+
+Source: [`packages/subagent/subagent/src/diagnostic.ts:92`](../packages/subagent/subagent/src/diagnostic.ts)
+
+<a id="diagnosticmember--log-only"></a>
+
+#### `diagnostic/member` — log-only
+
+```ts persistence-catalog
+/** Child-local admission identity; never grants authority without the root reservation. */
+'diagnostic/member': { rootSessionId: string; runId: string; assignmentId: string }
+```
+
+Source: [`packages/subagent/subagent/src/diagnostic.ts:88`](../packages/subagent/subagent/src/diagnostic.ts)
+
+<a id="diagnosticrequest--log-only"></a>
+
+#### `diagnostic/request` — log-only
+
+```ts persistence-catalog
+/** Conservative output-ceiling charge for every model request, including retries and compaction. */
+'diagnostic/request': RequestData
+```
+
+Source: [`packages/subagent/subagent/src/diagnostic.ts:90`](../packages/subagent/subagent/src/diagnostic.ts)
+
+<a id="diagnosticreservation--log-only"></a>
+
+#### `diagnostic/reservation` — log-only
+
+```ts persistence-catalog
+/** Full caller assignment and durable native-child reservation. */
+'diagnostic/reservation': AssignmentData
+```
+
+Source: [`packages/subagent/subagent/src/diagnostic.ts:80`](../packages/subagent/subagent/src/diagnostic.ts)
+
+<a id="diagnosticrun-state--log-only"></a>
+
+#### `diagnostic/run-state` — log-only
+
+```ts persistence-catalog
+/** Immutable admission and current executor epoch; required on replay. */
+'diagnostic/run-state': RunData
+```
+
+Source: [`packages/subagent/subagent/src/diagnostic.ts:78`](../packages/subagent/subagent/src/diagnostic.ts)
+
 ### `feedback/*`
 
 <a id="feedbackrecord--log-only"></a>

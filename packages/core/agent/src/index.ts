@@ -228,6 +228,8 @@ export interface SessionPolicy {
   readonly presets: boolean
   /** Whether the API may fork a session under this policy. */
   readonly fork: boolean
+  /** Whether callers may select another model; omission preserves ordinary selection. */
+  readonly models?: boolean
   /** Provider-owned, JSON-serializable assertions returned after policy installation. */
   readonly attestation: Readonly<Record<string, JsonValue>>
   /**

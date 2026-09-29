@@ -12,6 +12,20 @@ import SessionStore, {
 import type { CreateSessionOptions, SessionEventType, SessionHeader, SessionSurface, TodoItem } from '@deepseek-ai/dsh-session'
 
 describe('Session', () => {
+  it('rejects guarded events before append, prevents guard reentry, and supports disposal', () => {
+    const session = Session.create(SessionId('guarded'))
+    const dispose = session.guardEvents(() => { throw new Error('policy denied') })
+    expect(() => session.append('turn/start', { turn: 1 })).toThrow('policy denied')
+    expect(session.events).toHaveLength(0)
+    dispose()
+    const reentrant = session.guardEvents(() => { session.append('turn/start', { turn: 2 }) })
+    expect(() => session.append('turn/start', { turn: 1 })).toThrow('cannot reenter')
+    expect(session.events).toHaveLength(0)
+    reentrant()
+    session.append('turn/start', { turn: 1 })
+    expect(session.events).toHaveLength(1)
+  })
+
   it('exposes one stable readonly surface view', () => {
     const session = Session.create(SessionId('surface-view'))
     const surface = session.surface

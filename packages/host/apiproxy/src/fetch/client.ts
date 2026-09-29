@@ -20,6 +20,8 @@ import {
 import {
   sessionCancelValueSchema,
   sessionAttachmentValueSchema,
+  sessionAdmitDiagnosticRunValueSchema,
+  sessionPrepareDiagnosticAssignmentValueSchema,
   sessionCreateValueSchema,
   sessionConfigureInstructionsValueSchema,
   sessionGetInstructionsValueSchema,
@@ -93,6 +95,8 @@ import {
  */
 export interface IApiClient {
   sessions: {
+    admitDiagnosticRun(payload: RequestPayload<'session.admitDiagnosticRun'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.admitDiagnosticRun'>>>
+    prepareDiagnosticAssignment(payload: RequestPayload<'session.prepareDiagnosticAssignment'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.prepareDiagnosticAssignment'>>>
     list(payload: RequestPayload<'session.list'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.list'>>>
     search(payload: RequestPayload<'session.search'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.search'>>>
     configureInstructions(payload: RequestPayload<'session.configureInstructions'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'session.configureInstructions'>>>
@@ -190,6 +194,8 @@ export interface IApiClient {
 const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseValue<K>>> } = {
   'session.list': sessionListValueSchema,
   'session.search': sessionSearchValueSchema,
+  'session.admitDiagnosticRun': sessionAdmitDiagnosticRunValueSchema,
+  'session.prepareDiagnosticAssignment': sessionPrepareDiagnosticAssignmentValueSchema,
   'session.create': sessionCreateValueSchema,
   'session.configureInstructions': sessionConfigureInstructionsValueSchema,
   'session.getInstructions': sessionGetInstructionsValueSchema,
@@ -437,6 +443,8 @@ export abstract class AbstractApiClient implements IApiClient {
   readonly sessions: IApiClient['sessions'] = {
     list: (payload, signal) => this.callUnary('session.list', payload, signal),
     search: (payload, signal) => this.callUnary('session.search', payload, signal),
+    admitDiagnosticRun: (payload, signal) => this.callUnary('session.admitDiagnosticRun', payload, signal),
+    prepareDiagnosticAssignment: (payload, signal) => this.callUnary('session.prepareDiagnosticAssignment', payload, signal),
     create: (payload, signal) => this.callUnary('session.create', payload, signal),
     configureInstructions: (payload, signal) => this.callUnary('session.configureInstructions', payload, signal),
     getInstructions: (payload, signal) => this.callUnary('session.getInstructions', payload, signal),

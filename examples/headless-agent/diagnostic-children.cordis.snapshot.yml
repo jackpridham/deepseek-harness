@@ -1,0 +1,2 @@
+- id: diagnostic-children
+  name: './tests/fixtures/diagnostic-children-agent.ts'

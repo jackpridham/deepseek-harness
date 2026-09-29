@@ -48,7 +48,16 @@ export interface HostApi {
    * canOpenPath = whether this deployment can hand a path to a user-visible native desktop;
    * sessionPolicies = versioned session-policy identifiers currently registered on this host.
    */
-  describe(request: RpcRequest<{}>): Promise<RpcResponse<{
+  describe(request: RpcRequest<{ diagnosticChildrenVersion?: 1 }>): Promise<RpcResponse<{
+    /** Joint opt-in capability; omitted for ordinary discovery and unsupported deployments. */
+    diagnosticChildren?: {
+      id: string
+      capabilityVersion: 1
+      executorProtocolVersion: 2
+      profiles: string[]
+      maxChildren: number
+      maxConcurrentChildren: number
+    }
     /** Supported session instruction schema versions; absent means unsupported. */
     instructionVersions?: number[]
     version: string

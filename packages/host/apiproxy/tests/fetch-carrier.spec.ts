@@ -18,6 +18,8 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
   }
   return {
     sessions: {
+      async admitDiagnosticRun() { throw new Error('Unused fixture method') },
+      async prepareDiagnosticAssignment() { throw new Error('Unused fixture method') },
       async configureInstructions() { throw new Error('Unused fixture method') },
       async getInstructions() { throw new Error('Unused fixture method') },
       async list(request) {

@@ -440,6 +440,18 @@ const attachments = new WeakMap<Session, SessionEntry>()
  */
 export class Session {
   private log: SessionEvent[] = []
+  private appending = false
+  private readonly eventGuards = new Set<(event: SessionEvent) => void>()
+
+  /**
+   * Enforce a session policy before an event enters history or reaches observers.
+   * @param guard - synchronous validation; throwing rejects the event without publication.
+   * @returns disposer for this live installation; durable policies reinstall on resume.
+   */
+  guardEvents(guard: (event: SessionEvent) => void): () => void {
+    this.eventGuards.add(guard)
+    return () => { this.eventGuards.delete(guard) }
+  }
   /** Single incremental owner of surface acceptance and projection state. */
   private readonly surfaceManager = new SurfaceManager(this.log)
 
@@ -658,7 +670,7 @@ export class Session {
       throw new Error(`session event "${type}" carries non-JSON-serializable surface metadata`)
     }
     const entry = attachments.get(this)
-    if (entry?.appending) {
+    if (this.appending || entry?.appending) {
       throw new Error('session append cannot reenter while another append is being published')
     }
     const event = deepFreeze({
@@ -668,10 +680,11 @@ export class Session {
       data: dataSnapshot,
       ...(surfaceMetadataSnapshot as { surfaceOp?: unknown; sourceEventSeqs?: unknown }),
     } as unknown as SessionEvent<T>)
-    this.surfaceManager.validateNext(event as SessionEvent)
-
+    this.appending = true
     if (entry !== undefined) entry.appending = true
     try {
+      for (const guard of this.eventGuards) guard(event as SessionEvent)
+      this.surfaceManager.validateNext(event as SessionEvent)
       let callbacks: SessionCallback[] | undefined
       const callbackArgs: unknown[] = [this, event]
       if (entry !== undefined) {
@@ -684,6 +697,7 @@ export class Session {
       }
       return event
     } finally {
+      this.appending = false
       if (entry !== undefined) {
         entry.appending = false
         if (entry.detachRequested && !entry.announcing) entry.detach()

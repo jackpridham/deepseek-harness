@@ -13,6 +13,7 @@ import type { JsonValue, SessionPolicyId, SessionEvent, SessionId, SessionInstru
 // cordis Context merge (via dsh-agent) must not enter client aggregates.
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
 import type { RpcId, RpcRequest, RpcResponse } from './rpc.ts'
+import type { DiagnosticAdmission, DiagnosticAssignment } from '@deepseek-ai/dsh-subagent/diagnostic-schema'
 import type { ToolEventView } from './events.ts'
 import type { WorkspaceId } from './workspace.ts'
 
@@ -320,7 +321,30 @@ export interface SessionSearchItem {
 
 /** Session-domain unary methods (the map keys session.* of RpcMethodMap). */
 export interface SessionsApi {
-  /** Lists persisted sessions (updatedAt descending). v1 returns everything; cursor is a reserved seat, unimplemented. */
+  /** Admit a policy-bound root against its inert caller executor before inference. */
+  admitDiagnosticRun(request: RpcRequest<DiagnosticAdmission>): Promise<RpcResponse<{
+    runId: string
+    rootSessionId: string
+    state: 'admitted'
+    admissionDigest: string
+    bindingEpoch: number
+    duplicate: boolean
+  }>>
+  /** Prepare immutable caller-owned work for the existing native child tool. */
+  prepareDiagnosticAssignment(request: RpcRequest<{
+    runId: string
+    rootSessionId: string
+    idempotencyKey: string
+    assignment: DiagnosticAssignment
+  }>): Promise<RpcResponse<{
+    runId: string
+    assignmentId: string
+    assignmentDigest: string
+    state: 'prepared'
+    duplicate: boolean
+  }>>
+  /** Lists persisted sessions (updatedAt descending). v1 returns everything
+      cursor is a reserved seat, unimplemented. */
   list(request: RpcRequest<{ cursor?: string }>): Promise<RpcResponse<{ items: SessionSummary[] }>>
 
   /**

@@ -107,6 +107,15 @@ The model-facing tool collects synchronously by default: it awaits the child res
 
 Continuable Activations await a best-effort final session flush without treating listener participation as durability confirmation. One-shot runs retain best-effort session checkpointing, so a completed one-shot child is discoverable after disposal only when its session actually reached persistence; the service does not invent a catalog entry from Task history when that checkpoint is absent.
 
+## Caller-prepared diagnostic children
+`diagnostics` supports the opt-in `vortex-diagnostic-children-v1` policy when a durable executor bridge registers through `registerExecutor`. Create the idle root with the existing `sessionPolicy` field before pairing its executor. Admission requires the exact source identities, resolved coordinator assignment, model settings and run limits. `session.admitDiagnosticRun` and `session.prepareDiagnosticAssignment` persist these inputs before acknowledgement; model tools accept prepared assignment IDs only.
+
+Children use the existing in-process continuable provider and central session logs. Their instruction base and ordered expertise replace inherited instructions, and their scoped tools cannot access host files or commands. Each request, including auxiliary model work, consumes a conservative output-ceiling charge. Child work leaves the caller-specified request, token and time reserves for root synthesis. Unknown delivery or transport outcomes require history reconciliation and are never automatically replayed.
+
+The browser-safe `diagnostic-schema` export validates RPC inputs and errors. Runtime validation also checks canonical digests, source membership, read-only authority and bounded inline closeout schemas. Supported result-schema keywords are declared in `diagnosticResultSchema`; external references are rejected.
+
+This policy retains the deployment's existing trusted-LAN history access, including original tool arguments. It does not add history ACLs or retention rules. Caller filesystem isolation and real deployment acceptance remain executor/deployment responsibilities. See the [decision record](../../../.agents/notes/implemented/feature/2026-09-29-diagnostic-children.md).
+
 ## Model Experience
 
 ### Settlement notice

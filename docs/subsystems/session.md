@@ -376,6 +376,12 @@ The body-stripped declaration keeps the plain class's detached factory, state ac
  * @typert object
  */
 declare class Session {
+  /**
+   * Enforce a session policy before an event enters history or reaches observers.
+   * @param guard - synchronous validation; throwing rejects the event without publication.
+   * @returns disposer for this live installation; durable policies reinstall on resume.
+   */
+  guardEvents(guard: (event: SessionEvent) => void): () => void;
   /** The ordered surface over this session's event log. */
   get surface(): SessionSurface;
   /**
@@ -765,7 +771,7 @@ fork(source: SessionForkSource, boundary?: number, childSessionId?: SessionId): 
 
 Types: [CreateSessionOptions](persistence.md) · [PrepareSessionOptions](persistence.md) · [SessionId](core.md)
 
-Source: [`packages/core/session/src/index.ts:829`](../../packages/core/session/src/index.ts)
+Source: [`packages/core/session/src/index.ts:843`](../../packages/core/session/src/index.ts)
 
 <a id="session-events"></a>
 

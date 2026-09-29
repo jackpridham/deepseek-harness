@@ -16,6 +16,8 @@ import { RpcId } from '../api/rpc.ts'
 import type { Wire } from '../api/rpc.schema.ts'
 import { clientRequestSchema, clientResponseSchema } from '../api/rpc.schema.ts'
 import {
+  sessionAdmitDiagnosticRunRequestSchema,
+  sessionPrepareDiagnosticAssignmentRequestSchema,
   sessionCancelRequestSchema,
   sessionAttachmentRequestSchema,
   sessionCreateRequestSchema,
@@ -95,6 +97,8 @@ type UnaryRoutes = {
 }
 
 const UNARY_ROUTES: UnaryRoutes = {
+  'session.admitDiagnosticRun': { schema: sessionAdmitDiagnosticRunRequestSchema, invoke: (api, r) => api.sessions.admitDiagnosticRun(r) },
+  'session.prepareDiagnosticAssignment': { schema: sessionPrepareDiagnosticAssignmentRequestSchema, invoke: (api, r) => api.sessions.prepareDiagnosticAssignment(r) },
   'session.list': { schema: sessionListRequestSchema, invoke: (api, r) => api.sessions.list(r) },
   'session.search': { schema: sessionSearchRequestSchema, invoke: (api, r, signal) => api.sessions.search(r, signal) },
   'session.configureInstructions': { schema: sessionConfigureInstructionsRequestSchema, invoke: (api, r) => api.sessions.configureInstructions(r) },

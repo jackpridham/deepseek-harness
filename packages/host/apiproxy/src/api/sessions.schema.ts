@@ -6,6 +6,21 @@
  */
 
 import { z } from 'zod'
+import { diagnosticAdmissionSchema, diagnosticAssignmentSchema } from '@deepseek-ai/dsh-subagent/diagnostic-schema'
+
+/** Versioned core admission retains every exact assignment field. */
+export const sessionAdmitDiagnosticRunRequestSchema = diagnosticAdmissionSchema
+/** Admission acknowledgement is distinct from inference or completion. */
+export const sessionAdmitDiagnosticRunValueSchema = z.object({ runId: z.string(), rootSessionId: z.string(), state: z.literal('admitted'), admissionDigest: z.string(), bindingEpoch: z.number().int().positive(), duplicate: z.boolean() })
+/** Caller preparation uses two immutable assignment identities. */
+export const sessionPrepareDiagnosticAssignmentRequestSchema = z.object({
+  runId: z.string(),
+  rootSessionId: z.string(),
+  idempotencyKey: z.string(),
+  assignment: diagnosticAssignmentSchema,
+}).strict()
+/** A prepared assignment has not yet created a child. */
+export const sessionPrepareDiagnosticAssignmentValueSchema = z.object({ runId: z.string(), assignmentId: z.string(), assignmentDigest: z.string(), state: z.literal('prepared'), duplicate: z.boolean() })
 import type { SessionEvent, SessionId, SessionPolicyId } from '@deepseek-ai/dsh-session/types'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { RequestPayload, ResponseValue } from './rpc-map.ts'

@@ -67,6 +67,10 @@ import { listChildren as listSubagentChildren, listDescendants as listSubagentDe
 import type { SubagentDescendantListEntry, SubagentListEntry } from './list-children.ts'
 import { snapshotSubagentDescriptor } from './descriptor.ts'
 import { subagentIdentityProjectionDefinition, subagentTimingProjectionDefinition } from './projection.ts'
+import { DiagnosticRuns } from './diagnostic.ts'
+export { DIAGNOSTIC_POLICY, DiagnosticError } from './diagnostic.ts'
+export type { DiagnosticExecutor, DiagnosticBinding } from './diagnostic.ts'
+export * from './diagnostic-contract.ts'
 
 export * from './out-of-process.ts'
 export { AssistantOutputFold, finalAssistantOutput } from './assistant-output.ts'
@@ -170,6 +174,8 @@ declare module '@deepseek-ai/cordis' {
 
 /** Named provider registry with one-shot runs, durable discovery, and continuable-child operations. */
 export class SubagentRuntime extends Service {
+  /** Opt-in caller-bound source-review admission and native child lifecycle. */
+  readonly diagnostics: DiagnosticRuns
   private providers = new Map<string, SubagentProvider>()
   private continuations: SubagentContinuationManager | undefined
   /** Deployment contributions composed into unpublished continuable children. */
@@ -183,6 +189,7 @@ export class SubagentRuntime extends Service {
 
   constructor(ctx: Context) {
     super(ctx, 'subagents')
+    this.diagnostics = new DiagnosticRuns(this.ctx, this)
     this.emitLifecycle = createLifecycleEmitter(this.ctx, parent => scopeTarget(this, parent))
     ctx.inject(['agents'], (childCtx: Context) => {
       const manager = new SubagentContinuationManager(childCtx, {
@@ -211,6 +218,7 @@ export class SubagentRuntime extends Service {
    * @throws when continuation services are unavailable or materialization fails.
    */
   async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart> {
+    this.diagnostics.assertDelivery(spec.request.parent, spec.childId)
     return this.requireContinuations().startContinuable(spec)
   }
 
@@ -235,6 +243,7 @@ export class SubagentRuntime extends Service {
     content: ContentBlock[],
     options: SubagentFollowupOptions,
   ): Promise<MessageId> {
+    this.diagnostics.assertDelivery(parent, childId)
     return this.requireContinuations().followup(parent, childId, content, options)
   }
 
@@ -429,6 +438,7 @@ export class SubagentRuntime extends Service {
    * @returns the published holder-owned run.
    */
   async start(name: string, request: SubagentStartRequest): Promise<SubagentRun> {
+    this.diagnostics.assertDelivery(request.parent)
     const provider = this.expectProvider(name)
     this.assertCapabilities(provider, request)
     assertSubagentMaxDepth(request.maxDepth)

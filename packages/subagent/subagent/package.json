@@ -27,7 +27,11 @@
       "default": "./lib/types/client.js"
     },
     "./src/*": "./src/*",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./diagnostic-schema": {
+      "types": "./lib/types/diagnostic-schema.d.ts",
+      "default": "./lib/types/diagnostic-schema.js"
+    }
   },
   "files": [
     "lib/index.js",

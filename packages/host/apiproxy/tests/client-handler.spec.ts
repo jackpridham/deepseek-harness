@@ -36,6 +36,8 @@ function scriptedApi(overrides: {
     Promise.resolve({ rpcId: r.rpcId, result: { ok: false, error: { code: 'internal' as const, message: 'stub', details: {} } } })
   return {
     sessions: {
+      async admitDiagnosticRun() { throw new Error('Unused fixture method') },
+      async prepareDiagnosticAssignment() { throw new Error('Unused fixture method') },
       async configureInstructions() { throw new Error('Unused fixture method') },
       async getInstructions() { throw new Error('Unused fixture method') },
       list: r => ok(r, { items: [] }),
