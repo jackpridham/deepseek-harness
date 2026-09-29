@@ -18,6 +18,7 @@ it('runs a prepared diagnostic child through the assembled application', async (
       "running",
     ]
   `)
+  expect(result.stdout).toContain(JSON.stringify({ type: 'child-title', title: 'OWASP discovery child' }))
   expect(result.stdout).toContain('Child accepted.')
   expect(result.stdout).not.toContain('"kind":"error"')
 }, LOADER_SMOKE_TEST_TIMEOUT_MS)

@@ -119,6 +119,9 @@ describe('diagnostic admission', () => {
     expect(records.at(-1)?.data.state, JSON.stringify(agent.session.events.filter(event => event.type === 'turn/end' || event.type === 'tool/result'))).toBe('accepted')
     const childId = records.at(-1)!.data.childSessionId!
     const child = ctx.agents.get(SessionId(childId))!
+    expect(await ctx.subagents.renameChild(agent, SessionId(childId), input.runId, session => session.id)).toBe(childId)
+    await expect(ctx.subagents.renameChild(agent, SessionId(childId), 'wrong', () => undefined)).rejects.toThrow('admitted parent run')
+    await expect(ctx.subagents.renameChild(agent, SessionId('absent'), input.runId, () => undefined)).rejects.toThrow('unavailable')
     await child?.whenIdle()
     const persisted = await ctx.sessionPersistence.load(SessionId(childId))
     expect(persisted.meta.sessionPolicy).toBe(DIAGNOSTIC_POLICY)

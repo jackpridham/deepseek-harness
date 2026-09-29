@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import Persistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+import Titles from '@deepseek-ai/dsh-session-title'
 import Projections from '@deepseek-ai/dsh-session-projection'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import Subagents, { DIAGNOSTIC_POLICY, parseDiagnosticAdmission } from '@deepseek-ai/dsh-subagent'
@@ -19,6 +20,7 @@ export async function apply(ctx: Context): Promise<void> {
   await mountAgentLoopTestDependencies(ctx)
   await ctx.plugin(Persistence, { root: './.sessions', compression: 'none' })
   await ctx.plugin(AgentLoop, { agents: [] })
+  await ctx.plugin(Titles, { fallbackMaxWords: 8, fallbackMaxBytes: 80, maxTitleBytes: 80 })
   await ctx.plugin(Projections)
   await ctx.plugin(TokenMeter)
   await ctx.plugin(Subagents)
@@ -80,4 +82,10 @@ export async function apply(ctx: Context): Promise<void> {
   ctx.effect(() => () => handle.dispose())
   await ctx.get('subagents')!.diagnostics.admit(input)
   await ctx.get('subagents')!.diagnostics.prepare(prepared)
+  ctx.on('session/event', async (_session, event) => {
+    if (event.type !== 'diagnostic/reservation' || event.data.state !== 'accepted' || !event.data.childSessionId) return
+    const accepted = await ctx.get('subagents')!.renameChild(handle.agent, SessionId(event.data.childSessionId), input.runId,
+      session => ctx.get('sessionTitle')!.rename(session, 'OWASP discovery child'))
+    process.stdout.write(`${JSON.stringify({ type: 'child-title', title: accepted.title })}\n`)
+  })
 }

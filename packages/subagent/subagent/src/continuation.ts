@@ -35,7 +35,7 @@ import type { ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { boundContextSummary, createUserMessage, errorChain } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageId, MessageSource } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import type { ToolRestriction } from '@deepseek-ai/dsh-tools'
 import { foldSubagentDescriptor, snapshotSubagentDescriptor } from './descriptor.ts'
@@ -492,6 +492,41 @@ export class SubagentContinuationManager {
     if (this.ctx.agents.get(childId) !== undefined || this.ctx.get('sessions')?.get(childId) !== undefined) {
       throw new SubagentError(`subagent "${childId}" already exists`, 'DUPLICATE_CHILD')
     }
+  }
+
+  /**
+   * Serialize title mutation with native child creation and delivery, without activating a loop.
+   * @param parent - live direct parent authorizing metadata mutation.
+   * @param childId - durable continuable child identity.
+   * @param rename - synchronous title-service mutation after lineage verification.
+   * @returns the accepted value after the child log is flushed.
+   */
+  async editTitle<T>(parent: Agent, childId: SessionId, rename: (session: Session) => T): Promise<T> {
+    return this.locks.run(childId, async () => {
+      const activation = this.activations.get(childId)
+      if (activation?.disposal !== undefined) await activation.disposal
+      const sessions = this.ctx.get('sessions')
+      if (sessions === undefined) throw new SubagentError('Session store is unavailable', 'NOT_FOUND')
+      const live = sessions.get(childId)
+      using preparation = live === undefined
+        ? await this.requirePersistence().prepare(childId).catch((cause: unknown) => {
+          throw new SubagentError('Child is unavailable', 'NOT_FOUND', { cause })
+        }) : undefined
+      const session = live ?? preparation?.session
+      if (session === undefined) throw new SubagentError('Child is unavailable', 'NOT_FOUND')
+      this.authorizeLineage(parent, childId, session.header.parentSession)
+      if (session.header.origin !== 'subagent' || foldSubagentDescriptor(session.events.slice(session.header.seedLength ?? 0))?.mode !== 'continuable')
+        throw new SubagentError('Child is not a native continuation', 'UNAUTHORIZED')
+      const detach = live === undefined ? sessions.enter(session) : undefined
+      try {
+        if (detach !== undefined) sessions.announce(session)
+        this.authorizeLineage(parent, childId, session.header.parentSession)
+        if (session.header.origin !== 'subagent') throw new SubagentError('Child is not native', 'UNAUTHORIZED')
+        const value = rename(session)
+        await sessions.flush(session)
+        return value
+      } finally { detach?.() }
+    })
   }
 
   /**

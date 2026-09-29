@@ -698,6 +698,26 @@ export class DiagnosticRuns {
     return run
   }
 
+  /**
+   * Verify diagnostic presentation metadata against the admitted parent run.
+   * @param parent - exact live parent owner.
+   * @param child - native child session resolved by the continuation owner.
+   * @param runId - caller's admitted run identity, required for diagnostic children.
+   */
+  assertTitleAuthority(parent: Agent, child: Session, runId?: string): void {
+    if (child.header.sessionPolicy !== DIAGNOSTIC_POLICY) {
+      if (runId !== undefined) throw new DiagnosticError('diagnostic-parent-stale', 'Child has no diagnostic run')
+      return
+    }
+    const member = child.events.findLast(event => event.type === 'diagnostic/member')
+    const reservation = this.assignments(parent.session).find(value => value.childSessionId === child.id
+      && member?.type === 'diagnostic/member' && value.assignmentId === member.data.assignmentId)
+    if (member?.type !== 'diagnostic/member' || reservation === undefined || reservation.state !== 'accepted'
+      || member.data.rootSessionId !== parent.id || child.header.parentSession !== parent.id
+      || this.run(parent.session)?.runId !== runId || reservation.runId !== runId || member.data.runId !== runId)
+      throw new DiagnosticError('diagnostic-parent-stale', 'Child title requires the admitted parent run')
+  }
+
   private membership(agent: Agent): { root: Agent; assignment: DiagnosticAssignment } | undefined {
     if (agent.session.header.sessionPolicy !== DIAGNOSTIC_POLICY) return undefined
     if (agent.session.header.origin !== 'subagent') {

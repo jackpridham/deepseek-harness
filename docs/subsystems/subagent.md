@@ -570,6 +570,16 @@ registerContinuableSetup(contribution: ContinuableSetupContribution): () => void
 async drainContinuableDescendants(parents: readonly Agent[]): Promise<void>
 
 /**
+ * Mutate presentation metadata through the native continuation owner without starting work.
+ * @param parent - exact live direct parent.
+ * @param childId - native continuable child identity, live or persisted.
+ * @param runId - admitted diagnostic run, when applicable.
+ * @param rename - synchronous session-title service operation.
+ * @returns the accepted title after persistence flush.
+ */
+renameChild<T>(parent: Agent, childId: SessionId, runId: string | undefined, rename: (session: Session) => T): Promise<T>
+
+/**
  * Release selected resident continuable direct children of one exact live
  * parent. Other children of the same parent remain admitted and resident.
  * Absent targets and a manager-less composition are accepted no-ops.
@@ -663,7 +673,7 @@ list(): string[]
 async start(name: string, request: SubagentStartRequest): Promise<SubagentRun>
 ```
 
-Types: [Agent](core.md) · [ContentBlock](llm-streaming.md) · [MessageId](llm-streaming.md) · [SessionId](core.md)
+Types: [Agent](core.md) · [ContentBlock](llm-streaming.md) · [MessageId](llm-streaming.md) · [Session](session.md) · [SessionId](core.md)
 
 Source: [`packages/subagent/subagent/src/index.ts:176`](../../packages/subagent/subagent/src/index.ts)
 
@@ -751,3 +761,5 @@ Types: [Scoped](scope.md)
 
 Source: [`packages/subagent/subagent/src/index.ts:162`](../../packages/subagent/subagent/src/index.ts)
 <!-- END GENERATED cordis-surface -->
+
+Native child presentation mutation follows the [parent-authorized title rules](../../packages/subagent/subagent/README.md#parent-authorized-child-titles), including cold-session ownership and diagnostic run validation.

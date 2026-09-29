@@ -37,7 +37,7 @@ import type { Scoped } from '@deepseek-ai/dsh-scope'
 import { assertObjectJsonSchema } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock, MessageId } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type {
   ContinuableCreateRequest,
   ContinuableCreateSpec,
@@ -316,6 +316,21 @@ export class SubagentRuntime extends Service {
     // Absent continuation services means nothing was ever materialized.
     if (manager === undefined) return
     await manager.drainDescendants(parents)
+  }
+
+  /**
+   * Mutate presentation metadata through the native continuation owner without starting work.
+   * @param parent - exact live direct parent.
+   * @param childId - native continuable child identity, live or persisted.
+   * @param runId - admitted diagnostic run, when applicable.
+   * @param rename - synchronous session-title service operation.
+   * @returns the accepted title after persistence flush.
+   */
+  renameChild<T>(parent: Agent, childId: SessionId, runId: string | undefined, rename: (session: Session) => T): Promise<T> {
+    return this.requireContinuations().editTitle(parent, childId, (session) => {
+      this.diagnostics.assertTitleAuthority(parent, session, runId)
+      return rename(session)
+    })
   }
 
   /**
