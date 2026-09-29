@@ -57,13 +57,13 @@ async function loadYaml(lines: readonly string[]): Promise<Context> {
 describe('real Loader composition', () => {
   it('loads the shipped diagnostic-only host compactor without enabling ordinary-session compaction', async () => {
     const patch = await readFile(new URL('../../../bundle/web-app/cordis.patch.yml', import.meta.url), 'utf8')
-    const row = patch.match(/- id: compaction-basic\n([\s\S]*?)(?=\n- |$)/)![1]!
+    const row = patch.match(/    - id: diagnostic-compaction\n([\s\S]*?)(?=\n- |$)/)![1]!
     const loaded = await loadYaml([
       "- name: '@deepseek-ai/dsh-llm'",
       "- name: '@deepseek-ai/dsh-session'",
       "- name: '@deepseek-ai/dsh-token-meter'",
       "- name: '@deepseek-ai/dsh-compaction-basic'",
-      ...row.trimEnd().split('\n'),
+      ...row.trimEnd().split('\n').slice(1).map(line => line.slice(4)),
     ])
     const engine = loaded.compaction as BasicCompactionEngine
     expect(engine.config).toMatchObject({ auto: true, thresholdRatio: 0.65, sessionPolicies: ['vortex-diagnostic-children-v1'] })

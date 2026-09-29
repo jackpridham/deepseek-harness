@@ -379,15 +379,19 @@
 # Diagnostic policy disables presets. Keep only its compactor on the host;
 # ordinary sessions continue to use their isolated preset compactor.
 - id: compaction-basic
-  disabled: false
-  config:
-    sessionPolicies: [vortex-diagnostic-children-v1]
-    auto: true
-    thresholdRatio: 0.65
-    retainRatio: 0.16
-    maxTokens: 8192
-    compactionRetries: 1
-    maxOverflowRetries: 1
+  disabled: true
+
+- insert:
+    - id: diagnostic-compaction
+      name: '@deepseek-ai/dsh-compaction-basic'
+      config:
+        sessionPolicies: [vortex-diagnostic-children-v1]
+        auto: true
+        thresholdRatio: 0.65
+        retainRatio: 0.16
+        maxTokens: 8192
+        compactionRetries: 1
+        maxOverflowRetries: 1
 
 - id: command-compact
   disabled: true
