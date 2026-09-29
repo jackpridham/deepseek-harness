@@ -769,7 +769,7 @@ export class DiagnosticRuns {
           if (!member.assignment.authority.tools.includes(name)) continue
           const properties =
             name === 'subagent'
-              ? { run_in_background: { const: true }, assignmentId: { type: 'string' } }
+              ? { run_in_background: { type: 'boolean', const: true }, assignmentId: { type: 'string' } }
               : { childSessionId: { type: 'string' }, assignmentId: { type: 'string' } }
           const tool: ToolDefinition = {
             name,
