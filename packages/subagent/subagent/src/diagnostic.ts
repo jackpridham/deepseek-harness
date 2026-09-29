@@ -297,6 +297,12 @@ export class DiagnosticRuns {
     }
   }
 
+  private service<K extends 'agents' | 'sessions' | 'sessionPersistence'>(name: K): Context[K] {
+    const service = this.ctx.get(name)
+    if (service === undefined) throw new DiagnosticError('diagnostic-capability-unavailable', `Diagnostic service ${name} is unavailable`)
+    return service
+  }
+
   private requireExecutor(): DiagnosticExecutor {
     if (this.executor === undefined)
       throw new DiagnosticError('diagnostic-capability-unavailable', 'Diagnostic executor is unavailable')
@@ -304,7 +310,7 @@ export class DiagnosticRuns {
   }
 
   private async flush(session: Session): Promise<void> {
-    await this.ctx.sessions.flush(session)
+    await this.service('sessions').flush(session)
   }
 
   /**
@@ -330,7 +336,7 @@ export class DiagnosticRuns {
       ) ||
       children.some(child => child.kind === 'diagnostic') ||
       this.assignments(agent.session).some(record => record.state !== 'accepted') ||
-      this.ctx.agents
+      this.service('agents')
         .list()
         .some(child => child.session.header.parentSession === agent.id && child.status !== 'idle') ||
       !this.executor?.quiescent(agent.id)
@@ -580,8 +586,8 @@ export class DiagnosticRuns {
             if (record.childSessionId === undefined)
               throw new DiagnosticError('diagnostic-parent-stale', 'Child identity is missing')
             const id = SessionId(record.childSessionId)
-            const live = this.ctx.agents.get(id)
-            return [id, live?.session.events ?? (await this.ctx.sessionPersistence.load(id)).events] as const
+            const live = this.service('agents').get(id)
+            return [id, live?.session.events ?? (await this.service('sessionPersistence').load(id)).events] as const
           }),
       ),
     )
@@ -598,7 +604,7 @@ export class DiagnosticRuns {
     let activeChildren = 0
     let uncertain = false
     for (const [childId, record] of children) {
-      const child = this.ctx.agents.get(SessionId(childId))
+      const child = this.service('agents').get(SessionId(childId))
       const activeModelRequests = activeRequests.filter(request => request.producerSessionId === childId).length
       const caller = this.executor?.activity?.(rootId, SessionId(childId)) ?? { activeCalls: 0, pendingResults: 0 }
       const events = child?.session.events ?? snapshots.get(SessionId(childId))
@@ -733,7 +739,9 @@ export class DiagnosticRuns {
       }),
     )
     if (member !== undefined) {
-      const limits = this.requireRun(member.root).admission
+      const admitted = this.run(member.root.session)
+      if (admitted === undefined) throw new DiagnosticError('diagnostic-policy-rejected', 'Diagnostic admission is missing')
+      const limits = admitted.admission
       const deadline = Math.min(
         Date.parse(member.assignment.budget.deadline),
         Date.parse(limits.deadline) - (agent === member.root ? 0 : limits.rootSynthesisReserveMs),
@@ -840,7 +848,7 @@ export class DiagnosticRuns {
       const children = await this.subagents.listChildren(root.id, signal)
       if (children.some(child => child.kind === 'diagnostic'))
         throw new DiagnosticError('diagnostic-child-unsettled', 'Child catalogue cannot be verified', true)
-      const active = this.ctx.agents
+      const active = this.service('agents')
         .list()
         .filter(agent => agent.session.header.parentSession === root.id && agent.status !== 'idle')
       if (active.length >= run.admission.maxConcurrentChildren)
@@ -869,7 +877,7 @@ export class DiagnosticRuns {
         const prompt = [{ type: 'text' as const, text: diagnosticCanonicalJson(record.assignment) }]
         let messageId: MessageId
         if (continuation) {
-          const child = this.ctx.agents.get(childId)
+          const child = this.service('agents').get(childId)
           if (child !== undefined) {
             if (child.status !== 'idle')
               throw new DiagnosticError('diagnostic-child-unsettled', 'Continuation requires an idle child')
@@ -946,7 +954,7 @@ export class DiagnosticRuns {
   }
 
   private async *stream(options: GenerateOptions, next: () => AsyncIterable<StreamChunk>): AsyncIterable<StreamChunk> {
-    const agent = options.sessionId === undefined ? undefined : this.ctx.agents.get(options.sessionId)
+    const agent = options.sessionId === undefined ? undefined : this.service('agents').get(options.sessionId)
     if (agent?.session.header.sessionPolicy !== DIAGNOSTIC_POLICY) {
       yield* next()
       return
