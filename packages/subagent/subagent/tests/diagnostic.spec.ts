@@ -69,6 +69,8 @@ describe('diagnostic admission', () => {
       install: () => () => {}, cancel: async () => {}, quiescent: () => true,
     })
     const handle = await ctx.agents.create({ sessionId: SessionId(input.rootSessionId), meta: { sessionPolicy: DIAGNOSTIC_POLICY } })
+    handle.agent.session.append('sandbox/mode', { mode: 'danger-full-access' })
+    handle.agent.session.append('approval/policy', { policy: 'never' })
     const result = await ctx.subagents.diagnostics.admit(input)
     expect(result.duplicate).toBe(false)
     const persisted = await ctx.sessionPersistence.load(handle.agent.id)
@@ -76,6 +78,8 @@ describe('diagnostic admission', () => {
     expect((await ctx.subagents.diagnostics.admit(input)).duplicate).toBe(true)
     await expect(ctx.subagents.diagnostics.admit({ ...input, maxChildren: 3 })).rejects.toThrow('conflicts')
     expect(() => handle.agent.session.configureInstructions({ version: 1 })).toThrow('immutable')
+    expect(() => handle.agent.session.append('sandbox/mode', { mode: 'read-only' })).toThrow('immutable')
+    expect(() => handle.agent.session.append('approval/policy', { policy: 'ask' })).toThrow('immutable')
     await expect(ctx.subagents.startContinuable({ provider: 'spawn', label: 'raw', signal: new AbortController().signal, request: { parent: handle.agent, prompt: [{ type: 'text', text: 'raw' }] } })).rejects.toThrow('prepared assignment')
   })
   it('runs a prepared assignment as a native child with fixed instructions and model', async () => {

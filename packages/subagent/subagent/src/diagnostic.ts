@@ -731,7 +731,10 @@ export class DiagnosticRuns {
     disposers.push(
       agent.session.guardEvents((event) => {
         if (this.configuring.has(agent.id)) return
-        if (['session/instructions', 'model/selection', 'sandbox/mode', 'approval/policy'].includes(event.type))
+        // The full host initializes permission/model defaults after policy installation.
+        // Admission replaces those defaults and then freezes the effective assignment.
+        if (member !== undefined
+          && ['session/instructions', 'model/selection', 'sandbox/mode', 'approval/policy'].includes(event.type))
           throw new DiagnosticError('diagnostic-policy-rejected', 'Diagnostic policy is immutable')
         if (event.type === 'turn/start') {
           if (member === undefined)
