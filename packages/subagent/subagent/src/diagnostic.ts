@@ -662,7 +662,9 @@ export class DiagnosticRuns {
         ? 'completed'
         : run.state === 'admitted' && root.status !== 'idle'
           ? 'running'
-          : run.state
+          : quiescent && run.state === 'cancelling'
+            ? 'incomplete'
+            : run.state
     root.session.append('diagnostic/run-state', {
       ...run,
       state,

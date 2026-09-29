@@ -24,7 +24,7 @@ import type {
 } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { SessionQueryError, type SessionSearchCursor } from '@deepseek-ai/dsh-session-query'
-import { DiagnosticError, SubagentError } from '@deepseek-ai/dsh-subagent'
+import { DIAGNOSTIC_POLICY, DiagnosticError, SubagentError } from '@deepseek-ai/dsh-subagent'
 import type { SubagentListEntry as CatalogSubagentListEntry } from '@deepseek-ai/dsh-subagent'
 import { isUserInvocable } from '@deepseek-ai/dsh-skill'
 import type { Workspace, WorkspaceRecord } from '@deepseek-ai/dsh-workspace'
@@ -3209,7 +3209,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         return Promise.resolve(ok(request, { accepted: true as const }))
       },
 
-      cancel(request) {
+      async cancel(request) {
         const { sessionId } = request.payload
         const agent = ctx.agents.get(sessionId)
         if (agent === undefined) {
@@ -3221,6 +3221,18 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         }
         if (hasSubagentOwner(agent.session, agent)) {
           return Promise.resolve(err(request, subagentOwnershipError(sessionId)))
+        }
+        if (agent.session.header.sessionPolicy === DIAGNOSTIC_POLICY) {
+          try {
+            await ctx.subagents.diagnostics.cancel(sessionId)
+            return ok(request, { accepted: true as const })
+          } catch {
+            return err(request, {
+              code: 'diagnostic-child-unsettled',
+              message: 'Diagnostic cancellation requires settlement; inspect session history',
+              details: { retryable: false, operationState: 'unknown', reconcileWith: 'history' },
+            })
+          }
         }
         agent.cancel({ kind: 'user' }, { keepInbox: true })
         return Promise.resolve(ok(request, { accepted: true as const }))
