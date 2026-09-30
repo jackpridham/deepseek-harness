@@ -48,6 +48,7 @@ export type {
   HistoryEntry, ModelCatalogFailure, ModelCatalogModel, ModelContextChoice, ModelContextChoices, ModelProviderGroup, ModelReasoning,
   SessionPolicyAttestation, ModelReasoningEffort, ModelSelection, PromptContentPart, QueueAction, SessionModels,
   SessionListMetadata, SessionProjectionsBlock, SessionSearchItem, SessionsApi, SessionSummary,
+  SessionMcpAttachment, SessionMcpAttachmentState,
 } from './sessions.ts'
 export type { DirectoryEntry, DirectoryListing, HostApi } from './host.ts'
 export type {

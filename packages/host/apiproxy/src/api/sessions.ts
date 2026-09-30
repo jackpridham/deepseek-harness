@@ -319,6 +319,24 @@ export interface SessionSearchItem {
   snippet: string
 }
 
+/** One caller-supplied MCP server, attached before the session can run. */
+export interface SessionMcpAttachment {
+  version: 1
+  serverName: string
+  transport: 'streamable-http'
+  url: string
+  headers: Record<string, string>
+  toolCallTimeoutMs: number
+  failOnStartupError: true
+}
+
+/** Successful initial discovery; tool names are the Harness public names. */
+export interface SessionMcpAttachmentState {
+  version: 1
+  serverName: string
+  toolNames: string[]
+}
+
 /** Session-domain unary methods (the map keys session.* of RpcMethodMap). */
 export interface SessionsApi {
   /** Publish an immutable normalized worker report after committed closeout acceptance. */
@@ -376,6 +394,10 @@ export interface SessionsApi {
    *
    * `sessionPolicy` requires a registered provider and records its immutable
    * identity. The provider determines allowed workspace and preset inputs.
+   * `mcpAttachment` installs one HTTP MCP server before publication and returns
+   * discovered public tool names. Repeat the same attachment for an explicit
+   * cold resume; live replacement is rejected. No tool call is replayed.
+   *
    * Missing providers fail creation and resume; successful creation returns
    * the installed provider's assertions in `policy`.
    */
@@ -385,9 +407,16 @@ export interface SessionsApi {
     sessionId?: SessionId
     agentPreset?: string
     instructions?: SessionInstructions
+    mcpAttachment?: SessionMcpAttachment
     sessionPolicy?: SessionPolicyId
   }>):
-  Promise<RpcResponse<{ sessionId: SessionId; agentPreset?: string; policy?: SessionPolicyAttestation; instructionsRevision?: number }>>
+  Promise<RpcResponse<{
+    sessionId: SessionId
+    agentPreset?: string
+    policy?: SessionPolicyAttestation
+    instructionsRevision?: number
+    mcpAttachment?: SessionMcpAttachmentState
+  }>>
 
   /** Set the complete configuration before the first turn; identical retries are idempotent. */
   configureInstructions(request: RpcRequest<{ sessionId: SessionId; instructions: SessionInstructions }>):

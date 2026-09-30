@@ -36,7 +36,7 @@ The model sees `mcp__github__create_issue`, `mcp__web__search`, … — the same
 | Field | Transport | Required | Description |
 |---|---|---|---|
 | `transport` | both | yes | `"stdio"` or `"streamable-http"` |
-| `serverName` | both | yes | Namespace for this server's model-facing tool names; `[A-Za-z0-9_-]{1,32}`, unique across live instances |
+| `serverName` | both | yes | Namespace for this server's model-facing tool names; `[A-Za-z0-9_-]{1,32}`, unique within its registration scope |
 | `command` | stdio | yes | Executable to spawn |
 | `args` | stdio | no | Arguments passed to the command |
 | `env` | stdio | no | Extra env vars merged on top of scrubbed ambient env |
@@ -55,7 +55,7 @@ The model sees `mcp__github__create_issue`, `mcp__web__search`, … — the same
 Every MCP tool has two names: the raw MCP name (sent on the wire in `tools/call`) and the public name `mcp__<serverName>__<rawName>` registered on `ctx.tools`. Public names are normalized to the DeepSeek function-name contract (64 chars, `[A-Za-z0-9_-]`); when replacement or truncation changes the name, a deterministic 12-hex-char hash of `(serverName, rawName)` is appended so distinct tools never collapse into one name. Names are pure functions of `(serverName, rawName)` — connection order, re-syncs, and other servers never rename a tool.
 
 - Two servers publishing the same raw name (e.g. `search`) coexist under their namespaces.
-- A duplicate `serverName` across live instances fails the later plugin instance at load.
+- A duplicate `serverName` within one registration scope fails the later plugin instance at load.
 - A server listing the same tool name twice is rejected as an invalid tool list.
 - A foreign registration squatting on this server's namespace rolls back the whole generation (never a partial set), with a loud error.
 
@@ -109,6 +109,8 @@ Arguments, mapped text, and durable image references are retained until compacti
 Append-only; newly visible content follows the reusable request prefix and does not invalidate existing KV-cache entries.
 
 ## Known Limitations and Deferred Work
+
+Session-owned connections can reuse the same server name in independent agent scopes. The [Host API attachment](../../host/apiproxy/session-mcp.md) installs the stock client before session publication.
 
 - **Tools are the only bridged MCP capability** — Resources and Prompts have no harness consumer and are deferred.
 - **Startup timeout is inherited from the MCP SDK** — DSH does not yet expose a connection/discovery timeout. Each initialize or paginated `tools/list` request uses the SDK's 60-second default, so an unresponsive server or cursor chain can delay both activation and teardown while the initial synchronization settles.

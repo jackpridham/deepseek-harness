@@ -237,6 +237,8 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ### `ctx.apiProxy` — `ApiProxy`
 
+The [session MCP attachment](../../packages/host/apiproxy/session-mcp.md) adds versioned HTTP server input to session creation and reports discovered tools. Credentials and tools belong to the live agent scope.
+
 Root interface of the unified API. New client-request domain = one new file pair + one field here + one map row.
 
 ```ts cordis-catalog

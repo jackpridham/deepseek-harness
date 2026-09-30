@@ -53,6 +53,10 @@ export interface RpcErrorDetailsMap {
   'session-policy-unavailable': {}
   'session-policy-conflict': { sessionId: SessionId; requestedMode: string; existingMode: string }
   'session-policy-invalid': {}
+  'mcp-attachment-conflict': {}
+  'mcp-attachment-required': {}
+  'mcp-attachment-failed': {}
+  'mcp-attachment-policy': {}
   'model-unavailable': { provider: string; model: string }
   'session-conflict': { sessionId: SessionId; requestedCwd: string; existingCwd?: string }
   'invalid-time-zone': { value: string }

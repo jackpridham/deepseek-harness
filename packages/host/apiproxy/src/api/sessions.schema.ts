@@ -162,9 +162,24 @@ export const sessionGetInstructionsValueSchema = z.object({
   }),
 })
 
+/** Version 1 admits one HTTP server using the existing MCP client. */
+export const sessionMcpAttachmentSchema = z.object({
+  version: z.literal(1),
+  serverName: z.string().regex(/^[A-Za-z0-9_-]{1,32}$/),
+  transport: z.literal('streamable-http'),
+  url: z.url({ protocol: /^https?$/ }).max(8192).refine((value) => {
+    const url = new URL(value)
+    return !url.username && !url.password && !url.hash
+  }),
+  headers: z.record(z.string().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/), z.string().min(1).max(8192).regex(/^[^\x00-\x1f\x7f]+$/)),
+  toolCallTimeoutMs: z.number().int().min(1).max(300000),
+  failOnStartupError: z.literal(true),
+}).strict()
+
 /** session.create request payload (at most one of workspaceId / cwd). */
 export const sessionCreateRequestSchema = z.object({
   instructions: sessionInstructionsSchema.optional(),
+  mcpAttachment: sessionMcpAttachmentSchema.optional(),
   workspaceId: workspaceIdSchema.optional(),
   cwd: z.string().optional(),
   sessionId: sessionIdSchema.optional(),
@@ -178,6 +193,7 @@ export const sessionCreateRequestSchema = z.object({
 
 /** session.create response value. */
 export const sessionCreateValueSchema = z.object({
+  mcpAttachment: z.object({ version: z.literal(1), serverName: z.string(), toolNames: z.array(z.string()) }).optional(),
   instructionsRevision: z.number().optional(),
   sessionId: sessionIdSchema,
   agentPreset: z.string().optional(),

@@ -612,6 +612,19 @@ Source: [`packages/llm/llm-retry/src/types.ts:9`](../packages/llm/llm-retry/src/
 
 Source: [`packages/llm/llm-retry/src/types.ts:11`](../packages/llm/llm-retry/src/types.ts)
 
+### `mcp/*`
+
+<a id="mcpattached--log-only"></a>
+
+#### `mcp/attached` — log-only
+
+```ts persistence-catalog
+/** Required server identity; credentials must be supplied again after teardown. */
+'mcp/attached': { version: 1; serverName: string; url: string }
+```
+
+Source: [`packages/host/apiproxy/src/session-mcp.ts:11`](../packages/host/apiproxy/src/session-mcp.ts)
+
 ### `model/*`
 
 <a id="modellifecycle--log-only"></a>

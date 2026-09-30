@@ -4,6 +4,8 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { assertMcpAttachment, mountMcpAttachment, mcpAttachmentState, SessionMcpError } from './session-mcp.ts'
+import type { SessionMcpAttachment } from './api/sessions.ts'
 import { lstat, mkdir, rm, stat, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, parse, relative, resolve, sep } from 'node:path'
@@ -1523,11 +1525,14 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
    * @returns the id to record on the header (absent without a roster) and the setup callback.
    * @throws when the roster supplies no such preset.
    */
-  async function composeAgent(presetId: string | undefined, sessionPolicy?: SessionPolicyId): Promise<{
+  async function composeAgent(
+    presetId: string | undefined, sessionPolicy?: SessionPolicyId, mcpAttachment?: SessionMcpAttachment,
+  ): Promise<{
     agentPreset?: string
     setup: (agentCtx: Context) => Promise<void>
   }> {
     if (sessionPolicy !== undefined && !ctx.agents.requirePolicy(sessionPolicy).presets) {
+      if (mcpAttachment !== undefined) throw new SessionMcpError('mcp-attachment-policy', 'This session policy does not permit MCP attachments.')
       return {
         setup: () => Promise.resolve(),
       }
@@ -1535,9 +1540,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     const presets = ctx.get('agentPresets')
     if (presets === undefined) {
       return {
-        setup: (agentCtx: Context) => {
+        setup: async (agentCtx: Context) => {
           installSelection(agentCtx)
-          return Promise.resolve()
+          await mountMcpAttachment(agentCtx, mcpAttachment)
         },
       }
     }
@@ -1547,6 +1552,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       setup: async (agentCtx: Context) => {
         installSelection(agentCtx)
         await presets.mount(agentCtx, resolvedId)
+        await mountMcpAttachment(agentCtx, mcpAttachment)
       },
     }
   }
@@ -1952,6 +1958,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     presetId?: string,
     instructions?: SessionInstructions,
     sessionPolicy?: SessionPolicyId,
+    mcpAttachment?: SessionMcpAttachment,
   ): Promise<Agent> {
     let creation = sessionCreations.get(sessionId)
     if (creation === undefined) {
@@ -1997,7 +2004,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           return rememberAgentHandle(await ctx.agents.resume({
             resumeSessionId: sessionId,
             agentOptions: agentOptions(),
-            setup: (await composeAgent(storedPreset, inspected.meta.sessionPolicy)).setup,
+            setup: (await composeAgent(storedPreset, inspected.meta.sessionPolicy, mcpAttachment)).setup,
           }))
         }
 
@@ -2006,7 +2013,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         } catch (error: unknown) {
           throw new Error(`failed to ensure project directory "${cwd}": ${String(error)}`, { cause: error })
         }
-        const composition = await composeAgent(presetId, sessionPolicy)
+        const composition = await composeAgent(presetId, sessionPolicy, mcpAttachment)
         return rememberAgentHandle(await ctx.agents.create({
           sessionId,
           agentOptions: agentOptions(),
@@ -2053,6 +2060,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       if (cwd === undefined) throw new Error(`session policy for "${sessionId}" forbids cwd`)
       throw new SessionCwdConflict(sessionId, cwd, agent.session.header.cwd)
     }
+    assertMcpAttachment(agent, mcpAttachment)
     if (instructions !== undefined) agent.session.configureInstructions(instructions)
     return agent
   }
@@ -2526,9 +2534,11 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           const requestedPreset = request.payload.agentPreset
           try {
             await ensureSession(
-              sessionId, cwd, request.payload.sessionId !== undefined, requestedPreset, request.payload.instructions, sessionPolicy,
+              sessionId, cwd, request.payload.sessionId !== undefined, requestedPreset,
+              request.payload.instructions, sessionPolicy, request.payload.mcpAttachment,
             )
           } catch (error: unknown) {
+            if (error instanceof SessionMcpError) return err(request, { code: error.code, message: error.message, details: {} })
             if (error instanceof SessionPolicyConflict) {
               return err(request, {
                 code: 'session-policy-conflict',
@@ -2600,10 +2610,12 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             await ctx.sessions.flush(created.session)
             instructionsRevision = created.session.getInstructions().revision
           }
+          const mcpAttachment = created === undefined ? undefined : mcpAttachmentState(created)
           const installedPolicy = ctx.agents.policyFor(sessionId)
           return ok(request, {
             sessionId,
             ...instructionsRevision === undefined ? {} : { instructionsRevision },
+            ...mcpAttachment === undefined ? {} : { mcpAttachment },
             ...createdPreset === undefined ? {} : { agentPreset: createdPreset },
             ...installedPolicy === undefined ? {} : { policy: { id: installedPolicy.id, attestation: installedPolicy.attestation } },
           })
@@ -3568,6 +3580,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         return Promise.resolve(ok(request, {
           version: '0.0.1',
           instructionVersions: [1],
+          mcpAttachmentVersions: [1],
           ...request.payload.diagnosticChildrenVersion === 1 && diagnosticChildren !== undefined
             ? { diagnosticChildren } : {},
           // Same source as session.create's fallback: the UI's default project

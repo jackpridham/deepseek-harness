@@ -23,6 +23,7 @@ export const hostDescribeValueSchema = z.object({
     maxConcurrentChildren: z.number().int().positive(),
   }).optional(),
   instructionVersions: z.array(z.number()).optional(),
+  mcpAttachmentVersions: z.array(z.number()).optional(),
   version: z.string(),
   cwd: z.string(),
   provider: z.string().optional(),

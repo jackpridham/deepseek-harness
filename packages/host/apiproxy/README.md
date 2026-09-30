@@ -76,6 +76,10 @@ Version 1 accepts `systemPrompt.base` as `{mode:"inherit"}` or `{mode:"replace",
 
 A deployment may provide `ctx.modelControls` using the [ModelControls interface](src/api/models.ts). The `vortex.models` RPCs forward read-only `snapshot` and `operationStatus` requests and explicit `operation` load/unload requests to that provider. Results report backend-observed phase, outcome, correlation, and optional measured progress; the gateway does not load models itself.
 
+## Session MCP attachment
+
+`session.create` accepts one caller-supplied HTTP MCP server. See the [version 1 attachment reference](session-mcp.md) for capability discovery, exact requests, lifecycle and errors.
+
 ## Model Experience
 
 None, as the package defines the client↔host wire contract and carriers; nothing here reaches a model request.

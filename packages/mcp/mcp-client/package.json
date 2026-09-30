@@ -43,7 +43,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@deepseek-ai/schemastery": "workspace:^",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "@deepseek-ai/dsh-scope": "workspace:^"
   },
   "devDependencies": {
     "@deepseek-ai/dsh-attachment": "workspace:^",

@@ -61,6 +61,8 @@ export interface HostApi {
     }
     /** Supported session instruction schema versions; absent means unsupported. */
     instructionVersions?: number[]
+    /** Supported caller-supplied session MCP attachment versions. */
+    mcpAttachmentVersions?: number[]
     version: string
     cwd: string
     provider?: string
