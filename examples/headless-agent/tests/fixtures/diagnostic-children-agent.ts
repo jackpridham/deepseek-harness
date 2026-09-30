@@ -42,11 +42,19 @@ export async function apply(ctx: Context): Promise<void> {
     assignment: DiagnosticAssignment
   }
   const workflowMode = process.env.DSH_TEST_DIAGNOSTIC_WORKFLOW
-  const workflow = workflowMode === '1' || workflowMode === 'prose'
+  const supervision = workflowMode === 'supervision'
+  const workflow = workflowMode === '1' || workflowMode === 'prose' || supervision
+  const reading = Promise.withResolvers<boolean>(), release = Promise.withResolvers<boolean>()
+  let childRequests = 0
   const closed = new Set<string>()
   if (workflow) {
     input.diagnosticWorkflowVersion = 1
     input.coordinatorAssignment.authority.tools = ['read', 'glob', 'grep', 'closeout_json', 'dispatch_workers', 'wait_for_workers', 'read_worker_report']
+  }
+  if (supervision) {
+    input.diagnosticSupervisionVersion = 1
+    input.coordinatorAssignment.authority.tools.push('inspect_worker', 'send_message', 'update_progress')
+    prepared.assignment.authority.tools.push('update_progress')
   }
   input.maxOutputTokens = 2_000_000
   for (const assignment of [input.coordinatorAssignment, prepared.assignment]) {
@@ -59,6 +67,22 @@ export async function apply(ctx: Context): Promise<void> {
     if (options.purpose === 'compaction') {
       process.stdout.write(`${JSON.stringify({ type: 'diagnostic-summary', contextWindow: options.contextWindow, maxTokens: options.maxTokens })}\n`)
       return textResponse('Candidate C1; pending gap G1; evidence reference read:159. Unvalidated.')
+    }
+    if (supervision) {
+      if (options.sessionId !== input.rootSessionId) {
+        if (childRequests++ === 0) return toolCallResponse('progress', 'update_progress', { resolved: ['Assignment scoped'], uncertain: ['Guard source'], nextCheck: 'Finish the guard check' })
+        if (childRequests === 2) return toolCallResponse('source', 'read', {})
+        return toolCallResponse('finish', 'closeout_json', { report: { summary: 'Guard checked; report submitted.' } })
+      }
+      const child = ctx.get('agents')!.list().find(agent => agent.session.header.parentSession === input.rootSessionId)
+      const identity = { assignmentId: prepared.assignment.assignmentId, childSessionId: child?.id }
+      switch (rootRequests++) {
+        case 0: return toolCallResponse('dispatch', 'dispatch_workers', { requests: [{ requestKey: 'discovery', name: 'Discovery', role: 'discovery', responsibility: '', namespace: '', paths: [], objective: 'Examine admitted source' }] })
+        case 1: return toolCallResponse('checkpoint', 'wait_for_workers', { afterSeq: 0, timeoutMs: 5 })
+        case 2: return toolCallResponse('inspect', 'inspect_worker', { assignmentId: identity.assignmentId })
+        case 3: return toolCallResponse('guide', 'send_message', { ...identity, operationId: 'review-1', message: 'Finish the guard check, then report.' })
+        default: return toolCallResponse('finish', 'closeout_json', { report: { summary: 'Retained diagnostic closeout.' } })
+      }
     }
     if (workflow) {
       if (workflowMode === 'prose' && options.sessionId !== input.rootSessionId)
@@ -77,14 +101,16 @@ export async function apply(ctx: Context): Promise<void> {
   }
   class FixtureAdapter extends MockAdapter {
     override async *stream(options: import('@deepseek-ai/dsh-llm').GenerateOptions) {
-      if (options.sessionId === input.rootSessionId && rootRequests > 0) {
+      if (supervision && options.sessionId === input.rootSessionId && rootRequests === 1) await reading.promise
+      if (supervision && options.sessionId === input.rootSessionId && rootRequests === 4) release.resolve(true)
+      if (options.sessionId === input.rootSessionId && rootRequests > 0 && (!supervision || rootRequests === 4)) {
         const child = ctx.get('agents')!.list().find(agent => agent.session.header.parentSession === input.rootSessionId)
         await child?.whenIdle()
       }
       yield* super.stream(options)
     }
   }
-  const adapter = new FixtureAdapter(Array.from({ length: 8 }, () => response))
+  const adapter = new FixtureAdapter(Array.from({ length: 12 }, () => response))
   const contextWindow = input.coordinatorAssignment.commonModel.contextWindow
   adapter.resolveModel = async (provider, model) => ({
     provider,
@@ -103,12 +129,14 @@ export async function apply(ctx: Context): Promise<void> {
     sourceRefs: input.sourceRefs,
     state: 'awaiting-admission',
     ...(workflow ? { diagnosticWorkflowVersion: 1 as const } : {}),
+    ...(supervision ? { diagnosticSupervisionVersion: 1 as const } : {}),
   }
   ctx.effect(() =>
     ctx.get('subagents')!.diagnostics.registerExecutor({
       binding: () => binding,
       ...(workflow ? {
         diagnosticWorkflowVersions: [1],
+        diagnosticSupervisionVersions: [1],
         prepareWorkers: async () => {
           await ctx.get('subagents')!.diagnostics.prepare(prepared)
           return { prepared: [{ requestKey: 'discovery', status: 'prepared', assignmentId: prepared.assignment.assignmentId }] }
@@ -120,6 +148,11 @@ export async function apply(ctx: Context): Promise<void> {
         binding = { ...binding, state: 'active' }
       },
       install: (agent, assignment) => {
+        if (supervision && assignment.role !== 'coordinator') agent.ctx.effect(() => agent.ctx.tools.register({
+          name: 'read', description: 'Read the admitted source.', parameters: { type: 'object' },
+          output: { schema: { type: 'object' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+          execute: async () => { reading.resolve(true); await release.promise; return { text: 'Guard source' } },
+        }))
         if (workflow) return agent.ctx.tools.register({ name: 'closeout_json', description: 'Submit the assignment report.', parameters: { type: 'object', properties: { report: { type: 'object' } }, required: ['report'] },
           output: { schema: { type: 'object' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
           execute: async (args, execution) => { closed.add(agent.id); process.stdout.write(`${JSON.stringify({ type: 'accepted-closeout', role: assignment.role })}\n`); execution.concludeTurn(); return args },
@@ -148,6 +181,22 @@ export async function apply(ctx: Context): Promise<void> {
   process.stdout.write(`${JSON.stringify({ type: 'diagnostic-worker-capacity', maxChildren: capacity?.maxChildren, maxConcurrentChildren: capacity?.maxConcurrentChildren })}\n`)
   if (!workflow) await ctx.get('subagents')!.diagnostics.prepare(prepared)
   ctx.on('session/event', async (_session, event) => {
+    if (supervision && _session.id === input.rootSessionId && event.type === 'tool/result') {
+      const block = event.data.message.content.find(block => block.type === 'tool-result')
+      const content = block?.content?.find(block => block.type === 'text')
+      const value = (content ? JSON.parse(content.text) : {}) as {
+        reason?: string
+        nextSeq?: number
+        activeWorkers: unknown[]
+        progress?: { resolved: string[]; acceptedEvidence: boolean }
+        operationId?: string
+        status?: string
+        duplicate?: boolean
+      }
+      if (value.reason) process.stdout.write(`${JSON.stringify({ type: 'supervision-checkpoint', reason: value.reason, nextSeq: value.nextSeq, active: value.activeWorkers.length })}\n`)
+      if (value.progress) process.stdout.write(`${JSON.stringify({ type: 'supervision-progress', resolved: value.progress.resolved, acceptedEvidence: value.progress.acceptedEvidence })}\n`)
+      if (value.operationId) process.stdout.write(`${JSON.stringify({ type: 'supervision-guidance', status: value.status, duplicate: value.duplicate })}\n`)
+    }
     if (event.type === 'diagnostic/child-state') {
       const data = event.data as { state: string; quiescent: boolean }
       process.stdout.write(`${JSON.stringify({ type: 'diagnostic-child-outcome', state: data.state, quiescent: data.quiescent })}\n`)

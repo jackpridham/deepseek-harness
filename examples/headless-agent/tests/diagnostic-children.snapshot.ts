@@ -68,3 +68,49 @@ it('dispatches a scoped worker and ends both assignments on accepted closeout', 
   expect(result.stdout).toContain('Retained diagnostic closeout.')
   expect(result.stdout).not.toContain('"kind":"error"')
 }, LOADER_SMOKE_TEST_TIMEOUT_MS)
+
+
+it('supervises a busy worker through the assembled application without interrupting its source call', async () => {
+  const configPath = fileURLToPath(new URL('../diagnostic-children.cordis.snapshot.yml', import.meta.url))
+  const binScript = fileURLToPath(new URL('./fixtures/headless-driver.ts', import.meta.url))
+  const result = await runLoaderSmoke({ label: 'diagnostic supervision', tempDirPrefix: 'dsh-supervision-snapshot-',
+    configPath, binScript, libBinScript: binScript, binArgs: [configPath, 'Review admitted source.'],
+    env: { DSH_TEST_DIAGNOSTIC_WORKFLOW: 'supervision' },
+    tsconfigPath: fileURLToPath(new URL('../../../tsconfig.json', import.meta.url)),
+  })
+  const rows = result.stdout.trim().split('\n').map(line => JSON.parse(line) as { type?: string; event?: { type: string; data: Record<string, unknown> } })
+  expect(rows.filter(row => row.type?.startsWith('supervision-'))).toMatchInlineSnapshot(`
+    [
+      {
+        "active": 1,
+        "nextSeq": 0,
+        "reason": "checkpoint",
+        "type": "supervision-checkpoint",
+      },
+      {
+        "acceptedEvidence": false,
+        "resolved": [
+          "Assignment scoped",
+        ],
+        "type": "supervision-progress",
+      },
+      {
+        "duplicate": false,
+        "status": "queued",
+        "type": "supervision-guidance",
+      },
+    ]
+  `)
+  expect(rows.filter(row => row.event?.type === 'tool/call').map(row => row.event!.data.name)).toMatchInlineSnapshot(`
+    [
+      "dispatch_workers",
+      "wait_for_workers",
+      "inspect_worker",
+      "send_message",
+      "closeout_json",
+    ]
+  `)
+  expect(result.stdout).toContain(JSON.stringify({ type: 'accepted-closeout', role: 'discovery' }))
+  expect(result.stdout).toContain(JSON.stringify({ type: 'accepted-closeout', role: 'coordinator' }))
+  expect(result.stdout).not.toContain('"kind":"error"')
+}, LOADER_SMOKE_TEST_TIMEOUT_MS)

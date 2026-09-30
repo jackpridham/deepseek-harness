@@ -8,8 +8,8 @@ import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { Agent, ModelSelection } from '@deepseek-ai/dsh-agent'
 import { SessionId, SessionPolicyId } from '@deepseek-ai/dsh-session'
 import type { JsonValue, Session } from '@deepseek-ai/dsh-session'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, StreamChunk, MessageId } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, createUserMessage, freezeMessage } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, StreamChunk, MessageId, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { ToolDefinition, ToolExecution } from '@deepseek-ai/dsh-tools'
 import type { SubagentRuntime } from './index.ts'
 import {
@@ -21,6 +21,7 @@ import {
   diagnosticResultSchema,
   diagnosticAdmissionSchema, diagnosticDispatchSchema, diagnosticPreparationSchema,
   diagnosticWaitSchema, diagnosticReadReportSchema, diagnosticPublishSchema,
+  diagnosticSupervisionWaitSchema, diagnosticInspectWorkerSchema, diagnosticGuidanceSchema, diagnosticProgressSchema,
 } from './diagnostic-contract.ts'
 import type { DiagnosticAdmission, DiagnosticAssignment, DiagnosticPublication, DiagnosticPublicationResult, DiagnosticWorkerRequest } from './diagnostic-contract.ts'
 
@@ -69,6 +70,7 @@ function workflowResultFits(value: unknown): boolean {
 /** Immutable identity returned by the authoritative executor bridge. */
 export interface DiagnosticBinding {
   diagnosticWorkflowVersion?: 1
+  diagnosticSupervisionVersion?: 1
   executorBindingId: string
   bindingEpoch: number
   runId: string
@@ -84,6 +86,8 @@ export interface DiagnosticExecutor {
   binding(root: SessionId): DiagnosticBinding
   /** Supported workflow versions, advertised only by the complete bridge implementation. */
   diagnosticWorkflowVersions?: readonly number[]
+  /** Supports supervision without changing source calls or closeout acceptance. */
+  diagnosticSupervisionVersions?: readonly number[]
   /** Prepare scoped work over caller transport without holding the root transaction. */
   prepareWorkers?(root: Agent, assignment: DiagnosticAssignment, args: unknown, execution: ToolExecution): Promise<unknown>
   /** Wait for the already returned closeout's durable acceptance receipt. */
@@ -141,6 +145,10 @@ declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
     /** Immutable admission and current executor epoch; required on replay. */
     'diagnostic/run-state': RunData
+    /** Worker-authored status; never accepted evidence or closeout. */
+    'diagnostic/progress': { assignmentId: string; resolved: string[]; uncertain: string[]; nextCheck: string }
+    /** Durable supervisor intent and inbox acceptance, keyed by operation identity. */
+    'diagnostic/guidance': { operationId: string; assignmentId: string; childSessionId: string; message: UserMessage; status: 'pending' | 'queued' | 'closed' }
     /** Frozen requested scope and its caller-prepared assignment. */
     'diagnostic/worker-request': { runId: string; request: DiagnosticWorkerRequest; assignmentId?: string }
     /** Immutable caller-normalized worker packet in root history. */
@@ -285,6 +293,7 @@ export class DiagnosticRuns {
       executorProtocolVersion: 2
       profiles: string[]
       diagnosticWorkflowVersions?: number[]
+      diagnosticSupervisionVersions?: number[]
       maxChildren: number
       maxConcurrentChildren: number
     }
@@ -304,6 +313,9 @@ export class DiagnosticRuns {
       ...(this.executor.diagnosticWorkflowVersions?.includes(1)
         && this.executor.prepareWorkers
         && this.executor.awaitCloseout ? { diagnosticWorkflowVersions: [1] } : {}),
+      ...(this.executor.diagnosticSupervisionVersions?.includes(1)
+        && this.executor.diagnosticWorkflowVersions?.includes(1)
+        && this.executor.prepareWorkers && this.executor.awaitCloseout ? { diagnosticSupervisionVersions: [1] } : {}),
       maxChildren: this.maxChildren,
       maxConcurrentChildren: this.maxConcurrentChildren,
     }
@@ -454,6 +466,9 @@ export class DiagnosticRuns {
       && (jsonObject(input)?.diagnosticWorkflowVersion !== 1
       || !this.capability()?.diagnosticWorkflowVersions?.includes(1)))
       throw new DiagnosticError('diagnostic-capability-unavailable', 'Diagnostic workflow version is unavailable')
+    if (jsonObject(input)?.diagnosticSupervisionVersion !== undefined
+      && (jsonObject(input)?.diagnosticSupervisionVersion !== 1 || !this.capability()?.diagnosticSupervisionVersions?.includes(1)))
+      throw new DiagnosticError('diagnostic-capability-unavailable', 'Diagnostic supervision version is unavailable')
     const admission = diagnosticAdmissionSchema.parse(input)
     const root = this.root(SessionId(admission.rootSessionId))
     this.requireCompaction(root)
@@ -488,7 +503,8 @@ export class DiagnosticRuns {
       if (root.status !== 'idle' || root.session.events.some(event => event.type === 'turn/start'))
         throw new DiagnosticError('diagnostic-policy-rejected', 'Admission requires a fresh idle root')
       const binding = this.requireExecutor().binding(root.id)
-      if (binding.diagnosticWorkflowVersion !== admission.diagnosticWorkflowVersion)
+      if (binding.diagnosticWorkflowVersion !== admission.diagnosticWorkflowVersion
+        || binding.diagnosticSupervisionVersion !== admission.diagnosticSupervisionVersion)
         throw new DiagnosticError('diagnostic-capability-unavailable', 'Executor and core diagnostic workflow opt-in must agree')
       if (
         binding.state !== 'awaiting-admission' ||
@@ -582,6 +598,8 @@ export class DiagnosticRuns {
           duplicate: true,
         }
       }
+      if (assignment.authority.tools.includes('update_progress') && run.admission.diagnosticSupervisionVersion !== 1)
+        throw new DiagnosticError('diagnostic-policy-rejected', 'Progress requires supervision opt-in')
       const coordinator = run.admission.coordinatorAssignment
       if (
         !isDeepStrictEqual(assignment.commonModel, coordinator.commonModel) ||
@@ -907,8 +925,12 @@ export class DiagnosticRuns {
         }))
         const tools = [
           ['dispatch_workers', 'Launch focused independent workers.', diagnosticDispatchSchema, (args: unknown, execution: ToolExecution) => this.dispatchWorkers(agent, args, execution)],
-          ['wait_for_workers', 'Wait for any worker report or terminal change.', diagnosticWaitSchema, (args: unknown, execution: ToolExecution) => this.waitForWorkers(agent, args, execution.signal)],
+          ['wait_for_workers', 'Wait for any worker report, terminal change or requested supervision checkpoint.', limits.diagnosticSupervisionVersion === 1 ? diagnosticSupervisionWaitSchema : diagnosticWaitSchema, (args: unknown, execution: ToolExecution) => this.waitForWorkers(agent, args, execution.signal)],
           ['read_worker_report', 'Read an immutable worker report page.', diagnosticReadReportSchema, (args: unknown) => this.readWorkerReport(agent, args)],
+          ...(limits.diagnosticSupervisionVersion === 1 ? [
+            ['inspect_worker', 'Inspect bounded worker scope, activity and progress; progress is not accepted evidence.', diagnosticInspectWorkerSchema, (args: unknown) => this.inspectWorker(agent, args)],
+            ['send_message', 'Send idempotent guidance at the next safe worker step; preserve its assignment and evidence requirements.', diagnosticGuidanceSchema, (args: unknown, execution: ToolExecution) => this.guideWorker(agent, args, execution.signal)],
+          ] as const : []),
         ] as const
         for (const [name, description, schema, execute] of tools) disposers.push(agent.ctx.tools.register({
           name, description, parameters: z.toJSONSchema(schema),
@@ -920,6 +942,22 @@ export class DiagnosticRuns {
               if (failure instanceof DiagnosticWorkflowError) failures.set(execution, failure)
               throw failure
             }
+          },
+        }))
+      }
+      if (agent !== member.root && limits.diagnosticSupervisionVersion === 1 && allowedTools.has('update_progress')) {
+        disposers.push(agent.ctx.tools.register({
+          name: 'update_progress', description: 'Record what is resolved, uncertain, and the next necessary check. This is progress, not report evidence.',
+          parameters: z.toJSONSchema(diagnosticProgressSchema),
+          output: { schema: { type: 'object' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+          execute: async (args) => {
+            this.requireRun(member.root)
+            if (this.requireExecutor().closed?.(member.root.id, agent.id, member.assignment.assignmentId))
+              throw new DiagnosticWorkflowError('authority_denied', 'Accepted closeout is terminal')
+            const progress = diagnosticProgressSchema.parse(args)
+            const event = agent.session.append('diagnostic/progress', { assignmentId: member.assignment.assignmentId, ...progress })
+            await this.flush(agent.session)
+            return { recorded: true, eventSeq: event.seq, acceptedEvidence: false }
           },
         }))
       }
@@ -1210,20 +1248,184 @@ export class DiagnosticRuns {
     return value()
   }
 
+  private supervision(root: Agent): RunData {
+    const run = this.workflow(root)
+    if (run.admission.diagnosticSupervisionVersion !== 1)
+      throw new DiagnosticWorkflowError('authority_denied', 'This run did not opt in to supervision v1')
+    return run
+  }
+
+  private worker(root: Agent, assignmentId: string) {
+    this.supervision(root)
+    const record = this.assignments(root.session).find(value => value.assignmentId === assignmentId)
+    if (record?.childSessionId === undefined)
+      throw new DiagnosticWorkflowError('authority_denied', 'Expected a launched worker belonging to this parent')
+    return { record, childId: SessionId(record.childSessionId) }
+  }
+
+  private activeWorkers(root: Agent, ids: string[]) {
+    return ids.map((assignmentId) => {
+      const { record, childId } = this.worker(root, assignmentId)
+      const started = root.session.events.find(event => event.type === 'diagnostic/reservation'
+        && event.data.assignmentId === assignmentId && event.data.childSessionId !== undefined)
+      return { assignmentId, childSessionId: childId, role: record.assignment.role,
+        elapsedMs: Math.max(0, Date.now() - (started?.time ?? root.session.header.createdAt)) }
+    })
+  }
+
+  private async workerEvents(childId: SessionId) {
+    const child = this.service('agents').get(childId)
+    return child?.session.events ?? (await this.service('sessionPersistence').inspect(childId)).events
+  }
+
+  private guidanceDelivery(events: Session['events'], messageId: MessageId): 'queued' | 'delivered' | 'cancelled' | undefined {
+    const inbox: UserMessage[] = []
+    let status: 'queued' | 'cancelled' | undefined
+    for (const event of events) {
+      if (event.type === 'user/message' && event.data.id === messageId) return 'delivered'
+      if (event.type !== 'agent/inbox/spliced' || event.data.target !== 'next-step') continue
+      const removed = inbox.splice(event.data.start, event.data.removedCount ?? 0, ...event.data.inserted)
+      if (event.data.outcome === 'canceled' && removed.some(message => message.id === messageId)) status = 'cancelled'
+      if (event.data.inserted.some(message => message.id === messageId)) status = 'queued'
+    }
+    return status
+  }
+
+  private async inspectWorker(root: Agent, input: unknown): Promise<JsonValue> {
+    const { assignmentId, maxEvents } = diagnosticInspectWorkerSchema.parse(input)
+    const { record, childId } = this.worker(root, assignmentId)
+    const events = await this.workerEvents(childId)
+    const clip = (text: string, limit = 2048) => text.length > limit ? text.slice(0, limit) + '…' : text
+    const calls = events.filter(event => event.type === 'tool/call')
+    const results = events.filter(event => event.type === 'tool/result')
+    const finished = new Set(results.map(event => event.data.message.source.callId))
+    const failures = results.filter(event => event.data.message.content.some(block => block.isError))
+    const progress = events.findLast(event => event.type === 'diagnostic/progress' && event.data.assignmentId === assignmentId)
+    const scope = this.workflowRequests(root).find(event => event.data.assignmentId === assignmentId)?.data.request
+    const activity = this.requireExecutor().activity?.(root.id, childId) ?? { activeCalls: 0, pendingResults: 0 }
+    const guidance = root.session.events.filter(event => event.type === 'diagnostic/guidance')
+      .filter(event => event.data.assignmentId === assignmentId)
+    const latestGuidance = [...new Map(guidance.map(event => [event.data.operationId, event.data])).values()].slice(-maxEvents)
+    const acceptedCloseout = this.requireExecutor().closed?.(root.id, childId, assignmentId) === true
+    return {
+      assignmentId, childSessionId: childId, assignmentDigest: record.assignmentDigest,
+      scope: { objective: clip(record.assignment.objective), ownershipBoundary: clip(record.assignment.ownershipBoundary),
+        request: scope === undefined ? null : { requestKey: clip(scope.requestKey), name: clip(scope.name), role: scope.role,
+          responsibility: clip(scope.responsibility), namespace: clip(scope.namespace), objective: clip(scope.objective),
+          paths: scope.paths.slice(0, 40).map(path => clip(path, 512)), truncated: scope.paths.length > 40 },
+        textLimit: 2048 },
+      activity: { state: acceptedCloseout ? 'closed' : this.service('agents').get(childId)?.status ?? 'not-resident', ...activity,
+        pendingTools: calls.filter(event => !finished.has(event.data.callId)).slice(-maxEvents)
+          .map(event => ({ name: event.data.name, eventSeq: event.seq, elapsedMs: Math.max(0, Date.now() - event.time) })) },
+      recentToolFailures: failures.slice(-maxEvents).map(event => ({ eventSeq: event.seq,
+        callId: event.data.message.source.callId, detail: clip(JSON.stringify(event.data.message.content)) })),
+      reportAttempts: calls.filter(event => event.data.name === 'closeout_json').slice(-maxEvents).map((event) => {
+        const result = results.find(value => value.data.message.source.callId === event.data.callId)
+        return { callEventSeq: event.seq, resultEventSeq: result?.seq ?? null,
+          status: result === undefined ? 'pending' : result.data.message.content.some(block => block.isError) ? 'rejected' : 'returned' }
+      }),
+      acceptedCloseout,
+      progress: progress?.type === 'diagnostic/progress' ? { ...progress.data, eventSeq: progress.seq, time: progress.time, acceptedEvidence: false } : null,
+      guidance: latestGuidance.map((record) => {
+        const delivery = this.guidanceDelivery(events, record.message.id)
+        return { operationId: record.operationId, status: delivery === 'delivered' ? delivery
+          : acceptedCloseout ? 'closed' : delivery ?? record.status }
+      }),
+      maxEvents,
+    }
+  }
+
+  private async guideWorker(root: Agent, input: unknown, signal: AbortSignal): Promise<JsonValue> {
+    const args = diagnosticGuidanceSchema.parse(input)
+    return this.transact(root.id, async () => {
+      signal.throwIfAborted()
+      const { childId } = this.worker(root, args.assignmentId)
+      if (args.childSessionId !== childId) throw new DiagnosticWorkflowError('authority_denied', 'Worker identity does not match its assignment')
+      const prior = root.session.events.findLast(event => event.type === 'diagnostic/guidance'
+        && event.data.operationId === args.operationId)
+      if (prior?.type === 'diagnostic/guidance' && (prior.data.assignmentId !== args.assignmentId
+        || prior.data.childSessionId !== childId || prior.data.message.content[0]?.type !== 'text'
+        || prior.data.message.content[0].text !== args.message))
+        throw new DiagnosticWorkflowError('request_conflict', 'Guidance operation identity was already used with different input')
+      let record = prior?.type === 'diagnostic/guidance' ? prior.data : {
+        operationId: args.operationId, assignmentId: args.assignmentId, childSessionId: childId,
+        message: createUserMessage({ content: [{ type: 'text', text: args.message }], source: { kind: 'user' } }),
+        status: 'pending' as const,
+      }
+      const events = await this.workerEvents(childId)
+      const delivery = this.guidanceDelivery(events, record.message.id)
+      const response = (status: string) => ({ operationId: args.operationId, assignmentId: args.assignmentId,
+        childSessionId: childId, messageId: record.message.id, status, duplicate: prior !== undefined })
+      if (delivery === 'delivered') {
+        const child = this.service('agents').get(childId)
+        if (child) await this.flush(child.session)
+        return response('delivered')
+      }
+      if (this.requireExecutor().closed?.(root.id, childId, args.assignmentId) || record.status === 'closed') {
+        if (record.status !== 'closed') root.session.append('diagnostic/guidance', { ...record, status: 'closed' })
+        await this.flush(root.session)
+        return response('closed')
+      }
+      if (delivery === 'queued' || delivery === 'cancelled') {
+        const child = this.service('agents').get(childId)
+        if (child) await this.flush(child.session)
+        await this.flush(root.session)
+        return response(delivery)
+      }
+      if (record.status === 'queued')
+        throw new DiagnosticWorkflowError('reconciliation_required', 'Guidance receipt has no matching worker inbox event', 'after_reconciliation')
+      const child = this.service('agents').get(childId)
+      if (child === undefined) throw new DiagnosticWorkflowError('reconciliation_required', 'Worker must be resident before new guidance can be delivered', 'after_reconciliation')
+      if (prior === undefined) root.session.append('diagnostic/guidance', record)
+      await this.flush(root.session)
+      signal.throwIfAborted()
+      // Receipt persistence may race a source call's terminal acceptance.
+      if (this.requireExecutor().closed?.(root.id, childId, args.assignmentId)) {
+        root.session.append('diagnostic/guidance', { ...record, status: 'closed' })
+        await this.flush(root.session)
+        return response('closed')
+      }
+      if (this.service('agents').get(childId) !== child)
+        throw new DiagnosticWorkflowError('reconciliation_required', 'Worker residency changed during guidance', 'after_reconciliation')
+      child.steer(freezeMessage(record.message))
+      await this.flush(child.session)
+      record = { ...record, status: 'queued' }
+      root.session.append('diagnostic/guidance', record)
+      await this.flush(root.session)
+      return response('queued')
+    })
+  }
+
   private async waitForWorkers(root: Agent, input: unknown, signal: AbortSignal): Promise<JsonValue> {
-    const args = diagnosticWaitSchema.parse(input)
-    // Subscribe before checking history, including across persistence awaits.
+    const supervised = this.workflow(root).admission.diagnosticSupervisionVersion === 1
+    const args = supervised ? diagnosticSupervisionWaitSchema.parse(input) : { ...diagnosticWaitSchema.parse(input), timeoutMs: undefined }
+    const timeout = args.timeoutMs
+    const checkpoint = timeout === undefined ? undefined : Date.now() + timeout
+    // Subscribe before checking history. Timer wakeups always reread the same cursor.
     while (true) {
       signal.throwIfAborted()
       const wake = Promise.withResolvers<void>()
       const dispose = this.ctx.on('session/event', (session) => { if (session === root.session) wake.resolve() })
-      const abort = () => wake.reject(signal.reason)
+      const abort = () => { wake.reject(signal.reason) }
       signal.addEventListener('abort', abort, { once: true })
+      const timer = checkpoint === undefined ? undefined : setTimeout(() => { wake.resolve() }, Math.max(0, checkpoint - Date.now()))
       try {
-        const result = this.workerUpdates(root, args) as { updates: JsonValue[]; idle: boolean }
-        if (result.updates.length || result.idle) { await this.flush(root.session); return result }
+        const result = this.workerUpdates(root, args) as {
+          updates: JsonValue[]
+          idle: boolean
+          nextSeq: number
+          activeAssignmentIds: string[]
+        }
+        const due = checkpoint !== undefined && Date.now() >= checkpoint
+        if (result.updates.length || result.idle || due) {
+          await this.flush(root.session)
+          if (!supervised) return result
+          const reason = result.updates.length ? 'updates' : result.idle ? 'idle' : 'checkpoint'
+          return { ...result, nextSeq: reason === 'checkpoint' ? args.afterSeq : result.nextSeq, reason,
+            activeWorkers: this.activeWorkers(root, result.activeAssignmentIds) }
+        }
         await wake.promise
-      } finally { dispose(); signal.removeEventListener('abort', abort) }
+      } finally { clearTimeout(timer); dispose(); signal.removeEventListener('abort', abort) }
     }
   }
 

@@ -115,7 +115,7 @@ export function parseDiagnosticAssignment(input: unknown): DiagnosticAssignment 
   if (value.role === 'coordinator') {
     if (!authority.mayDelegate || !authority.tools.includes('subagent') && !authority.tools.includes('dispatch_workers'))
       throw new Error('Coordinator requires bounded delegation')
-  } else if (authority.mayDelegate || authority.tools.some(tool => !['read', 'glob', 'grep', 'closeout_json'].includes(tool))) {
+  } else if (authority.mayDelegate || authority.tools.some(tool => !['read', 'glob', 'grep', 'closeout_json', 'update_progress'].includes(tool))) {
     throw new Error('Diagnostic children cannot delegate')
   }
   return value
@@ -182,8 +182,14 @@ export function parseDiagnosticAdmission(input: unknown, now: number): Diagnosti
   const value = diagnosticAdmissionSchema.parse(input)
   const tools = value.coordinatorAssignment.authority.tools
   const workflowTools = ['dispatch_workers', 'wait_for_workers', 'read_worker_report']
+  const supervision = value.diagnosticSupervisionVersion === 1
+  if (supervision && (value.diagnosticWorkflowVersion !== 1
+    || ['inspect_worker', 'send_message', 'update_progress'].some(tool => !tools.includes(tool as typeof tools[number]))))
+    throw new Error('Supervision requires workflow v1 and its authored tool authority')
+  if (!supervision && tools.some(tool => ['inspect_worker', 'update_progress'].includes(tool)))
+    throw new Error('Supervision tools require a frozen supervision opt-in')
   if (value.diagnosticWorkflowVersion === 1
-    ? workflowTools.some(tool => !tools.includes(tool as typeof tools[number])) || tools.includes('subagent') || tools.includes('send_message')
+    ? workflowTools.some(tool => !tools.includes(tool as typeof tools[number])) || tools.includes('subagent') || !supervision && tools.includes('send_message')
     : workflowTools.some(tool => tools.includes(tool as typeof tools[number])))
     throw new Error('Coordinator tools must match the frozen diagnostic workflow version')
   const assignment = parseDiagnosticAssignment(value.coordinatorAssignment)

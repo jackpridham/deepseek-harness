@@ -44,7 +44,7 @@ export const diagnosticAssignmentSchema = z.object({
     mode: z.string().min(1).max(128).optional(), maxReportSizeKiB: positive.optional(),
   }).strict(),
   authority: z.object({
-    tools: z.array(z.enum(['read', 'glob', 'grep', 'closeout_json', 'subagent', 'send_message', 'dispatch_workers', 'wait_for_workers', 'read_worker_report'])).min(1).max(9),
+    tools: z.array(z.enum(['read', 'glob', 'grep', 'closeout_json', 'subagent', 'send_message', 'dispatch_workers', 'wait_for_workers', 'read_worker_report', 'inspect_worker', 'update_progress'])).min(1).max(11),
     readRoots: z.array(id).min(1).max(3), writeRoots: z.array(z.never()).max(0),
     networkCeiling: z.literal('none'), mayDelegate: z.boolean(),
   }).strict(),
@@ -59,6 +59,7 @@ export type DiagnosticAssignment = z.infer<typeof diagnosticAssignmentSchema>
 export const diagnosticAdmissionSchema = z.object({
   capabilityId: z.literal('vortex-diagnostic-children-v1'), capabilityVersion: z.literal(1),
   diagnosticWorkflowVersion: z.literal(1).optional(),
+  diagnosticSupervisionVersion: z.literal(1).optional(),
   runId: id, rootSessionId: id, comparisonDigest: digest, sourceRefs: sources,
   executorBindingId: id, bindingEpoch: positive,
   maxChildren: positive, maxConcurrentChildren: positive,
@@ -98,6 +99,22 @@ export const diagnosticPreparationSchema = z.object({ prepared: z.array(z.union(
 ])) }).strict()
 /** Root-history cursor and optional child selection. */
 export const diagnosticWaitSchema = z.object({ afterSeq: cursor, assignmentIds: z.array(workflowId).optional() }).strict()
+/** Timed supervision wait; omission preserves report-driven waiting. */
+export const diagnosticSupervisionWaitSchema = diagnosticWaitSchema.extend({ timeoutMs: positive.max(2147483647).optional() })
+/** Bounded worker history inspection. */
+export const diagnosticInspectWorkerSchema = z.object({
+  assignmentId: id, maxEvents: positive.max(50).default(10),
+}).strict()
+/** Idempotent guidance to an existing worker, without assignment overrides. */
+export const diagnosticGuidanceSchema = z.object({
+  operationId: id, assignmentId: id, childSessionId: id, message: text.max(8192),
+}).strict()
+/** Worker-authored progress, explicitly separate from accepted report evidence. */
+export const diagnosticProgressSchema = z.object({
+  resolved: z.array(z.string().max(512)).max(10),
+  uncertain: z.array(z.string().max(512)).max(10),
+  nextCheck: z.string().max(1024),
+}).strict()
 /** Immutable packet page selection. */
 export const diagnosticReadReportSchema = z.object({ reportRef: workflowId, offset: cursor.optional() }).strict()
 /** Exact successful caller acceptance and native result identity. */

@@ -56,6 +56,7 @@ export interface HostApi {
       executorProtocolVersion: 2
       profiles: string[]
       diagnosticWorkflowVersions?: number[]
+      diagnosticSupervisionVersions?: number[]
       maxChildren: number
       maxConcurrentChildren: number
     }
