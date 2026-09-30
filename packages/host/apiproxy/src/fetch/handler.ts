@@ -18,6 +18,7 @@ import { clientRequestSchema, clientResponseSchema } from '../api/rpc.schema.ts'
 import {
   sessionAdmitDiagnosticRunRequestSchema,
   sessionPrepareDiagnosticAssignmentRequestSchema,
+  sessionPublishDiagnosticWorkerReportRequestSchema,
   sessionCancelRequestSchema,
   sessionAttachmentRequestSchema,
   sessionCreateRequestSchema,
@@ -98,6 +99,7 @@ type UnaryRoutes = {
 
 const UNARY_ROUTES: UnaryRoutes = {
   'session.admitDiagnosticRun': { schema: sessionAdmitDiagnosticRunRequestSchema, invoke: (api, r) => api.sessions.admitDiagnosticRun(r) },
+  'session.publishDiagnosticWorkerReport': { schema: sessionPublishDiagnosticWorkerReportRequestSchema, invoke: (api, r) => api.sessions.publishDiagnosticWorkerReport(r) },
   'session.prepareDiagnosticAssignment': { schema: sessionPrepareDiagnosticAssignmentRequestSchema, invoke: (api, r) => api.sessions.prepareDiagnosticAssignment(r) },
   'session.list': { schema: sessionListRequestSchema, invoke: (api, r) => api.sessions.list(r) },
   'session.search': { schema: sessionSearchRequestSchema, invoke: (api, r, signal) => api.sessions.search(r, signal) },
@@ -197,6 +199,8 @@ async function handleUnary<K extends keyof RpcMethodMap>(
   api: ApiProxy, method: K, message: ClientRequest, signal: AbortSignal,
 ): Promise<Response> {
   const route = UNARY_ROUTES[method]
+  if (method === 'session.admitDiagnosticRun' && message.payload !== null && typeof message.payload === 'object' && 'diagnosticWorkflowVersion' in message.payload && message.payload.diagnosticWorkflowVersion !== 1)
+    return errorResponse(message.rpcId, { code: 'diagnostic-capability-unavailable', message: 'Unsupported diagnostic workflow version', details: { retryable: false, operationState: 'not-started', reconcileWith: 'none' } })
   const payload = route.schema.safeParse(message.payload)
   if (!payload.success) {
     return errorResponse(message.rpcId, { code: 'bad-request', message: `invalid payload for ${method}`, details: { issues: payload.error.issues } })

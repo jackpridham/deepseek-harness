@@ -141,6 +141,7 @@ export class FakeApiClient implements IApiClient {
   // and inferred parameters would trip no-unsafe-argument.
   readonly sessions: IApiClient['sessions'] = {
     admitDiagnosticRun: () => Promise.reject(new Error('Diagnostic admission is not implemented by this test fake')),
+    publishDiagnosticWorkerReport: () => Promise.reject(new Error('Diagnostic admission is not implemented by this test fake')),
     prepareDiagnosticAssignment: () => Promise.reject(new Error('Diagnostic admission is not implemented by this test fake')),
     configureInstructions: () => Promise.reject(new Error('Instruction configuration is not implemented by this test fake')),
     getInstructions: () => Promise.reject(new Error('Instruction inspection is not implemented by this test fake')),

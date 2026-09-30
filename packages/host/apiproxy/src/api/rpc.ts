@@ -30,6 +30,15 @@ export function RpcId(id: string): RpcId {
 
 /** Error code → details type map (a second table isomorphic to RpcMethodMap). New code = one row here + one branch in the error schema. */
 export interface RpcErrorDetailsMap {
+  'invalid_request': { retry: 'never' | 'after_worker_result' | 'after_reconciliation' }
+  'request_conflict': { retry: 'never' | 'after_worker_result' | 'after_reconciliation' }
+  'capacity_unavailable': { retry: 'never' | 'after_worker_result' | 'after_reconciliation' }
+  'run_limit_reached': { retry: 'never' | 'after_worker_result' | 'after_reconciliation' }
+  'assignment_rejected': { retry: 'never' | 'after_worker_result' | 'after_reconciliation' }
+  'report_unavailable': { retry: 'never' | 'after_worker_result' | 'after_reconciliation' }
+  'report_conflict': { retry: 'never' | 'after_worker_result' | 'after_reconciliation' }
+  'authority_denied': { retry: 'never' | 'after_worker_result' | 'after_reconciliation' }
+  'reconciliation_required': { retry: 'never' | 'after_worker_result' | 'after_reconciliation' }
   'diagnostic-capability-unavailable': { retryable: false; operationState: 'not-started' | 'unknown'; reconcileWith: 'none' | 'history' }
   'diagnostic-policy-rejected': { retryable: false; operationState: 'not-started' | 'unknown'; reconcileWith: 'none' | 'history' }
   'diagnostic-instructions-invalid': { retryable: false; operationState: 'not-started' | 'unknown'; reconcileWith: 'none' | 'history' }

@@ -23,3 +23,25 @@ it('runs a prepared diagnostic child through the assembled application', async (
   expect(result.stdout).toContain(JSON.stringify({ type: 'diagnostic-summary', contextWindow: 262144, maxTokens: 8192 }))
   expect(result.stdout).not.toContain('"kind":"error"')
 }, LOADER_SMOKE_TEST_TIMEOUT_MS)
+
+
+it('dispatches a scoped worker and ends both assignments on accepted closeout', async () => {
+  const configPath = fileURLToPath(new URL('../diagnostic-children.cordis.snapshot.yml', import.meta.url))
+  const binScript = fileURLToPath(new URL('./fixtures/headless-driver.ts', import.meta.url))
+  const result = await runLoaderSmoke({ label: 'diagnostic workflow', tempDirPrefix: 'dsh-workflow-snapshot-',
+    configPath, binScript, libBinScript: binScript, binArgs: [configPath, 'Review admitted source.'],
+    env: { DSH_TEST_DIAGNOSTIC_WORKFLOW: '1' },
+    tsconfigPath: fileURLToPath(new URL('../../../tsconfig.json', import.meta.url)),
+  })
+  const events = result.stdout.trim().split('\n').map(line => JSON.parse(line) as { event?: { type: string; data: Record<string, unknown> } })
+  expect(events.filter(row => row.event?.type === 'tool/call').map(row => row.event!.data.name)).toMatchInlineSnapshot(`
+    [
+      "dispatch_workers",
+      "closeout_json",
+    ]
+  `)
+  expect(result.stdout).toContain(JSON.stringify({ type: 'accepted-closeout', role: 'discovery' }))
+  expect(result.stdout).toContain(JSON.stringify({ type: 'accepted-closeout', role: 'coordinator' }))
+  expect(result.stdout).toContain('Retained diagnostic closeout.')
+  expect(result.stdout).not.toContain('"kind":"error"')
+}, LOADER_SMOKE_TEST_TIMEOUT_MS)

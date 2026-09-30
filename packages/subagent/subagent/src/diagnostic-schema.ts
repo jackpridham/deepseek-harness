@@ -44,7 +44,7 @@ export const diagnosticAssignmentSchema = z.object({
     mode: z.string().min(1).max(128).optional(), maxReportSizeKiB: positive.optional(),
   }).strict(),
   authority: z.object({
-    tools: z.array(z.enum(['read', 'glob', 'grep', 'closeout_json', 'subagent', 'send_message'])).min(1).max(6),
+    tools: z.array(z.enum(['read', 'glob', 'grep', 'closeout_json', 'subagent', 'send_message', 'dispatch_workers', 'wait_for_workers', 'read_worker_report'])).min(1).max(9),
     readRoots: z.array(id).min(1).max(3), writeRoots: z.array(z.never()).max(0),
     networkCeiling: z.literal('none'), mayDelegate: z.boolean(),
   }).strict(),
@@ -58,6 +58,7 @@ export type DiagnosticAssignment = z.infer<typeof diagnosticAssignmentSchema>
 /** Proposed v1 run admission; every resource limit is caller-supplied. */
 export const diagnosticAdmissionSchema = z.object({
   capabilityId: z.literal('vortex-diagnostic-children-v1'), capabilityVersion: z.literal(1),
+  diagnosticWorkflowVersion: z.literal(1).optional(),
   runId: id, rootSessionId: id, comparisonDigest: digest, sourceRefs: sources,
   executorBindingId: id, bindingEpoch: positive,
   maxChildren: positive.min(2).max(8), maxConcurrentChildren: positive.max(3),
@@ -74,3 +75,50 @@ export const diagnosticErrorCodeSchema = z.enum(['diagnostic-capability-unavaila
 
 /** Diagnostic rejection or uncertain-work recovery metadata. */
 export const diagnosticErrorDetailsSchema = z.object({ retryable: z.literal(false), operationState: z.enum(['not-started', 'unknown']), reconcileWith: z.enum(['none', 'history']) })
+
+/** Workflow business failures retain actionable retry semantics. */
+export const diagnosticWorkflowErrorSchema = z.object({
+  code: z.enum(['invalid_request', 'request_conflict', 'capacity_unavailable', 'run_limit_reached', 'assignment_rejected', 'report_unavailable', 'report_conflict', 'authority_denied', 'reconciliation_required']),
+  message: z.string(), retry: z.enum(['never', 'after_worker_result', 'after_reconciliation']),
+}).strict()
+const workflowId = z.string().min(1)
+const cursor = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+/** Caller-resolved scope; carries neither authority nor prompt/model overrides. */
+export const diagnosticWorkerRequestSchema = z.object({
+  requestKey: workflowId, name: workflowId, role: z.enum(['discovery', 'validation']),
+  responsibility: z.string(), namespace: z.string(), paths: z.array(z.string()),
+  objective: z.string(), candidateRefs: z.array(workflowId).optional(),
+}).strict()
+/** Ordered worker preparation input. */
+export const diagnosticDispatchSchema = z.object({ requests: z.array(diagnosticWorkerRequestSchema).min(1) }).strict()
+/** Durable caller preparation acknowledgement, distinct from child admission. */
+export const diagnosticPreparationSchema = z.object({ prepared: z.array(z.union([
+  z.object({ requestKey: workflowId, status: z.literal('prepared'), assignmentId: workflowId }).strict(),
+  z.object({ requestKey: workflowId, status: z.literal('rejected'), error: diagnosticWorkflowErrorSchema }).strict(),
+])) }).strict()
+/** Root-history cursor and optional child selection. */
+export const diagnosticWaitSchema = z.object({ afterSeq: cursor, assignmentIds: z.array(workflowId).optional() }).strict()
+/** Immutable packet page selection. */
+export const diagnosticReadReportSchema = z.object({ reportRef: workflowId, offset: cursor.optional() }).strict()
+/** Exact successful caller acceptance and native result identity. */
+export const diagnosticCloseoutRefSchema = z.object({
+  producerSessionId: workflowId, executorCorrelationId: workflowId, callEventSeq: cursor, resultEventSeq: cursor,
+}).strict()
+/** Domain-neutral normalized report, preserving caller-owned provenance. */
+export const diagnosticWorkerPacketSchema = z.object({
+  summary: z.string(), report: z.record(z.string(), z.json()), candidateRefs: z.array(workflowId),
+  evidenceRefs: z.array(workflowId), unresolvedQuestions: z.array(z.string()), crossAreaDependencies: z.array(z.string()),
+}).strict()
+/** Trusted caller publication against an accepted worker closeout. */
+export const diagnosticPublishSchema = z.object({
+  sessionId: workflowId, runId: workflowId, assignmentId: workflowId, childSessionId: workflowId,
+  closeoutRef: diagnosticCloseoutRefSchema, packet: diagnosticWorkerPacketSchema,
+}).strict()
+/** Retained publication identity. */
+export const diagnosticPublishResultSchema = z.object({ reportRef: workflowId, eventSeq: cursor, duplicate: z.boolean() }).strict()
+/** Accepted caller publication input. */
+export type DiagnosticPublication = z.infer<typeof diagnosticPublishSchema>
+/** Native publication acknowledgement. */
+export type DiagnosticPublicationResult = z.infer<typeof diagnosticPublishResultSchema>
+/** Caller-authored focused worker request. */
+export type DiagnosticWorkerRequest = z.infer<typeof diagnosticWorkerRequestSchema>

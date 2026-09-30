@@ -41,6 +41,12 @@ export async function apply(ctx: Context): Promise<void> {
     idempotencyKey: string
     assignment: DiagnosticAssignment
   }
+  const workflow = process.env.DSH_TEST_DIAGNOSTIC_WORKFLOW === '1'
+  const closed = new Set<string>()
+  if (workflow) {
+    input.diagnosticWorkflowVersion = 1
+    input.coordinatorAssignment.authority.tools = ['read', 'glob', 'grep', 'closeout_json', 'dispatch_workers', 'wait_for_workers', 'read_worker_report']
+  }
   input.maxOutputTokens = 2_000_000
   for (const assignment of [input.coordinatorAssignment, prepared.assignment]) {
     assignment.roleSettings.outputLimit = 65536
@@ -52,6 +58,11 @@ export async function apply(ctx: Context): Promise<void> {
     if (options.purpose === 'compaction') {
       process.stdout.write(`${JSON.stringify({ type: 'diagnostic-summary', contextWindow: options.contextWindow, maxTokens: options.maxTokens })}\n`)
       return textResponse('Candidate C1; pending gap G1; evidence reference read:159. Unvalidated.')
+    }
+    if (workflow) {
+      if (options.sessionId !== input.rootSessionId || rootRequests++ > 0)
+        return toolCallResponse('finish', 'closeout_json', { report: { summary: 'Retained diagnostic closeout.' } })
+      return toolCallResponse('dispatch', 'dispatch_workers', { requests: [{ requestKey: 'discovery', name: 'Discovery', role: 'discovery', responsibility: '', namespace: '', paths: [], objective: 'Examine admitted source' }] })
     }
     if (options.sessionId !== input.rootSessionId) return textResponse('Child accepted.')
     if (rootRequests++ > 0) return textResponse('Child accepted.')
@@ -84,14 +95,28 @@ export async function apply(ctx: Context): Promise<void> {
     comparisonDigest: input.comparisonDigest,
     sourceRefs: input.sourceRefs,
     state: 'awaiting-admission',
+    ...(workflow ? { diagnosticWorkflowVersion: 1 as const } : {}),
   }
   ctx.effect(() =>
     ctx.get('subagents')!.diagnostics.registerExecutor({
       binding: () => binding,
+      ...(workflow ? {
+        diagnosticWorkflowVersions: [1],
+        prepareWorkers: async () => {
+          await ctx.get('subagents')!.diagnostics.prepare(prepared)
+          return { prepared: [{ requestKey: 'discovery', status: 'prepared', assignmentId: prepared.assignment.assignmentId }] }
+        },
+        awaitCloseout: async () => {},
+        closed: (_root: SessionId, producer: SessionId) => closed.has(producer),
+      } : {}),
       admit: async () => {
         binding = { ...binding, state: 'active' }
       },
       install: (agent, assignment) => {
+        if (workflow) return agent.ctx.tools.register({ name: 'closeout_json', description: 'Submit the assignment report.', parameters: { type: 'object', properties: { report: { type: 'object' } }, required: ['report'] },
+          output: { schema: { type: 'object' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+          execute: (args, execution) => { closed.add(agent.id); process.stdout.write(`${JSON.stringify({ type: 'accepted-closeout', role: assignment.role })}\n`); execution.concludeTurn(); return args },
+        })
         if (assignment.role === 'discovery' && !agent.session.events.some(event => event.type === 'request/header')) {
           const snapshot = assignment.instructionSnapshot
           agent.session.append('request/header', { reason: 'initial', header: {
@@ -112,7 +137,7 @@ export async function apply(ctx: Context): Promise<void> {
     .create({ sessionId: SessionId(input.rootSessionId), meta: { sessionPolicy: DIAGNOSTIC_POLICY } })
   ctx.effect(() => () => handle.dispose())
   await ctx.get('subagents')!.diagnostics.admit(input)
-  await ctx.get('subagents')!.diagnostics.prepare(prepared)
+  if (!workflow) await ctx.get('subagents')!.diagnostics.prepare(prepared)
   ctx.on('session/event', async (_session, event) => {
     if (event.type !== 'diagnostic/reservation' || event.data.state !== 'accepted' || !event.data.childSessionId) return
     const accepted = await ctx.get('subagents')!.renameChild(handle.agent, SessionId(event.data.childSessionId), input.runId,

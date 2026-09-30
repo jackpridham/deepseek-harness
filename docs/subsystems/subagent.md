@@ -763,3 +763,8 @@ Source: [`packages/subagent/subagent/src/index.ts:162`](../../packages/subagent/
 <!-- END GENERATED cordis-surface -->
 
 Native child presentation mutation follows the [parent-authorized title rules](../../packages/subagent/subagent/README.md#parent-authorized-child-titles), including cold-session ownership and diagnostic run validation.
+
+
+## Diagnostic workflow admission
+
+The opt-in diagnostic owner exposes admission, immutable assignment preparation and retained worker publication through the host session API. Workflow version 1 supplies native dispatch, event-driven waiting, paged report retrieval and accepted-closeout termination. Its schemas are exported by `dsh-subagent/diagnostic-schema`; [the package reference](../../packages/subagent/subagent/README.md#caller-prepared-diagnostic-children) owns negotiation, recovery and model-visible behavior. The ordinary continuable-child lifecycle remains the execution owner.

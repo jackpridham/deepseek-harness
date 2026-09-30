@@ -1,5 +1,6 @@
 /** Diagnostic run admission and native child ownership over the central session log. */
 import type {} from '@deepseek-ai/dsh-compaction'
+import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
@@ -18,9 +19,10 @@ import {
   parseDiagnosticAdmission,
   parseDiagnosticAssignment,
   diagnosticResultSchema,
-  diagnosticAdmissionSchema,
+  diagnosticAdmissionSchema, diagnosticDispatchSchema, diagnosticPreparationSchema,
+  diagnosticWaitSchema, diagnosticReadReportSchema, diagnosticPublishSchema,
 } from './diagnostic-contract.ts'
-import type { DiagnosticAdmission, DiagnosticAssignment } from './diagnostic-contract.ts'
+import type { DiagnosticAdmission, DiagnosticAssignment, DiagnosticPublication, DiagnosticPublicationResult, DiagnosticWorkerRequest } from './diagnostic-contract.ts'
 
 /** Required durable session policy for this opt-in workflow. */
 export const DIAGNOSTIC_POLICY = SessionPolicyId('vortex-diagnostic-children-v1')
@@ -51,8 +53,22 @@ export class DiagnosticError extends Error {
   }
 }
 
+/** Workflow failures use the public tool/RPC code and retry vocabulary. */
+export class DiagnosticWorkflowError extends Error {
+  constructor(readonly code: 'invalid_request' | 'request_conflict' | 'capacity_unavailable' | 'run_limit_reached' | 'assignment_rejected' | 'report_unavailable' | 'report_conflict' | 'authority_denied' | 'reconciliation_required', message: string, readonly retry: 'never' | 'after_worker_result' | 'after_reconciliation' = 'never') { super(message); this.name = 'DiagnosticWorkflowError' }
+  /** Public business failure rendered through the existing tool error path. */
+  get value() { return { code: this.code, message: this.message, retry: this.retry } }
+}
+function jsonObject(value: unknown): Record<string, JsonValue> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, JsonValue> : undefined
+}
+function workflowResultFits(value: unknown): boolean {
+  return Buffer.byteLength(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify(value) }] }), 'utf8') <= 2 * 1024 * 1024 - 16 * 1024
+}
+
 /** Immutable identity returned by the authoritative executor bridge. */
 export interface DiagnosticBinding {
+  diagnosticWorkflowVersion?: 1
   executorBindingId: string
   bindingEpoch: number
   runId: string
@@ -66,6 +82,12 @@ export interface DiagnosticBinding {
 export interface DiagnosticExecutor {
   /** Read the live authenticated binding; missing or expired attachments throw. */
   binding(root: SessionId): DiagnosticBinding
+  /** Supported workflow versions, advertised only by the complete bridge implementation. */
+  diagnosticWorkflowVersions?: readonly number[]
+  /** Prepare scoped work over caller transport without holding the root transaction. */
+  prepareWorkers?(root: Agent, assignment: DiagnosticAssignment, args: unknown, execution: ToolExecution): Promise<unknown>
+  /** Wait for the already returned closeout's durable acceptance receipt. */
+  awaitCloseout?(root: SessionId, producer: SessionId, signal: AbortSignal): Promise<void>
   /** Activate the exact binding after the run record is durable. */
   admit(root: SessionId, bindingEpoch: number): Promise<void>
   /** Register only source tools scoped to this exact admitted agent. */
@@ -118,6 +140,10 @@ declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
     /** Immutable admission and current executor epoch; required on replay. */
     'diagnostic/run-state': RunData
+    /** Frozen requested scope and its caller-prepared assignment. */
+    'diagnostic/worker-request': { runId: string; request: DiagnosticWorkerRequest; assignmentId?: string }
+    /** Immutable caller-normalized worker packet in root history. */
+    'diagnostic/worker-report': Omit<DiagnosticPublication, 'sessionId'> & { reportRef: string; sha256: string }
     /** Full caller assignment and durable native-child reservation. */
     'diagnostic/reservation': AssignmentData
     /** Public assignment lifecycle without private delivery metadata. */
@@ -210,6 +236,18 @@ export class DiagnosticRuns {
       return () => {}
     })
     const disposeStream = this.ctx.on('llm/stream', (options, next) => this.stream(options, next))
+    const disposeStatus = this.ctx.on('agent/status', ({ agent, status }) => {
+      if (status !== 'idle' || agent.session.header.sessionPolicy !== DIAGNOSTIC_POLICY) return
+      const rootId = agent.session.header.parentSession ?? agent.id
+      void this.refresh(rootId).then(async () => {
+        const root = this.root(rootId), run = this.run(root.session)
+        if (agent === root
+          && run?.admission.diagnosticWorkflowVersion === 1
+          && this.executor?.closed?.(rootId, rootId, run.admission.coordinatorAssignment.assignmentId)
+          && run.activeChildren > 0)
+          await this.cancel(rootId)
+      }).catch(() => {})
+    })
     const disposeEvents = this.ctx.on('session/event', (session, event) => {
       if (session.header.sessionPolicy !== DIAGNOSTIC_POLICY || event.type !== 'turn/end') return
       const rootId = session.header.origin === 'subagent' ? session.header.parentSession : session.id
@@ -228,6 +266,7 @@ export class DiagnosticRuns {
       disposeSetup()
       disposeStream()
       disposeEvents()
+      disposeStatus()
       // Resident sessions retain their deny rules after bridge removal. Their scopes own cleanup.
     }
   }
@@ -242,6 +281,7 @@ export class DiagnosticRuns {
       capabilityVersion: 1
       executorProtocolVersion: 2
       profiles: string[]
+      diagnosticWorkflowVersions?: number[]
       maxChildren: number
       maxConcurrentChildren: number
     }
@@ -258,6 +298,9 @@ export class DiagnosticRuns {
       capabilityVersion: 1,
       executorProtocolVersion: 2,
       profiles: ['source-review-mode-a/v1'],
+      ...(this.executor.diagnosticWorkflowVersions?.includes(1)
+        && this.executor.prepareWorkers
+        && this.executor.awaitCloseout ? { diagnosticWorkflowVersions: [1] } : {}),
       maxChildren: 8,
       maxConcurrentChildren: 3,
     }
@@ -328,7 +371,7 @@ export class DiagnosticRuns {
     this.requireRun(member.root)
     diagnosticCanonicalJson(report)
     diagnosticResultSchema(member.assignment.resultSchema.schema).parse(report)
-    if (agent !== member.root) return
+    if (agent !== member.root || this.run(member.root.session)?.admission.diagnosticWorkflowVersion === 1) return
     const children = await this.subagents.listChildren(agent.id, new AbortController().signal)
     if (
       this.assignments(agent.session).some(
@@ -403,7 +446,12 @@ export class DiagnosticRuns {
     admissionDigest: string
     bindingEpoch: number
     duplicate: boolean
+    admission: DiagnosticAdmission
   }> {
+    if (jsonObject(input)?.diagnosticWorkflowVersion !== undefined
+      && (jsonObject(input)?.diagnosticWorkflowVersion !== 1
+      || !this.capability()?.diagnosticWorkflowVersions?.includes(1)))
+      throw new DiagnosticError('diagnostic-capability-unavailable', 'Diagnostic workflow version is unavailable')
     const admission = diagnosticAdmissionSchema.parse(input)
     const root = this.root(SessionId(admission.rootSessionId))
     this.requireCompaction(root)
@@ -425,7 +473,7 @@ export class DiagnosticRuns {
           state: 'admitted',
           admissionDigest,
           bindingEpoch: prior.bindingEpoch,
-          duplicate: true,
+          duplicate: true, admission: prior.admission,
         }
       }
       parseDiagnosticAdmission(admission, Date.now())
@@ -434,6 +482,8 @@ export class DiagnosticRuns {
       if (root.status !== 'idle' || root.session.events.some(event => event.type === 'turn/start'))
         throw new DiagnosticError('diagnostic-policy-rejected', 'Admission requires a fresh idle root')
       const binding = this.requireExecutor().binding(root.id)
+      if (binding.diagnosticWorkflowVersion !== admission.diagnosticWorkflowVersion)
+        throw new DiagnosticError('diagnostic-capability-unavailable', 'Executor and core diagnostic workflow opt-in must agree')
       if (
         binding.state !== 'awaiting-admission' ||
         binding.rootSessionId !== root.id ||
@@ -473,7 +523,7 @@ export class DiagnosticRuns {
         state: 'admitted',
         admissionDigest,
         bindingEpoch: binding.bindingEpoch,
-        duplicate: false,
+        duplicate: false, admission,
       }
     })
   }
@@ -613,21 +663,23 @@ export class DiagnosticRuns {
       const events = child?.session.events ?? snapshots.get(SessionId(childId))
       const terminal = events?.findLast(event => event.type === 'turn/end')
       const start = events?.findLast(event => event.type === 'turn/start')
-      const idle = child ? child.status === 'idle' : terminal !== undefined && terminal.seq > (start?.seq ?? -1)
+      const acceptedCloseout = run.admission.diagnosticWorkflowVersion === 1
+        && this.executor?.closed?.(rootId, SessionId(childId), record.assignmentId) === true
+      const idle = child ? child.status === 'idle' : acceptedCloseout || terminal !== undefined && terminal.seq > (start?.seq ?? -1)
       const quiescent =
         idle &&
         activeModelRequests === 0 &&
         caller.activeCalls === 0 &&
         caller.pendingResults === 0 &&
         record.state === 'accepted'
-      const completed = quiescent && terminal?.type === 'turn/end' && terminal.data.reason.kind === 'completed'
+      const completed = quiescent && (acceptedCloseout || terminal?.type === 'turn/end' && terminal.data.reason.kind === 'completed')
       const state =
         record.state === 'uncertain' || events === undefined
           ? 'uncertain'
           : completed
             ? 'settled'
             : quiescent
-              ? 'failed'
+              ? terminal?.type === 'turn/end' && terminal.data.reason.kind === 'aborted' ? 'cancelled' : 'failed'
               : record.state === 'reserved'
                 ? 'starting'
                 : 'running'
@@ -657,6 +709,11 @@ export class DiagnosticRuns {
       activity.activeCalls === 0 &&
       activity.pendingResults === 0 &&
       !uncertain &&
+      !(run.admission.diagnosticWorkflowVersion === 1
+        && this.assignments(root.session).some(record => record.childSessionId
+        && this.executor?.closed?.(root.id, SessionId(record.childSessionId), record.assignmentId)
+        && !root.session.events.some(event => event.type === 'diagnostic/worker-report'
+        && event.data.assignmentId === record.assignmentId))) &&
       this.executor?.quiescent(rootId) === true
     const rootClosed =
       this.executor?.closed?.(rootId, rootId, run.admission.coordinatorAssignment.assignmentId) === true
@@ -781,6 +838,9 @@ export class DiagnosticRuns {
           if (member === undefined)
             throw new DiagnosticError('diagnostic-policy-rejected', 'Diagnostic run admission is required')
           this.requireRun(member.root)
+          if (this.run(member.root.session)?.admission.diagnosticWorkflowVersion === 1
+            && this.executor?.closed?.(member.root.id, agent.id, member.assignment.assignmentId))
+            throw new DiagnosticError('diagnostic-policy-rejected', 'Accepted closeout is terminal; reconcile retained history')
         }
       }),
     )
@@ -806,7 +866,45 @@ export class DiagnosticRuns {
       const selected = selection(member.assignment)
       disposers.push(installModelSelection(agent.ctx, { current: selected, assembled: undefined }))
       disposers.push(this.requireExecutor().install(agent, member.assignment, member.root.id))
-      if (agent === member.root) {
+      if (limits.diagnosticWorkflowVersion === 1) {
+        disposers.push(agent.ctx.on('agent/pre-step', async (_payload, next) => {
+          const decision = await next()
+          if (this.executor?.closed?.(member.root.id, agent.id, member.assignment.assignmentId)) return { kind: 'reject' }
+          return decision
+        }))
+        disposers.push(agent.ctx.on('agent/turn-stopping', async ({ signal }) => {
+          const executor = this.requireExecutor()
+          if (!executor.awaitCloseout) throw new DiagnosticError('diagnostic-capability-unavailable', 'Terminal closeout is unavailable')
+          await executor.awaitCloseout(member.root.id, agent.id, signal)
+        }))
+      }
+      if (agent === member.root && limits.diagnosticWorkflowVersion === 1) {
+        const failures = new WeakMap<object, DiagnosticWorkflowError>()
+        disposers.push(agent.ctx.on('tools/post-execute', async (execution, result, next) => {
+          const finalized = await next()
+          const error = failures.get(execution)
+          if (!error || !result.isError) return finalized
+          return { kind: 'accept', content: [{ type: 'text', text: JSON.stringify({ error: error.value }) }] }
+        }))
+        const tools = [
+          ['dispatch_workers', 'Launch focused independent workers.', diagnosticDispatchSchema, (args: unknown, execution: ToolExecution) => this.dispatchWorkers(agent, args, execution)],
+          ['wait_for_workers', 'Wait for any worker report or terminal change.', diagnosticWaitSchema, (args: unknown, execution: ToolExecution) => this.waitForWorkers(agent, args, execution.signal)],
+          ['read_worker_report', 'Read an immutable worker report page.', diagnosticReadReportSchema, (args: unknown) => this.readWorkerReport(agent, args)],
+        ] as const
+        for (const [name, description, schema, execute] of tools) disposers.push(agent.ctx.tools.register({
+          name, description, parameters: z.toJSONSchema(schema),
+          output: { schema: { type: 'object' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+          execute: async (args, execution) => {
+            try { return await execute(args, execution) }
+            catch (error) {
+              const failure = error instanceof z.ZodError ? new DiagnosticWorkflowError('invalid_request', error.message) : error
+              if (failure instanceof DiagnosticWorkflowError) failures.set(execution, failure)
+              throw failure
+            }
+          },
+        }))
+      }
+      if (agent === member.root && limits.diagnosticWorkflowVersion !== 1) {
         for (const name of ['subagent', 'send_message'] as const) {
           if (!member.assignment.authority.tools.includes(name)) continue
           const properties =
@@ -838,6 +936,274 @@ export class DiagnosticRuns {
         this.installations.delete(agent.id)
       }
     })
+  }
+
+  private workflow(root: Agent): RunData {
+    const run = this.requireRun(root)
+    if (run.admission.diagnosticWorkflowVersion !== 1)
+      throw new DiagnosticWorkflowError('authority_denied', 'This run did not opt in to diagnostic workflow v1')
+    return run
+  }
+
+  private workflowRequests(root: Agent) {
+    return root.session.events.filter(event => event.type === 'diagnostic/worker-request')
+  }
+
+  private async dispatchWorkers(root: Agent, input: unknown, execution: ToolExecution): Promise<JsonValue> {
+    const args = diagnosticDispatchSchema.parse(input)
+    const run = this.workflow(root)
+    const workers: JsonValue[] = []
+    const conflicts = new Set<string>()
+    await this.transact(root.id, async () => {
+      for (const request of args.requests) {
+        const prior = this.workflowRequests(root).find(event => event.data.request.requestKey === request.requestKey)
+        if (prior && diagnosticCanonicalJson(prior.data.request) !== diagnosticCanonicalJson(request)) conflicts.add(request.requestKey)
+        else if (!prior) root.session.append('diagnostic/worker-request', { runId: run.runId, request })
+      }
+      await this.flush(root.session)
+    })
+    const needsPreparation = args.requests.some(request => !conflicts.has(request.requestKey)
+      && !this.workflowRequests(root).findLast(event => event.data.request.requestKey === request.requestKey)?.data.assignmentId)
+    // The original native arguments and call identity cross the existing executor unchanged.
+    const executor = this.requireExecutor()
+    if (!executor.prepareWorkers) throw new DiagnosticError('diagnostic-capability-unavailable', 'Worker preparation is unavailable')
+    const preparation = needsPreparation
+      ? diagnosticPreparationSchema.parse(await executor.prepareWorkers(root, run.admission.coordinatorAssignment, args, execution))
+      : undefined
+    if (preparation
+      && (preparation.prepared.length !== args.requests.length
+      || preparation.prepared.some((item, index) => item.requestKey !== args.requests[index]?.requestKey)))
+      throw new DiagnosticWorkflowError('assignment_rejected', 'Preparation must return each requestKey in request order')
+    for (const [index, request] of args.requests.entries()) {
+      execution.signal.throwIfAborted()
+      try {
+        if (conflicts.has(request.requestKey)) throw new DiagnosticWorkflowError('request_conflict', `requestKey ${request.requestKey} already has a different scope`)
+        const prior = this.workflowRequests(root).findLast(event => event.data.request.requestKey === request.requestKey)
+        let assignmentId = prior?.data.assignmentId
+        if (assignmentId === undefined) {
+          const item = preparation?.prepared[index]
+          if (!item) throw new DiagnosticWorkflowError('assignment_rejected', `Missing preparation for ${request.requestKey}`)
+          if (item.status === 'rejected') { workers.push(item); continue }
+          assignmentId = item.assignmentId
+          await this.transact(root.id, async () => {
+            const assignment = this.assignments(root.session).find(value => value.assignmentId === assignmentId)
+            if (!assignment || assignment.assignment.role !== request.role)
+              throw new DiagnosticWorkflowError('assignment_rejected', `Prepared assignment ${assignmentId} must belong to this run and role ${request.role}`)
+            const existing = this.workflowRequests(root).findLast(event => event.data.request.requestKey === request.requestKey
+              && event.data.assignmentId !== undefined)
+            if (existing && existing.data.assignmentId !== assignmentId)
+              throw new DiagnosticWorkflowError('request_conflict', `requestKey ${request.requestKey} already resolves to assignment ${existing.data.assignmentId}`)
+            const owner = this.workflowRequests(root).find(event => event.data.assignmentId === assignmentId)
+            if (owner && owner.data.request.requestKey !== request.requestKey)
+              throw new DiagnosticWorkflowError('assignment_rejected', `Assignment ${assignmentId} already belongs to another requestKey`)
+            root.session.append('diagnostic/worker-request', { runId: run.runId, request, assignmentId: item.assignmentId })
+            await this.flush(root.session)
+          })
+        }
+        const launched = await this.deliver(root, { assignmentId, run_in_background: true }, execution.signal, false)
+        if (typeof launched.childSessionId !== 'string') throw new Error('Native delivery did not retain its child identity')
+        workers.push({ requestKey: request.requestKey, status: 'started', assignmentId, childSessionId: launched.childSessionId })
+      } catch (error) {
+        execution.signal.throwIfAborted()
+        if (!(error instanceof DiagnosticError || error instanceof DiagnosticWorkflowError)) throw error
+        const failure = error instanceof DiagnosticWorkflowError ? error : new DiagnosticWorkflowError(
+          error.code === 'diagnostic-child-unsettled' ? 'reconciliation_required' : error.code === 'diagnostic-budget-exhausted' ? 'run_limit_reached' : 'assignment_rejected',
+          error.code === 'diagnostic-budget-exhausted' ? `${error.message}; run limits: ${run.admission.maxModelRequests} model requests, ${run.admission.maxOutputTokens} output tokens, deadline ${run.admission.deadline}` : error.message, error.code === 'diagnostic-child-unsettled' ? 'after_reconciliation' : 'never')
+        workers.push({ requestKey: request.requestKey, status: 'rejected', error: failure.value })
+      }
+    }
+    return { workers }
+  }
+
+  /**
+   * Retain a caller-normalized packet against the exact committed native closeout.
+   * @param input - root, assignment, receipt identity and immutable packet.
+   * @returns stable report reference and root-history sequence.
+   */
+  async publishWorkerReport(input: unknown): Promise<DiagnosticPublicationResult> {
+    const args = diagnosticPublishSchema.parse(input)
+    diagnosticCanonicalJson(args)
+    if (Buffer.byteLength(JSON.stringify(args), 'utf8') > 2 * 1024 * 1024 - 16 * 1024) throw new DiagnosticWorkflowError('invalid_request', 'Publication exceeds the existing 2 MiB complete message envelope')
+    const root = this.root(SessionId(args.sessionId))
+    return this.transact(root.id, async () => {
+      const run = this.run(root.session)
+      if (!run || run.runId !== args.runId || run.admission.diagnosticWorkflowVersion !== 1)
+        throw new DiagnosticWorkflowError('authority_denied', 'Publication requires the admitted root and workflow run')
+      const record = this.assignments(root.session).find(value => value.assignmentId === args.assignmentId)
+      if (!record
+        || record.state !== 'accepted'
+        || record.childSessionId !== args.childSessionId
+        || args.closeoutRef.producerSessionId !== args.childSessionId)
+        throw new DiagnosticWorkflowError('authority_denied', 'Publication assignment and child must belong to this root run')
+      const prior = root.session.events.find(event => event.type === 'diagnostic/worker-report'
+        && event.data.runId === args.runId
+        && event.data.assignmentId === args.assignmentId
+        && event.data.closeoutRef.executorCorrelationId === args.closeoutRef.executorCorrelationId)
+      if (prior?.type === 'diagnostic/worker-report') {
+        if (diagnosticCanonicalJson(prior.data.packet) !== diagnosticCanonicalJson(args.packet)
+          || diagnosticCanonicalJson(prior.data.closeoutRef) !== diagnosticCanonicalJson(args.closeoutRef))
+          throw new DiagnosticWorkflowError('report_conflict', `Closeout ${args.closeoutRef.executorCorrelationId} already has different published content`)
+        await this.flush(root.session)
+        return { reportRef: prior.data.reportRef, eventSeq: prior.seq, duplicate: true }
+      }
+      const executorRecords = root.session.events.filter(event => event.type === 'diagnostic/executor')
+      const receipt = executorRecords.find(event => event.data.kind === 'receipt'
+        && jsonObject(event.data.value)?.executorCorrelationId === args.closeoutRef.executorCorrelationId)
+      const accepted = receipt && jsonObject(receipt.data.value)
+      if (!accepted
+        || accepted.state !== 'succeeded'
+        || accepted.producerSessionId !== args.childSessionId
+        || accepted.assignmentId !== args.assignmentId
+        || accepted.callEventSeq !== args.closeoutRef.callEventSeq
+        || accepted.resultEventSeq !== args.closeoutRef.resultEventSeq)
+        throw new DiagnosticWorkflowError('report_unavailable', 'closeoutRef must identify a committed successful acceptance receipt', 'after_reconciliation')
+      const resultRecord = executorRecords.find(event => event.data.kind === 'result'
+        && jsonObject(jsonObject(event.data.value)?.call)?.executorCorrelationId === args.closeoutRef.executorCorrelationId)
+      const result = jsonObject(resultRecord?.data.value)
+      const call = jsonObject(result?.call)
+      const outcome = jsonObject(result?.result)
+      if (call?.tool !== 'closeout_json'
+        || call.producerSessionId !== args.childSessionId
+        || call.childSessionId !== args.childSessionId
+        || call.runId !== args.runId
+        || call.assignmentId !== args.assignmentId
+        || outcome?.ok !== true
+        || diagnosticRecordDigest(outcome) !== accepted.resultDigest)
+        throw new DiagnosticWorkflowError('report_unavailable', 'closeoutRef does not identify an accepted closeout_json')
+      const child = this.service('agents').get(SessionId(args.childSessionId))
+      const events = child?.session.events ?? (await this.service('sessionPersistence').load(SessionId(args.childSessionId))).events
+      const nativeCall = events.find(event => event.seq === args.closeoutRef.callEventSeq)
+      const nativeResult = events.find(event => event.seq === args.closeoutRef.resultEventSeq)
+      if (nativeCall?.type !== 'tool/call'
+        || nativeCall.data.name !== 'closeout_json'
+        || nativeResult?.type !== 'tool/result'
+        || nativeResult.data.message.content.some(block => block.type === 'tool-result'
+        && block.isError)
+        || nativeResult.data.message.source.callId !== nativeCall.data.callId
+        || nativeResult.data.turn !== nativeCall.data.turn
+        || nativeResult.data.step !== nativeCall.data.step)
+        throw new DiagnosticWorkflowError('report_unavailable', 'Native closeout call/result evidence is missing or unsuccessful')
+      const nativeBlock = nativeResult.data.message.content.find(block => block.type === 'tool-result')
+      const content = nativeBlock?.content
+      let acknowledged: unknown
+      try { acknowledged = content?.length === 1 && content[0]?.type === 'text' ? JSON.parse(content[0].text) : undefined }
+      catch { throw new DiagnosticWorkflowError('report_unavailable', 'Native closeout acknowledgement is not JSON') }
+      if (!isDeepStrictEqual(acknowledged, outcome.value) || !isDeepStrictEqual(JSON.parse(nativeCall.data.arguments), call.arguments))
+        throw new DiagnosticWorkflowError('report_unavailable', 'Native closeout content differs from its accepted receipt')
+      const reportRef = `${root.id}:${randomUUID()}`
+      const { sessionId: _sessionId, ...identity } = args
+      const event = root.session.append('diagnostic/worker-report', { ...identity, reportRef, sha256: diagnosticRecordDigest(args.packet) })
+      await this.flush(root.session)
+      return { reportRef, eventSeq: event.seq, duplicate: false }
+    })
+  }
+
+  private async readWorkerReport(root: Agent, input: unknown): Promise<JsonValue> {
+    this.workflow(root)
+    const { reportRef, offset = 0 } = diagnosticReadReportSchema.parse(input)
+    const event = root.session.events.find(event => event.type === 'diagnostic/worker-report' && event.data.reportRef === reportRef)
+    if (event?.type !== 'diagnostic/worker-report') {
+      const ownerId = reportRef.slice(0, -37)
+      if (/^[A-Za-z0-9._:-]{1,128}$/.test(ownerId) && ownerId !== root.id && /:[a-f0-9-]{36}$/.test(reportRef)) {
+        let ownerEvents = this.service('agents').get(SessionId(ownerId))?.session.events
+        if (!ownerEvents) {
+          try { ownerEvents = (await this.service('sessionPersistence').load(SessionId(ownerId))).events }
+          catch { /* An unavailable owner cannot establish this opaque reference. */ }
+        }
+        if (ownerEvents?.some(event => event.type === 'diagnostic/worker-report' && event.data.reportRef === reportRef))
+          throw new DiagnosticWorkflowError('authority_denied', 'Report reference belongs to another run')
+      }
+      throw new DiagnosticWorkflowError('report_unavailable', `Unknown reportRef ${reportRef}`)
+    }
+    const text = diagnosticCanonicalJson(event.data.packet)
+    if (offset > text.length) throw new DiagnosticWorkflowError('invalid_request', `offset ${offset} exceeds report length ${text.length}`)
+    const page = (end: number) => ({
+      reportRef, offset, nextOffset: end === text.length ? null : end, text: text.slice(offset, end), sha256: event.data.sha256,
+    })
+    let low = offset, high = text.length
+    while (low < high) {
+      const end = Math.ceil((low + high) / 2)
+      if (workflowResultFits(page(end))) low = end
+      else high = end - 1
+    }
+    if (low === offset
+      && offset < text.length) throw new DiagnosticWorkflowError('invalid_request', 'Report reference leaves no room for a page')
+    return page(low)
+  }
+
+  private workerUpdates(root: Agent, input: z.infer<typeof diagnosticWaitSchema>): JsonValue {
+    this.workflow(root)
+    const assignments = this.assignments(root.session).filter(
+      (record): record is AssignmentData & { childSessionId: string } => record.childSessionId !== undefined,
+    )
+    if (input.assignmentIds?.some(id => !assignments.some(record => record.assignmentId === id)))
+      throw new DiagnosticWorkflowError('authority_denied', 'assignmentIds must name launched workers belonging to this run')
+    const selected = assignments.filter(record => input.assignmentIds === undefined || input.assignmentIds.includes(record.assignmentId))
+    const ids = new Set(selected.map(record => record.assignmentId))
+    const reports = new Map<string, { reportRef: string; seq: number }>()
+    const terminal = new Map<string, { state: string; seq: number }>()
+    const emitted = new Set<string>()
+    const updates: JsonValue[] = []
+    let nextSeq = input.afterSeq
+    const activeAssignmentIds = selected.filter((record) => {
+      const state = root.session.events.findLast(event => event.type === 'diagnostic/child-state'
+        && jsonObject(event.data)?.assignmentId === record.assignmentId)
+      const value = state && jsonObject(state.data)
+      const published = root.session.events.some(event => event.type === 'diagnostic/worker-report'
+        && event.data.assignmentId === record.assignmentId)
+      return value?.quiescent !== true || value.state === 'settled' && !published
+    }).map(record => record.assignmentId)
+    const value = () => ({ updates, nextSeq, activeAssignmentIds, idle: activeAssignmentIds.length === 0 })
+    for (const event of root.session.events) {
+      const batch: JsonValue[] = []
+      if (event.type === 'diagnostic/worker-report') reports.set(event.data.assignmentId, { reportRef: event.data.reportRef, seq: event.seq })
+      if (event.type === 'diagnostic/child-state') {
+        const data = jsonObject(event.data)
+        if (typeof data?.assignmentId === 'string' && data.quiescent === true)
+          terminal.set(data.assignmentId, { state: String(data.state), seq: event.seq })
+      }
+      for (const record of selected) {
+        if (!ids.has(record.assignmentId)) continue
+        const report = reports.get(record.assignmentId), end = terminal.get(record.assignmentId)
+        const identity = { seq: event.seq, assignmentId: record.assignmentId,
+          childSessionId: record.childSessionId, role: record.assignment.role }
+        const add = (kind: string, extra: Record<string, JsonValue>) => {
+          const key = `${record.assignmentId}:${kind}`
+          if (!emitted.has(key)) {
+            emitted.add(key)
+            if (event.seq > input.afterSeq) batch.push({ ...identity, kind, ...extra })
+          }
+        }
+        if (report) add('report_available', { reportRef: report.reportRef })
+        if (end && report && end.state === 'settled') add('completed', { reportRef: report.reportRef })
+        else if (end && end.state !== 'settled') add(end.state === 'cancelled' ? 'cancelled' : 'failed', { error: { code: 'assignment_rejected', message: `Worker ${record.assignmentId} ended without a completed report (${end.state})`, retry: 'never' } })
+      }
+      if (event.seq <= input.afterSeq) continue
+      if (batch.length && !workflowResultFits({ ...value(), updates: [...updates, ...batch], nextSeq: event.seq })) {
+        if (!updates.length) throw new DiagnosticWorkflowError('invalid_request', 'A complete worker update exceeds the transport envelope')
+        break
+      }
+      updates.push(...batch)
+      nextSeq = event.seq
+    }
+    return value()
+  }
+
+  private async waitForWorkers(root: Agent, input: unknown, signal: AbortSignal): Promise<JsonValue> {
+    const args = diagnosticWaitSchema.parse(input)
+    // Subscribe before checking history, including across persistence awaits.
+    while (true) {
+      signal.throwIfAborted()
+      const wake = Promise.withResolvers<void>()
+      const dispose = this.ctx.on('session/event', (session) => { if (session === root.session) wake.resolve() })
+      const abort = () => wake.reject(signal.reason)
+      signal.addEventListener('abort', abort, { once: true })
+      try {
+        const result = this.workerUpdates(root, args) as { updates: JsonValue[]; idle: boolean }
+        if (result.updates.length || result.idle) { await this.flush(root.session); return result }
+        await wake.promise
+      } finally { dispose(); signal.removeEventListener('abort', abort) }
+    }
   }
 
   private async deliver(
@@ -898,6 +1264,13 @@ export class DiagnosticRuns {
       const active = this.service('agents')
         .list()
         .filter(agent => agent.session.header.parentSession === root.id && agent.status !== 'idle')
+      if (run.admission.diagnosticWorkflowVersion === 1) {
+        const launched = this.assignments(root.session).filter(value => value.childSessionId !== undefined).length
+        if (launched >= run.admission.maxChildren)
+          throw new DiagnosticWorkflowError('run_limit_reached', `Run child limit ${run.admission.maxChildren} reached; start a new run`)
+        if (active.length >= run.admission.maxConcurrentChildren)
+          throw new DiagnosticWorkflowError('capacity_unavailable', `Concurrent child limit ${run.admission.maxConcurrentChildren} reached; wait for a worker result`, 'after_worker_result')
+      }
       if (active.length >= run.admission.maxConcurrentChildren)
         throw new DiagnosticError('diagnostic-budget-exhausted', 'Diagnostic child concurrency is exhausted')
       const childId = continuation ? SessionId(args.childSessionId as string) : SessionId(randomUUID())

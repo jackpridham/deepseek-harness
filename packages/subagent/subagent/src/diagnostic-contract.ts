@@ -113,9 +113,9 @@ export function parseDiagnosticAssignment(input: unknown): DiagnosticAssignment 
   )
     throw new Error('Invalid diagnostic authority')
   if (value.role === 'coordinator') {
-    if (!authority.mayDelegate || !authority.tools.includes('subagent'))
+    if (!authority.mayDelegate || !authority.tools.includes('subagent') && !authority.tools.includes('dispatch_workers'))
       throw new Error('Coordinator requires bounded delegation')
-  } else if (authority.mayDelegate || authority.tools.some(tool => tool === 'subagent' || tool === 'send_message')) {
+  } else if (authority.mayDelegate || authority.tools.some(tool => !['read', 'glob', 'grep', 'closeout_json'].includes(tool))) {
     throw new Error('Diagnostic children cannot delegate')
   }
   return value
@@ -180,6 +180,12 @@ export function diagnosticResultSchema(input: Record<string, unknown>): z.ZodTyp
 export function parseDiagnosticAdmission(input: unknown, now: number): DiagnosticAdmission {
   diagnosticCanonicalJson(input)
   const value = diagnosticAdmissionSchema.parse(input)
+  const tools = value.coordinatorAssignment.authority.tools
+  const workflowTools = ['dispatch_workers', 'wait_for_workers', 'read_worker_report']
+  if (value.diagnosticWorkflowVersion === 1
+    ? workflowTools.some(tool => !tools.includes(tool as typeof tools[number])) || tools.includes('subagent') || tools.includes('send_message')
+    : workflowTools.some(tool => tools.includes(tool as typeof tools[number])))
+    throw new Error('Coordinator tools must match the frozen diagnostic workflow version')
   const assignment = parseDiagnosticAssignment(value.coordinatorAssignment)
   if (
     value.sourceRefs.length !== 3 ||

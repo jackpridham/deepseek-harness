@@ -23,6 +23,7 @@ import type { RpcResponse } from './rpc.ts'
  * request (command.execute): the carrier passes its request signal, never a wire field.
  */
 export interface RpcMethodMap {
+  'session.publishDiagnosticWorkerReport': SessionsApi['publishDiagnosticWorkerReport']
   'session.admitDiagnosticRun': SessionsApi['admitDiagnosticRun']
   'session.prepareDiagnosticAssignment': SessionsApi['prepareDiagnosticAssignment']
   'session.list': SessionsApi['list']

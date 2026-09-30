@@ -33,6 +33,7 @@ export const rpcIdSchema = z.string() as unknown as z.ZodType<RpcId>
 
 /** Error body: discriminated by code, per-branch details aligned to RpcErrorDetailsMap; details is required. */
 export const rpcErrorSchema: z.ZodType<RpcError> = z.discriminatedUnion('code', [
+  z.object({ code: z.enum(['invalid_request', 'request_conflict', 'capacity_unavailable', 'run_limit_reached', 'assignment_rejected', 'report_unavailable', 'report_conflict', 'authority_denied', 'reconciliation_required']), message: z.string(), details: z.object({ retry: z.enum(['never', 'after_worker_result', 'after_reconciliation']) }) }),
   z.object({ code: diagnosticErrorCodeSchema, message: z.string(), details: diagnosticErrorDetailsSchema }),
   z.object({ code: z.literal('bad-request'), message: z.string(), details: z.object({ issues: z.array(z.custom<ZodIssue>()) }) }),
   z.object({ code: z.literal('cancelled'), message: z.string(), details: z.object({}) }),

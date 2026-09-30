@@ -24,7 +24,7 @@ import type {
 } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { SessionQueryError, type SessionSearchCursor } from '@deepseek-ai/dsh-session-query'
-import { DIAGNOSTIC_POLICY, DiagnosticError, SubagentError } from '@deepseek-ai/dsh-subagent'
+import { DIAGNOSTIC_POLICY, DiagnosticError, DiagnosticWorkflowError, SubagentError } from '@deepseek-ai/dsh-subagent'
 import type { SubagentListEntry as CatalogSubagentListEntry } from '@deepseek-ai/dsh-subagent'
 import { isUserInvocable } from '@deepseek-ai/dsh-skill'
 import type { Workspace, WorkspaceRecord } from '@deepseek-ai/dsh-workspace'
@@ -2615,6 +2615,18 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         catch (error) {
           if (error instanceof DiagnosticError) return err(request, { code: error.code, message: error.message, details: error.details })
           return err(request, { code: 'diagnostic-policy-rejected', message: 'Diagnostic request validation or persistence failed; inspect session history before retrying', details: { retryable: false, operationState: 'unknown', reconcileWith: 'history' } })
+        }
+      },
+
+      async publishDiagnosticWorkerReport(request) {
+        const diagnostics = ctx.get('subagents')?.diagnostics
+        if (diagnostics === undefined) return err(request, { code: 'diagnostic-capability-unavailable', message: 'Diagnostic children are unavailable', details: { retryable: false, operationState: 'not-started', reconcileWith: 'none' } })
+        try { return ok(request, await diagnostics.publishWorkerReport(request.payload)) }
+        catch (error) {
+          if (error instanceof DiagnosticWorkflowError)
+            return err(request, { code: error.code, message: error.message, details: { retry: error.retry } })
+          if (error instanceof DiagnosticError) return err(request, { code: error.code, message: error.message, details: error.details })
+          return err(request, { code: 'reconciliation_required', message: 'Publication could not be committed; inspect retained history before retrying the same packet', details: { retry: 'after_reconciliation' } })
         }
       },
 

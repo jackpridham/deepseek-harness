@@ -68,7 +68,7 @@ import type { SubagentDescendantListEntry, SubagentListEntry } from './list-chil
 import { snapshotSubagentDescriptor } from './descriptor.ts'
 import { subagentIdentityProjectionDefinition, subagentTimingProjectionDefinition } from './projection.ts'
 import { DiagnosticRuns } from './diagnostic.ts'
-export { DIAGNOSTIC_POLICY, DiagnosticError } from './diagnostic.ts'
+export { DIAGNOSTIC_POLICY, DiagnosticError, DiagnosticWorkflowError } from './diagnostic.ts'
 export type { DiagnosticExecutor, DiagnosticBinding } from './diagnostic.ts'
 export * from './diagnostic-contract.ts'
 

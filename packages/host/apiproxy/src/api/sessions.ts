@@ -321,11 +321,14 @@ export interface SessionSearchItem {
 
 /** Session-domain unary methods (the map keys session.* of RpcMethodMap). */
 export interface SessionsApi {
+  /** Publish an immutable normalized worker report after committed closeout acceptance. */
+  publishDiagnosticWorkerReport(request: RpcRequest<import('@deepseek-ai/dsh-subagent/diagnostic-schema').DiagnosticPublication>): Promise<RpcResponse<import('@deepseek-ai/dsh-subagent/diagnostic-schema').DiagnosticPublicationResult>>
   /** Admit a policy-bound root against its inert caller executor before inference. */
   admitDiagnosticRun(request: RpcRequest<DiagnosticAdmission>): Promise<RpcResponse<{
     runId: string
     rootSessionId: string
     state: 'admitted'
+    admission: DiagnosticAdmission
     admissionDigest: string
     bindingEpoch: number
     duplicate: boolean

@@ -18,6 +18,7 @@ export const hostDescribeValueSchema = z.object({
     capabilityVersion: z.literal(1),
     executorProtocolVersion: z.literal(2),
     profiles: z.array(z.string()),
+    diagnosticWorkflowVersions: z.array(z.number().int()).optional(),
     maxChildren: z.number().int().positive(),
     maxConcurrentChildren: z.number().int().positive(),
   }).optional(),

@@ -6,12 +6,16 @@
  */
 
 import { z } from 'zod'
-import { diagnosticAdmissionSchema, diagnosticAssignmentSchema } from '@deepseek-ai/dsh-subagent/diagnostic-schema'
+import { diagnosticAdmissionSchema, diagnosticAssignmentSchema, diagnosticPublishSchema, diagnosticPublishResultSchema } from '@deepseek-ai/dsh-subagent/diagnostic-schema'
 
+/** Retained worker publication request and acknowledgement. */
+export const sessionPublishDiagnosticWorkerReportRequestSchema = diagnosticPublishSchema
+/** Stable root-history report identity. */
+export const sessionPublishDiagnosticWorkerReportValueSchema = diagnosticPublishResultSchema
 /** Versioned core admission retains every exact assignment field. */
 export const sessionAdmitDiagnosticRunRequestSchema = diagnosticAdmissionSchema
 /** Admission acknowledgement is distinct from inference or completion. */
-export const sessionAdmitDiagnosticRunValueSchema = z.object({ runId: z.string(), rootSessionId: z.string(), state: z.literal('admitted'), admissionDigest: z.string(), bindingEpoch: z.number().int().positive(), duplicate: z.boolean() })
+export const sessionAdmitDiagnosticRunValueSchema = z.object({ runId: z.string(), rootSessionId: z.string(), state: z.literal('admitted'), admission: diagnosticAdmissionSchema, admissionDigest: z.string(), bindingEpoch: z.number().int().positive(), duplicate: z.boolean() })
 /** Caller preparation uses two immutable assignment identities. */
 export const sessionPrepareDiagnosticAssignmentRequestSchema = z.object({
   runId: z.string(),
