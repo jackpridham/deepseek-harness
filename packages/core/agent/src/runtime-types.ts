@@ -60,6 +60,20 @@ export type RequestErrorAction = { kind: 'retry' } | undefined
 /** Why a session lifecycle began; seeded creates are `startup`, while persisted loads are `resume`. */
 export type SessionStartSource = 'startup' | 'resume' | 'clear' | 'compact'
 
+/** Exact between-step position retained by an explicit diagnostic checkpoint. */
+export interface AgentCheckpointPosition {
+  turn: number
+  step: number
+  openTurn: boolean
+  target: InboxTarget
+}
+
+/** A short-lived barrier; releasing it resumes only the original agent. */
+export interface AgentCheckpointHold {
+  position: AgentCheckpointPosition
+  release(): void
+}
+
 /** Public live-agent handle. */
 export interface Agent {
   /** The single identity shared with {@link session}. */
@@ -91,6 +105,15 @@ export interface Agent {
    * @returns fulfillment after no active driver or maintenance task remains.
    */
   whenIdle(): Promise<void>
+
+  /** Hold before the next inbox claim, without cancelling an in-flight operation.
+   * @param signal - bounds barrier acquisition and releases it on interruption.
+   * @returns the held between-step position and its release capability.
+   */
+  holdCheckpoint?(signal: AbortSignal): Promise<AgentCheckpointHold>
+
+  /** Continue a newly created checkpoint seed without replaying its completed steps. */
+  continueCheckpoint?(): void
 
   /**
    * Run one non-turn maintenance task from the true idle phase. The task starts

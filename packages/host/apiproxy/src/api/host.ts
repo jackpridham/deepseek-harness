@@ -57,6 +57,8 @@ export interface HostApi {
       profiles: string[]
       diagnosticWorkflowVersions?: number[]
       diagnosticSupervisionVersions?: number[]
+      diagnosticReviewVersions?: number[]
+      diagnosticCheckpointVersions?: number[]
       maxChildren: number
       maxConcurrentChildren: number
     }

@@ -96,6 +96,17 @@ Sources: [`packages/core/session/src/types.ts:362`](../packages/core/session/src
 
 ### `agent/*`
 
+<a id="agentcheckpoint-position--log-only"></a>
+
+#### `agent/checkpoint-position` — log-only
+
+```ts persistence-catalog
+/** Verified between-step position for explicit new-identity checkpoint continuation. */
+'agent/checkpoint-position': { turn: number; step: number; openTurn: boolean; target: InboxTarget }
+```
+
+Source: [`packages/core/agent/src/types.ts:58`](../packages/core/agent/src/types.ts)
+
 <a id="agentinboxspliced--log-only"></a>
 
 #### `agent/inbox/spliced` — log-only
@@ -115,7 +126,7 @@ Sources: [`packages/core/session/src/types.ts:362`](../packages/core/session/src
 }
 ```
 
-Source: [`packages/core/agent/src/types.ts:75`](../packages/core/agent/src/types.ts)
+Source: [`packages/core/agent/src/types.ts:77`](../packages/core/agent/src/types.ts)
 
 ### `agent-preset/*`
 
@@ -406,7 +417,29 @@ Source: [`packages/compaction/compaction/src/types.ts:33`](../packages/compactio
 }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:159`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:183`](../packages/subagent/subagent/src/diagnostic.ts)
+
+<a id="diagnosticcheckpoint-barrier--log-only"></a>
+
+#### `diagnostic/checkpoint-barrier` — log-only
+
+```ts persistence-catalog
+/** Administrative wake of a supervised root wait; never cancels a worker. */
+'diagnostic/checkpoint-barrier': { state: 'requested' }
+```
+
+Source: [`packages/subagent/subagent/src/diagnostic.ts:163`](../packages/subagent/subagent/src/diagnostic.ts)
+
+<a id="diagnosticcheckpoint-record--log-only"></a>
+
+#### `diagnostic/checkpoint-record` — log-only
+
+```ts persistence-catalog
+/** Backend-owned immutable checkpoint and fork operation journal. */
+'diagnostic/checkpoint-record': { kind: string; value: JsonValue }
+```
+
+Source: [`packages/subagent/subagent/src/diagnostic.ts:161`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticchild-state--log-only"></a>
 
@@ -417,7 +450,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:159`](../packages/subagen
 'diagnostic/child-state': JsonValue
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:163`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:187`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticevidence-read--log-only"></a>
 
@@ -428,7 +461,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:163`](../packages/subagen
 'diagnostic/evidence-read': JsonValue
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:165`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:189`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticexecutor--log-only"></a>
 
@@ -439,7 +472,18 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:165`](../packages/subagen
 'diagnostic/executor': { kind: string; value: JsonValue }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:171`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:195`](../packages/subagent/subagent/src/diagnostic.ts)
+
+<a id="diagnosticfork-origin--log-only"></a>
+
+#### `diagnostic/fork-origin` — log-only
+
+```ts persistence-catalog
+/** Provenance of a fork and its explicitly declared continuation changes. */
+'diagnostic/fork-origin': { checkpointId: string; sourceSessionId: string; boundarySeq: number; changes: JsonValue; toolOrder: string[] }
+```
+
+Source: [`packages/subagent/subagent/src/diagnostic.ts:167`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticguidance--log-only"></a>
 
@@ -450,7 +494,18 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:171`](../packages/subagen
 'diagnostic/guidance': { operationId: string; assignmentId: string; childSessionId: string; message: UserMessage; status: 'pending' | 'queued' | 'closed' }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:151`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:175`](../packages/subagent/subagent/src/diagnostic.ts)
+
+<a id="diagnosticinherited-state--log-only"></a>
+
+#### `diagnostic/inherited-state` — log-only
+
+```ts persistence-catalog
+/** Accepted origin state, inherited without creating new acceptance receipts. */
+'diagnostic/inherited-state': { checkpointId: string; originRootSessionId: string; acceptedState: JsonValue }
+```
+
+Source: [`packages/subagent/subagent/src/diagnostic.ts:159`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticmember--log-only"></a>
 
@@ -461,7 +516,18 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:151`](../packages/subagen
 'diagnostic/member': { rootSessionId: string; runId: string; assignmentId: string }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:167`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:191`](../packages/subagent/subagent/src/diagnostic.ts)
+
+<a id="diagnosticorigin-event--log-only"></a>
+
+#### `diagnostic/origin-event` — log-only
+
+```ts persistence-catalog
+/** Immutable imported metadata retains its origin without becoming a live operation. */
+'diagnostic/origin-event': { type: string; data: JsonValue }
+```
+
+Source: [`packages/subagent/subagent/src/diagnostic.ts:165`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticprogress--log-only"></a>
 
@@ -472,7 +538,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:167`](../packages/subagen
 'diagnostic/progress': { assignmentId: string; resolved: string[]; uncertain: string[]; nextCheck: string }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:149`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:173`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticrequest--log-only"></a>
 
@@ -483,7 +549,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:149`](../packages/subagen
 'diagnostic/request': RequestData
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:169`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:193`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticreservation--log-only"></a>
 
@@ -494,7 +560,29 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:169`](../packages/subagen
 'diagnostic/reservation': AssignmentData
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:157`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:181`](../packages/subagent/subagent/src/diagnostic.ts)
+
+<a id="diagnosticreview-result--log-only"></a>
+
+#### `diagnostic/review-result` — log-only
+
+```ts persistence-catalog
+/** Exact periodic wait reply, retained for operation retries after reconnect. */
+'diagnostic/review-result': { operationId: string; request: JsonValue; response: JsonValue }
+```
+
+Source: [`packages/subagent/subagent/src/diagnostic.ts:171`](../packages/subagent/subagent/src/diagnostic.ts)
+
+<a id="diagnosticreview-schedule--log-only"></a>
+
+#### `diagnostic/review-schedule` — log-only
+
+```ts persistence-catalog
+/** Server-owned review cadence; deadline advances only when a checkpoint is returned. */
+'diagnostic/review-schedule': { scheduleId: string; intervalMs: number; anchorMs: number; nextReview: number }
+```
+
+Source: [`packages/subagent/subagent/src/diagnostic.ts:169`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticrun-state--log-only"></a>
 
@@ -505,7 +593,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:157`](../packages/subagen
 'diagnostic/run-state': RunData
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:147`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:157`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticworker-report--log-only"></a>
 
@@ -516,7 +604,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:147`](../packages/subagen
 'diagnostic/worker-report': Omit<DiagnosticPublication, 'sessionId'> & { reportRef: string; sha256: string }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:155`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:179`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticworker-request--log-only"></a>
 
@@ -527,7 +615,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:155`](../packages/subagen
 'diagnostic/worker-request': { runId: string; request: DiagnosticWorkerRequest; assignmentId?: string }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:153`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:177`](../packages/subagent/subagent/src/diagnostic.ts)
 
 ### `feedback/*`
 
@@ -667,7 +755,7 @@ Source: [`packages/host/apiproxy/src/session-mcp.ts:11`](../packages/host/apipro
 }
 ```
 
-Source: [`packages/core/agent/src/types.ts:60`](../packages/core/agent/src/types.ts)
+Source: [`packages/core/agent/src/types.ts:62`](../packages/core/agent/src/types.ts)
 
 <a id="modelselection--log-only"></a>
 
@@ -678,7 +766,7 @@ Source: [`packages/core/agent/src/types.ts:60`](../packages/core/agent/src/types
 'model/selection': { selection: ModelSelection }
 ```
 
-Source: [`packages/core/agent/src/types.ts:58`](../packages/core/agent/src/types.ts)
+Source: [`packages/core/agent/src/types.ts:60`](../packages/core/agent/src/types.ts)
 
 ### `output/*`
 
@@ -700,7 +788,7 @@ Source: [`packages/core/agent/src/types.ts:58`](../packages/core/agent/src/types
 }
 ```
 
-Source: [`packages/core/agent-loop/src/agent.ts:68`](../packages/core/agent-loop/src/agent.ts)
+Source: [`packages/core/agent-loop/src/agent.ts:78`](../packages/core/agent-loop/src/agent.ts)
 
 <a id="outputcontinuation--log-only"></a>
 
@@ -717,7 +805,7 @@ Source: [`packages/core/agent-loop/src/agent.ts:68`](../packages/core/agent-loop
 }
 ```
 
-Source: [`packages/core/agent-loop/src/agent.ts:60`](../packages/core/agent-loop/src/agent.ts)
+Source: [`packages/core/agent-loop/src/agent.ts:70`](../packages/core/agent-loop/src/agent.ts)
 
 ### `permission/*`
 

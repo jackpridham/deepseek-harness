@@ -10,6 +10,8 @@ import type {
   AgentEventDispatch,
   AgentOptions,
   AgentStatus,
+  AgentCheckpointHold,
+  AgentCheckpointPosition,
   CancelOptions,
   InboxTarget,
   PreStepDecision,
@@ -45,6 +47,14 @@ type Phase =
     wakeRequested: boolean
   }
   | { kind: 'running'; abort: AbortController; turn: number; step: number; wakeRequested: boolean }
+
+/** One pending safe-boundary lease, owned by the checkpoint caller. */
+interface CheckpointHoldState {
+  readonly ready: PromiseWithResolvers<AgentCheckpointHold>
+  readonly release: PromiseWithResolvers<void>
+  readonly signal: AbortSignal
+  abort: () => void
+}
 
 type StepEndReason = Extract<TurnEndReason, { kind: 'completed' | 'max-tokens' }>
 
@@ -97,6 +107,8 @@ function requestProposal(header: EpochHeader): LlmCallConfig {
 export class ReactLoopAgent implements Agent {
   readonly inbox: Inbox
   private phase: Phase
+  private checkpointHold: CheckpointHoldState | undefined
+  private checkpointResume: AgentCheckpointPosition | undefined
   private activityDone: Promise<void> = Promise.resolve()
 
   /** The agent-scoped registration boundary; the lifecycle owner unwinds it after the driver exits. */
@@ -132,6 +144,72 @@ export class ReactLoopAgent implements Agent {
 
   get status(): AgentStatus {
     return this.phase.kind === 'idle' || this.phase.kind === 'maintenance' ? 'idle' : 'running'
+  }
+
+  async holdCheckpoint(signal: AbortSignal): Promise<AgentCheckpointHold> {
+    signal.throwIfAborted()
+    if (this.checkpointHold) throw new Error('Agent already has a checkpoint barrier')
+    const hold: CheckpointHoldState = {
+      ready: Promise.withResolvers<AgentCheckpointHold>(),
+      release: Promise.withResolvers<void>(),
+      signal,
+      abort: () => {},
+    }
+    this.checkpointHold = hold
+    hold.abort = () => {
+      hold.ready.reject(signal.reason)
+      this.releaseCheckpointHold(hold)
+    }
+    signal.addEventListener('abort', hold.abort, { once: true })
+    if (this.phase.kind === 'idle') {
+      this.publishCheckpointHold(hold, {
+        turn: this.phase.lastTurn,
+        step: 0,
+        openTurn: false,
+        target: 'next-turn',
+      })
+    }
+    return hold.ready.promise
+  }
+
+  /** Publish one stable safe point; only the holder can release it. */
+  private publishCheckpointHold(hold: CheckpointHoldState, position: AgentCheckpointPosition): void {
+    hold.ready.resolve({ position, release: () => { this.releaseCheckpointHold(hold) } })
+  }
+
+  /** Release one barrier exactly once, including its external-abort listener. */
+  private releaseCheckpointHold(hold = this.checkpointHold): void {
+    if (hold === undefined || this.checkpointHold !== hold) return
+    this.checkpointHold = undefined
+    hold.signal.removeEventListener('abort', hold.abort)
+    hold.release.resolve()
+    // An idle barrier owns dispatch until this release. A running driver is
+    // already awaiting `hold.release` at its next safe boundary.
+    if (this.phase.kind === 'idle' && this.inbox.hasPending) this.wakeDriver()
+  }
+
+  private async checkpointBoundary(position: AgentCheckpointPosition): Promise<void> {
+    const hold = this.checkpointHold
+    if (!hold) return
+    hold.signal.throwIfAborted()
+    this.publishCheckpointHold(hold, position)
+    await hold.release.promise
+  }
+
+  continueCheckpoint(): void {
+    if (this.phase.kind !== 'idle') throw new Error('Checkpoint continuation requires an idle new agent')
+    const marker = this.session.events.findLast(event => event.type === 'agent/checkpoint-position')
+    if (marker?.type !== 'agent/checkpoint-position' || this.session.events.some(event => event.seq > marker.seq && event.type === 'step/start'))
+      throw new Error('Checkpoint was already continued or has no continuation position')
+    const position = marker.data
+    const boundary = this.session.events.findLast(event => event.type === 'turn/start' || event.type === 'turn/end')
+    const step = this.session.events.findLast(event => event.type === 'step/start' || event.type === 'step/end')
+    if (position.openTurn && (boundary?.type !== 'turn/start' || boundary.data.turn !== position.turn
+      || position.step > 0 && (step?.type !== 'step/end' || step.data.step !== position.step)))
+      throw new Error('Checkpoint no longer identifies an open turn at a completed step')
+    if (!position.openTurn) { if (this.inbox.hasPending) this.wakeDriver(); return }
+    this.checkpointResume = position
+    this.wakeDriver()
   }
 
   /** Terminally repair a crash-orphaned continuation instead of replaying it twice. */
@@ -193,6 +271,9 @@ export class ReactLoopAgent implements Agent {
       this.inbox.clear()
       if (this.phase.kind !== 'idle') this.phase.wakeRequested = false
     }
+    // A held driver is waiting outside the model/tool path. Releasing it lets
+    // the ordinary cancellation path append its real aborted turn ending.
+    this.releaseCheckpointHold()
     if (this.phase.kind !== 'idle') this.phase.abort.abort(cause)
   }
 
@@ -212,6 +293,14 @@ export class ReactLoopAgent implements Agent {
         return await job(maintenance.abort.signal)
       } finally {
         this.setPhase({ kind: 'idle', lastTurn: maintenance.lastTurn })
+        if (this.checkpointHold) {
+          this.publishCheckpointHold(this.checkpointHold, {
+            turn: maintenance.lastTurn,
+            step: 0,
+            openTurn: false,
+            target: 'next-turn',
+          })
+        }
         if (maintenance.wakeRequested && this.inbox.hasPending) this.wakeDriver()
         done.resolve()
       }
@@ -227,6 +316,7 @@ export class ReactLoopAgent implements Agent {
    *   the inbox insertion so a reentrant cancel cannot reclassify it.
    */
   private wakeDriver(wakeAfterAbort = false): void {
+    if (this.checkpointHold && this.phase.kind === 'idle') return
     if (this.phase.kind !== 'idle') {
       // Maintenance and aborted drivers cannot deliver the wake: latch it for
       // replay at convergence. Live drivers claim queued work themselves;
@@ -274,6 +364,14 @@ export class ReactLoopAgent implements Agent {
       if (this.phase.kind === 'running') {
         const { turn, wakeRequested } = this.phase
         this.setPhase({ kind: 'idle', lastTurn: turn })
+        if (this.checkpointHold) {
+          this.publishCheckpointHold(this.checkpointHold, {
+            turn,
+            step: 0,
+            openTurn: false,
+            target: 'next-turn',
+          })
+        }
         if (wakeRequested && this.inbox.hasPending) this.wakeDriver()
       }
     }
@@ -307,19 +405,27 @@ export class ReactLoopAgent implements Agent {
     const phase = this.phase
     const { signal } = phase.abort
     signal.throwIfAborted()
-    const turn = phase.turn + 1
+    const continuation = this.checkpointResume
+    this.checkpointResume = undefined
+    const turn = continuation?.turn ?? phase.turn + 1
+    if (continuation) phase.step = continuation.step
     try {
       const instructionsRevision = this.session.getInstructions().revision
-      this.session.append('turn/start', { turn, ...instructionsRevision === 0 ? {} : { instructionsRevision } })
+      if (!continuation) this.session.append('turn/start', { turn, ...instructionsRevision === 0 ? {} : { instructionsRevision } })
     } catch (error: unknown) {
       this.throwError(error)
     }
     phase.turn = turn
     let turnEnds: TurnEndReason | null = null
-    let target: InboxTarget = 'next-turn'
+    let target: InboxTarget = continuation?.target ?? 'next-turn'
     try {
       while (true) {
         signal.throwIfAborted()
+        // Do not introduce an await into ordinary turn scheduling. Initial
+        // steering is intentionally claimed synchronously with the wake.
+        if (this.checkpointHold) {
+          await this.checkpointBoundary({ turn, step: phase.step, openTurn: true, target })
+        }
         const step = phase.step + 1
         const decision = await this.preStep(target, { turn, step })
         if (decision.kind === 'reject') {

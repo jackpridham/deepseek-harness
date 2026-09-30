@@ -3,14 +3,16 @@ import type {} from '@deepseek-ai/dsh-compaction'
 import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
+import assert from 'node:assert/strict'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { Agent, ModelSelection } from '@deepseek-ai/dsh-agent'
-import { SessionId, SessionPolicyId } from '@deepseek-ai/dsh-session'
+import type { Agent, ModelSelection, AgentCheckpointHold, AgentHandle } from '@deepseek-ai/dsh-agent'
+import { Session as SessionLog, SessionId, SessionPolicyId } from '@deepseek-ai/dsh-session'
 import type { JsonValue, Session } from '@deepseek-ai/dsh-session'
 import { ReasoningEffortId, createUserMessage, freezeMessage } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, StreamChunk, MessageId, UserMessage } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, StreamChunk, MessageId, UserMessage, ToolSchema } from '@deepseek-ai/dsh-llm'
 import type { ToolDefinition, ToolExecution } from '@deepseek-ai/dsh-tools'
+import type { DiagnosticTreeSession, DiagnosticTreeSnapshot, DiagnosticTreeFork } from './diagnostic-checkpoint.ts'
 import type { SubagentRuntime } from './index.ts'
 import {
   diagnosticCanonicalJson,
@@ -21,7 +23,8 @@ import {
   diagnosticResultSchema,
   diagnosticAdmissionSchema, diagnosticDispatchSchema, diagnosticPreparationSchema,
   diagnosticWaitSchema, diagnosticReadReportSchema, diagnosticPublishSchema,
-  diagnosticSupervisionWaitSchema, diagnosticInspectWorkerSchema, diagnosticGuidanceSchema, diagnosticProgressSchema,
+  diagnosticReviewWaitSchema, diagnosticSupervisionWaitSchema, diagnosticInspectWorkerSchema,
+  diagnosticGuidanceSchema, diagnosticProgressSchema,
 } from './diagnostic-contract.ts'
 import type { DiagnosticAdmission, DiagnosticAssignment, DiagnosticPublication, DiagnosticPublicationResult, DiagnosticWorkerRequest } from './diagnostic-contract.ts'
 
@@ -71,6 +74,7 @@ function workflowResultFits(value: unknown): boolean {
 export interface DiagnosticBinding {
   diagnosticWorkflowVersion?: 1
   diagnosticSupervisionVersion?: 1
+  diagnosticReviewVersion?: 1
   executorBindingId: string
   bindingEpoch: number
   runId: string
@@ -88,6 +92,14 @@ export interface DiagnosticExecutor {
   diagnosticWorkflowVersions?: readonly number[]
   /** Supports supervision without changing source calls or closeout acceptance. */
   diagnosticSupervisionVersions?: readonly number[]
+  /** Joint support for durable periodic reviews. */
+  diagnosticReviewVersions?: readonly number[]
+  /** Joint support for isolated diagnostic tree capture and restore. */
+  diagnosticCheckpointVersions?: readonly number[]
+  /** Hold the executor journal stable after all source operations have committed. */
+  withCheckpoint?<T>(root: SessionId, capture: (state: JsonValue) => Promise<T>): Promise<T>
+  /** Classify an exact native call from authoritative executor records. */
+  toolOutcome?(root: SessionId, producer: SessionId, callEventSeq: number): { status: 'pending' | 'accepted' | 'rejected'; stage: 'backend_schema' | 'backend_validation' | 'caller'; origin?: { checkpointId: string; producerSessionId: string } } | undefined
   /** Prepare scoped work over caller transport without holding the root transaction. */
   prepareWorkers?(root: Agent, assignment: DiagnosticAssignment, args: unknown, execution: ToolExecution): Promise<unknown>
   /** Wait for the already returned closeout's durable acceptance receipt. */
@@ -145,6 +157,20 @@ declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
     /** Immutable admission and current executor epoch; required on replay. */
     'diagnostic/run-state': RunData
+    /** Accepted origin state, inherited without creating new acceptance receipts. */
+    'diagnostic/inherited-state': { checkpointId: string; originRootSessionId: string; acceptedState: JsonValue }
+    /** Backend-owned immutable checkpoint and fork operation journal. */
+    'diagnostic/checkpoint-record': { kind: string; value: JsonValue }
+    /** Administrative wake of a supervised root wait; never cancels a worker. */
+    'diagnostic/checkpoint-barrier': { state: 'requested' }
+    /** Immutable imported metadata retains its origin without becoming a live operation. */
+    'diagnostic/origin-event': { type: string; data: JsonValue }
+    /** Provenance of a fork and its explicitly declared continuation changes. */
+    'diagnostic/fork-origin': { checkpointId: string; sourceSessionId: string; boundarySeq: number; changes: JsonValue; toolOrder: string[] }
+    /** Server-owned review cadence; deadline advances only when a checkpoint is returned. */
+    'diagnostic/review-schedule': { scheduleId: string; intervalMs: number; anchorMs: number; nextReview: number }
+    /** Exact periodic wait reply, retained for operation retries after reconnect. */
+    'diagnostic/review-result': { operationId: string; request: JsonValue; response: JsonValue }
     /** Worker-authored status; never accepted evidence or closeout. */
     'diagnostic/progress': { assignmentId: string; resolved: string[]; uncertain: string[]; nextCheck: string }
     /** Durable supervisor intent and inbox acceptance, keyed by operation identity. */
@@ -190,6 +216,8 @@ export class DiagnosticRuns {
   private readonly tails = new Map<SessionId, Promise<unknown>>()
   private readonly installations = new Map<SessionId, () => void>()
   private readonly configuring = new Set<SessionId>()
+  private readonly capturing = new Set<SessionId>()
+  private readonly forkHandles = new Map<SessionId, AgentHandle[]>()
   private readonly deliveries = new Set<SessionId>()
 
   constructor(
@@ -294,6 +322,8 @@ export class DiagnosticRuns {
       profiles: string[]
       diagnosticWorkflowVersions?: number[]
       diagnosticSupervisionVersions?: number[]
+      diagnosticReviewVersions?: number[]
+      diagnosticCheckpointVersions?: number[]
       maxChildren: number
       maxConcurrentChildren: number
     }
@@ -316,6 +346,11 @@ export class DiagnosticRuns {
       ...(this.executor.diagnosticSupervisionVersions?.includes(1)
         && this.executor.diagnosticWorkflowVersions?.includes(1)
         && this.executor.prepareWorkers && this.executor.awaitCloseout ? { diagnosticSupervisionVersions: [1] } : {}),
+      ...(this.executor.diagnosticReviewVersions?.includes(1) && this.executor.diagnosticSupervisionVersions?.includes(1)
+        && this.executor.diagnosticWorkflowVersions?.includes(1) && this.executor.prepareWorkers && this.executor.awaitCloseout
+        ? { diagnosticReviewVersions: [1] } : {}),
+      ...(this.executor.diagnosticCheckpointVersions?.includes(1) && this.executor.withCheckpoint
+        ? { diagnosticCheckpointVersions: [1] } : {}),
       maxChildren: this.maxChildren,
       maxConcurrentChildren: this.maxConcurrentChildren,
     }
@@ -357,7 +392,7 @@ export class DiagnosticRuns {
     }
   }
 
-  private service<K extends 'agents' | 'sessions' | 'sessionPersistence'>(name: K): Context[K] {
+  private service<K extends 'agents' | 'sessions' | 'sessionPersistence' | 'tools'>(name: K): Context[K] {
     const service = this.ctx.get(name)
     if (service === undefined) throw new DiagnosticError('diagnostic-capability-unavailable', `Diagnostic service ${name} is unavailable`)
     return service
@@ -469,6 +504,9 @@ export class DiagnosticRuns {
     if (jsonObject(input)?.diagnosticSupervisionVersion !== undefined
       && (jsonObject(input)?.diagnosticSupervisionVersion !== 1 || !this.capability()?.diagnosticSupervisionVersions?.includes(1)))
       throw new DiagnosticError('diagnostic-capability-unavailable', 'Diagnostic supervision version is unavailable')
+    if (jsonObject(input)?.diagnosticReviewVersion !== undefined
+      && (jsonObject(input)?.diagnosticReviewVersion !== 1 || !this.capability()?.diagnosticReviewVersions?.includes(1)))
+      throw new DiagnosticError('diagnostic-capability-unavailable', 'Diagnostic review version is unavailable')
     const admission = diagnosticAdmissionSchema.parse(input)
     const root = this.root(SessionId(admission.rootSessionId))
     this.requireCompaction(root)
@@ -504,7 +542,9 @@ export class DiagnosticRuns {
         throw new DiagnosticError('diagnostic-policy-rejected', 'Admission requires a fresh idle root')
       const binding = this.requireExecutor().binding(root.id)
       if (binding.diagnosticWorkflowVersion !== admission.diagnosticWorkflowVersion
-        || binding.diagnosticSupervisionVersion !== admission.diagnosticSupervisionVersion)
+        || binding.diagnosticSupervisionVersion !== admission.diagnosticSupervisionVersion
+        || binding.diagnosticReviewVersion !== admission.diagnosticReviewVersion
+      )
         throw new DiagnosticError('diagnostic-capability-unavailable', 'Executor and core diagnostic workflow opt-in must agree')
       if (
         binding.state !== 'awaiting-admission' ||
@@ -857,6 +897,12 @@ export class DiagnosticRuns {
     disposers.push(agent.ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
       const assembly = await next()
       assembly.tools = assembly.tools.filter(tool => allowedTools.has(tool.name))
+      const fork = agent.session.events.findLast(event => event.type === 'diagnostic/fork-origin')
+      if (fork?.type === 'diagnostic/fork-origin') {
+        const order = fork.data.toolOrder
+        assembly.tools.sort((a, b) => (order.indexOf(a.name) < 0 ? order.length : order.indexOf(a.name))
+          - (order.indexOf(b.name) < 0 ? order.length : order.indexOf(b.name)))
+      }
       return assembly
     }))
     disposers.push(agent.ctx.tools.guard(execution => allowedTools.has(execution.name)
@@ -870,6 +916,8 @@ export class DiagnosticRuns {
           && ['session/instructions', 'model/selection', 'sandbox/mode', 'approval/policy'].includes(event.type))
           throw new DiagnosticError('diagnostic-policy-rejected', 'Diagnostic policy is immutable')
         if (event.type === 'turn/start') {
+          if (agent.session.events.some(event => event.type === 'diagnostic/fork-origin') && !this.forkHandles.has(member?.root.id ?? agent.id))
+            throw new DiagnosticError('diagnostic-policy-rejected', 'Interrupted diagnostic fork requires a new fork operation; cold continuation is unsupported')
           if (member === undefined)
             throw new DiagnosticError('diagnostic-policy-rejected', 'Diagnostic run admission is required')
           this.requireRun(member.root)
@@ -903,6 +951,7 @@ export class DiagnosticRuns {
       disposers.push(this.requireExecutor().install(agent, member.assignment, member.root.id))
       if (limits.diagnosticWorkflowVersion === 1) {
         disposers.push(agent.ctx.on('agent/pre-step', async (_payload, next) => {
+          if (agent.session.events.some(event => event.type === 'diagnostic/fork-origin') && !this.forkHandles.has(member.root.id)) return { kind: 'reject' }
           await this.requireExecutor().awaitCloseout?.(member.root.id, agent.id, _payload.signal)
           if (this.executor?.closed?.(member.root.id, agent.id, member.assignment.assignmentId)) return { kind: 'reject' }
           const decision = await next()
@@ -925,7 +974,7 @@ export class DiagnosticRuns {
         }))
         const tools = [
           ['dispatch_workers', 'Launch focused independent workers.', diagnosticDispatchSchema, (args: unknown, execution: ToolExecution) => this.dispatchWorkers(agent, args, execution)],
-          ['wait_for_workers', 'Wait for any worker report, terminal change or requested supervision checkpoint.', limits.diagnosticSupervisionVersion === 1 ? diagnosticSupervisionWaitSchema : diagnosticWaitSchema, (args: unknown, execution: ToolExecution) => this.waitForWorkers(agent, args, execution.signal)],
+          ['wait_for_workers', 'Wait for any worker report, terminal change or requested supervision checkpoint.', limits.diagnosticReviewVersion === 1 ? diagnosticReviewWaitSchema : limits.diagnosticSupervisionVersion === 1 ? diagnosticSupervisionWaitSchema : diagnosticWaitSchema, (args: unknown, execution: ToolExecution) => this.waitForWorkers(agent, args, execution.signal)],
           ['read_worker_report', 'Read an immutable worker report page.', diagnosticReadReportSchema, (args: unknown) => this.readWorkerReport(agent, args)],
           ...(limits.diagnosticSupervisionVersion === 1 ? [
             ['inspect_worker', 'Inspect bounded worker scope, activity and progress; progress is not accepted evidence.', diagnosticInspectWorkerSchema, (args: unknown) => this.inspectWorker(agent, args)],
@@ -933,7 +982,7 @@ export class DiagnosticRuns {
           ] as const : []),
         ] as const
         for (const [name, description, schema, execute] of tools) disposers.push(agent.ctx.tools.register({
-          name, description, parameters: z.toJSONSchema(schema),
+          name, description, parameters: { ...z.toJSONSchema(schema, { io: 'input' }) },
           output: { schema: { type: 'object' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
           execute: async (args, execution) => {
             try { return await execute(args, execution) }
@@ -948,7 +997,7 @@ export class DiagnosticRuns {
       if (agent !== member.root && limits.diagnosticSupervisionVersion === 1 && allowedTools.has('update_progress')) {
         disposers.push(agent.ctx.tools.register({
           name: 'update_progress', description: 'Record what is resolved, uncertain, and the next necessary check. This is progress, not report evidence.',
-          parameters: z.toJSONSchema(diagnosticProgressSchema),
+          parameters: { ...z.toJSONSchema(diagnosticProgressSchema, { io: 'input' }) },
           output: { schema: { type: 'object' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
           execute: async (args) => {
             this.requireRun(member.root)
@@ -1298,7 +1347,10 @@ export class DiagnosticRuns {
     const clip = (text: string, limit = 2048) => text.length > limit ? text.slice(0, limit) + '…' : text
     const calls = events.filter(event => event.type === 'tool/call')
     const results = events.filter(event => event.type === 'tool/result')
-    const finished = new Set(results.map(event => event.data.message.source.callId))
+    const resultFor = (call: typeof calls[number]) => results.find(event => event.data.turn === call.data.turn
+      && event.data.step === call.data.step && event.data.message.source.callId === call.data.callId)
+    const callFor = (result: typeof results[number]) => calls.find(event => event.data.turn === result.data.turn
+      && event.data.step === result.data.step && event.data.callId === result.data.message.source.callId)
     const failures = results.filter(event => event.data.message.content.some(block => block.isError))
     const progress = events.findLast(event => event.type === 'diagnostic/progress' && event.data.assignmentId === assignmentId)
     const scope = this.workflowRequests(root).find(event => event.data.assignmentId === assignmentId)?.data.request
@@ -1315,13 +1367,19 @@ export class DiagnosticRuns {
           paths: scope.paths.slice(0, 40).map(path => clip(path, 512)), truncated: scope.paths.length > 40 },
         textLimit: 2048 },
       activity: { state: acceptedCloseout ? 'closed' : this.service('agents').get(childId)?.status ?? 'not-resident', ...activity,
-        pendingTools: calls.filter(event => !finished.has(event.data.callId)).slice(-maxEvents)
+        pendingTools: calls.filter(event => !resultFor(event)).slice(-maxEvents)
           .map(event => ({ name: event.data.name, eventSeq: event.seq, elapsedMs: Math.max(0, Date.now() - event.time) })) },
-      recentToolFailures: failures.slice(-maxEvents).map(event => ({ eventSeq: event.seq,
-        callId: event.data.message.source.callId, detail: clip(JSON.stringify(event.data.message.content)) })),
+      recentToolFailures: failures.filter(event => callFor(event)?.data.name !== 'closeout_json').slice(-maxEvents).map((event) => {
+        const call = callFor(event)
+        return { eventSeq: event.seq, callEventSeq: call?.seq ?? null, tool: call?.data.name ?? null,
+          callId: event.data.message.source.callId, detail: clip(JSON.stringify(event.data.message.content)) }
+      }),
       reportAttempts: calls.filter(event => event.data.name === 'closeout_json').slice(-maxEvents).map((event) => {
-        const result = results.find(value => value.data.message.source.callId === event.data.callId)
-        return { callEventSeq: event.seq, resultEventSeq: result?.seq ?? null,
+        const result = resultFor(event)
+        const outcome = this.requireExecutor().toolOutcome?.(root.id, childId, event.seq)
+        return { callEventSeq: event.seq, resultEventSeq: result?.seq ?? null, tool: 'closeout_json',
+          attribution: outcome?.stage ?? null, acceptance: outcome?.status ?? 'unknown', origin: outcome?.origin ?? null,
+          detail: result ? clip(JSON.stringify(result.data.message.content)) : null,
           status: result === undefined ? 'pending' : result.data.message.content.some(block => block.isError) ? 'rejected' : 'returned' }
       }),
       acceptedCloseout,
@@ -1396,11 +1454,262 @@ export class DiagnosticRuns {
     })
   }
 
+  /** Capture the complete tree between steps without cancelling source work.
+   * @param rootId - authenticated diagnostic root.
+   * @param holdMs - maximum short coordination barrier in milliseconds.
+   * @returns an immutable candidate, or explicit pending/blocked acquisition state.
+   */
+  async checkpointTree(rootId: SessionId, holdMs: number): Promise<DiagnosticTreeSnapshot | { state: 'pending' | 'blocked'; reason: string }> {
+    const root = this.root(rootId)
+    const run = this.requireRun(root)
+    if (this.assignments(root.session).some(record => record.state === 'uncertain' || record.state === 'reserved'))
+      return { state: 'blocked', reason: 'Worker dispatch requires reconciliation' }
+    const executor = this.requireExecutor()
+    if (run.admission.diagnosticSupervisionVersion !== 1 || !executor.withCheckpoint)
+      return { state: 'blocked', reason: 'Supervision and matching checkpoint executor are required' }
+    if (this.capturing.has(rootId)) return { state: 'pending', reason: 'Another capture is coordinating this run' }
+    const abort = new AbortController()
+    const timer = setTimeout(() => { abort.abort(new Error('Safe step boundary is still pending')) }, holdMs)
+    const held = new Map<string, { agent: Agent; hold: AgentCheckpointHold }>()
+    this.capturing.add(rootId)
+    root.session.append('diagnostic/checkpoint-barrier', { state: 'requested' })
+    try {
+      const hold = async (agent: Agent) => {
+        if (!agent.holdCheckpoint) throw new Error('Agent driver does not support checkpoint boundaries')
+        const lease = await agent.holdCheckpoint(abort.signal)
+        held.set(agent.id, { agent, hold: lease })
+      }
+      // Root hold freezes dispatch; any workers launched by its last step join this roster.
+      await hold(root)
+      const ids = [...new Set(this.assignments(root.session).flatMap(record => record.childSessionId ? [record.childSessionId] : []))]
+      await Promise.all(ids.map(async (id) => {
+        const agent = this.service('agents').get(SessionId(id))
+        if (agent) await hold(agent)
+      }))
+      return await executor.withCheckpoint(rootId, executorState => this.transact(rootId, async () => {
+        const sessions: DiagnosticTreeSession[] = []
+        for (const id of [rootId, ...ids]) {
+          abort.signal.throwIfAborted()
+          let live = held.get(id)
+          if (live && this.service('agents').get(SessionId(id)) !== live.agent) live = undefined
+          if (live) await this.flush(live.agent.session)
+          if (live && this.service('agents').get(SessionId(id)) !== live.agent) live = undefined
+          const stored = live ? { meta: live.agent.session.header, events: live.agent.session.events }
+            : await this.service('sessionPersistence').inspect(SessionId(id))
+          const boundary = stored.events.findLast(event => event.type === 'turn/start' || event.type === 'turn/end')
+          const lastStep = stored.events.findLast(event => event.type === 'step/start' || event.type === 'step/end')
+          if (live?.hold.position.openTurn && (boundary?.type !== 'turn/start' || boundary.data.turn !== live.hold.position.turn
+            || lastStep?.type === 'step/start' || (lastStep?.data.step ?? 0) !== live.hold.position.step))
+            throw new Error('Checkpoint hold was interrupted before capture; retry at a new boundary')
+          if (!live && boundary?.type === 'turn/start') throw new Error('Nonresident worker has an unresolved open turn')
+          const assignment = id === rootId ? run.admission.coordinatorAssignment
+            : this.assignments(root.session).find(record => record.childSessionId === id)?.assignment
+          if (!assignment) throw new Error('Checkpoint worker assignment is missing')
+          sessions.push({ header: structuredClone(stored.meta), events: structuredClone([...stored.events]),
+            position: live?.hold.position ?? { turn: boundary?.data.turn ?? 0, step: 0, openTurn: false, target: 'next-turn' },
+            inbox: { nextStep: structuredClone([...(live?.agent.inbox.nextStep ?? [])]),
+              nextTurn: structuredClone([...(live?.agent.inbox.nextTurn ?? [])]) },
+            options: structuredClone(live?.agent.options ?? stored.events.findLast(event => event.type === 'request/header')?.data.header.config ?? {}),
+            tools: stored.events.findLast(event => event.type === 'request/header')?.data.header.tools ?? (live ? this.service('tools').schemas(live.agent) : []),
+            terminal: this.requireExecutor().closed?.(rootId, SessionId(id), assignment.assignmentId) === true,
+          })
+        }
+        for (const captured of sessions) {
+          const current = this.service('agents').get(captured.header.id)
+          if (current && current.session.events.at(-1)?.seq !== captured.events.at(-1)?.seq)
+            throw new Error('Tree changed during checkpoint capture; retry at a new safe boundary')
+        }
+        return { version: 1, continuationVersion: 1, rootSessionId: rootId, capturedAt: Date.now(), sessions, executorState }
+      }))
+    } catch (error) {
+      return { state: abort.signal.aborted ? 'pending' : 'blocked', reason: error instanceof Error ? error.message : 'Checkpoint boundary unavailable' }
+    } finally {
+      clearTimeout(timer)
+      for (const { hold } of held.values()) hold.release()
+      abort.abort(new Error('Checkpoint coordination released'))
+      this.capturing.delete(rootId)
+    }
+  }
+
+  /** Materialize a captured tree with fresh membership and no automatic inference.
+   * @param snapshot - verified backend-owned immutable snapshot.
+   * @param fork - new identities and declared continuation changes.
+   * @returns the new root identity after every session is durable.
+   */
+  async restoreTree(snapshot: DiagnosticTreeSnapshot, fork: DiagnosticTreeFork): Promise<string> {
+    if (snapshot.version !== 1 || snapshot.continuationVersion !== 1)
+      throw new Error('Unsupported diagnostic checkpoint continuation version')
+    const source = snapshot.sessions.find(session => session.header.id === snapshot.rootSessionId)
+    const original = source?.events.findLast(event => event.type === 'diagnostic/run-state')
+    if (!source || original?.type !== 'diagnostic/run-state') throw new Error('Checkpoint admission is missing')
+    const rootId = SessionId(fork.rootSessionId)
+    const ids = Object.values(fork.sessionIds)
+    if (fork.sessionIds[snapshot.rootSessionId] !== rootId || new Set(ids).size !== snapshot.sessions.length
+      || snapshot.sessions.some(session => !fork.sessionIds[session.header.id] || ids.includes(session.header.id))
+      || fork.runId === original.data.runId || fork.executorBindingId === original.data.executorBindingId)
+      throw new Error('Fork requires distinct run, session and executor identities')
+    if (this.forkHandles.has(rootId)) return rootId
+    const persisted = new Set((await this.service('sessionPersistence').list()).map(header => header.id))
+    if (ids.some(id => persisted.has(SessionId(id)) || this.service('agents').get(SessionId(id))))
+      throw new Error('Fork identities already exist; interrupted restoration requires a new fork operation')
+    const remapAssignment = (assignment: DiagnosticAssignment): DiagnosticAssignment => {
+      const next = { ...assignment, runId: fork.runId, parentSessionId: rootId }
+      return { ...next, digest: diagnosticRecordDigest(next, true) }
+    }
+    const admission: DiagnosticAdmission = { ...original.data.admission, runId: fork.runId, rootSessionId: rootId,
+      executorBindingId: fork.executorBindingId, bindingEpoch: 1,
+      coordinatorAssignment: remapAssignment(original.data.admission.coordinatorAssignment) }
+    // Do not reset elapsed deadlines, historical charges, capability opt-ins or worker counts.
+    if (Date.now() >= Date.parse(admission.deadline)) throw new Error('Captured admission deadline has expired')
+    const reservations = new Map<string, AssignmentData>()
+    for (const event of source.events) if (event.type === 'diagnostic/reservation') reservations.set(event.data.assignmentId, event.data)
+    const mappedId = (id: string) => {
+      const mapped = fork.sessionIds[id]
+      assert(mapped, `Checkpoint session mapping is missing for ${id}`)
+      return mapped
+    }
+    const executorState = jsonObject(snapshot.executorState)
+    assert(executorState && executorState.acceptedState !== undefined, 'Checkpoint accepted state is missing')
+    const handles: AgentHandle[] = []
+    try {
+      for (const captured of [source, ...snapshot.sessions.filter(session => session !== source)]) {
+        const id = SessionId(mappedId(captured.header.id))
+        const seed = captured.events.map((event) => {
+          // Keep cursor-bearing history at its original sequence, with explicit new membership.
+          if (event.type === 'diagnostic/request') return { ...event, data: { ...event.data, producerSessionId: mappedId(event.data.producerSessionId) } }
+          if (event.type === 'diagnostic/review-schedule' || event.type === 'diagnostic/progress') return event
+          if (event.type === 'diagnostic/review-result') return { ...event, data: { ...event.data, response: this.forkReviewResponse(event.data.response, fork.sessionIds) } }
+          if (event.type === 'diagnostic/worker-request') return { ...event, data: { ...event.data, runId: fork.runId } }
+          if (event.type === 'diagnostic/guidance') return { ...event, data: { ...event.data, childSessionId: mappedId(event.data.childSessionId) } }
+          if (event.type === 'diagnostic/worker-report') return { ...event, data: { ...event.data, runId: fork.runId,
+            childSessionId: mappedId(event.data.childSessionId),
+            closeoutRef: { ...event.data.closeoutRef, producerSessionId: mappedId(event.data.childSessionId) } } }
+          return event.type.startsWith('diagnostic/') || event.type.startsWith('subagent/')
+            ? { ...event, type: 'diagnostic/origin-event' as const, data: { type: event.type, data: event.data as unknown as JsonValue } }
+            : event
+        })
+        const log = SessionLog.create(id, seed)
+        log.append('diagnostic/fork-origin', { checkpointId: fork.checkpointId, sourceSessionId: captured.header.id,
+          boundarySeq: captured.events.at(-1)?.seq ?? -1, changes: fork.changes, toolOrder: captured.tools.map(tool => tool.name) })
+        log.append('agent/checkpoint-position', captured.position)
+        if (captured === source) {
+          log.append('diagnostic/run-state', { ...original.data, admission, runId: fork.runId, rootSessionId: rootId,
+            executorBindingId: fork.executorBindingId, bindingEpoch: 1, admissionDigest: diagnosticRecordDigest(admission),
+            activeChildren: 0, activeModelRequests: 0, activeCalls: 0, pendingResults: 0, quiescent: true, state: 'admitted' })
+          for (const record of reservations.values()) {
+            const assignment = remapAssignment(record.assignment)
+            this.reserve(log, { ...record, runId: fork.runId, rootSessionId: rootId, parentSessionId: rootId,
+              assignment, assignmentDigest: assignment.digest,
+              ...(record.childSessionId ? { childSessionId: mappedId(record.childSessionId) } : {}) })
+          }
+          log.append('diagnostic/inherited-state', { checkpointId: fork.checkpointId,
+            originRootSessionId: snapshot.rootSessionId, acceptedState: executorState.acceptedState })
+          log.append('diagnostic/executor', { kind: 'fork-import', value: { checkpointId: fork.checkpointId,
+            originRootSessionId: snapshot.rootSessionId, sessionIds: fork.sessionIds,
+            closed: snapshot.sessions.filter(session => session.terminal).map(session => mappedId(session.header.id)),
+            changes: fork.changes, publicationScope: 'experiment' } })
+        } else {
+          const record = [...reservations.values()].find(record => record.childSessionId === captured.header.id)
+          if (!record) throw new Error('Checkpoint worker reservation is missing')
+          log.append('subagent/descriptor', { version: 2, mode: 'one-shot', provider: 'diagnostic-tree', label: record.assignment.role })
+          log.append('diagnostic/member', { rootSessionId: rootId, runId: fork.runId, assignmentId: record.assignmentId })
+        }
+        for (const [target, messages] of [['next-step', captured.inbox.nextStep], ['next-turn', captured.inbox.nextTurn]] as const)
+          if (messages.length) log.append('agent/inbox/spliced', { target, start: 0, inserted: messages })
+        const identityNotice = `Diagnostic experiment continued from checkpoint ${fork.checkpointId}. Current run: ${fork.runId}. Current root: ${rootId}. Session mapping (original to fork): ${JSON.stringify(fork.sessionIds)}. Assignment IDs and inherited report references remain unchanged within this new run. Use the new child session IDs for guidance. Historical accepted evidence retains its original source snapshots; it is inherited, not newly accepted.`
+        const guidance = [identityNotice, fork.changes.guidance[captured.header.id]].filter(Boolean).join('\n\n')
+        if (!captured.terminal) log.append('agent/inbox/spliced', { target: 'next-step', start: captured.inbox.nextStep.length,
+          inserted: [createUserMessage({ content: [{ type: 'text', text: guidance }], source: { kind: 'user' } })] })
+        const handle = await this.service('agents').create({ sessionId: id, seed: log.events, agentOptions: captured.options,
+          meta: { ...(captured.header.cwd ? { cwd: captured.header.cwd } : {}), sessionPolicy: DIAGNOSTIC_POLICY,
+            seedLength: captured.events.length, ...(captured.header.agentPreset ? { agentPreset: captured.header.agentPreset } : {}),
+            ...(captured === source ? {} : { origin: 'subagent', parentSession: rootId, delegationDepth: 1 }) },
+        })
+        handles.push(handle)
+        const rendered = this.service('tools').schemas(handle.agent)
+        const byName = (a: ToolSchema, b: ToolSchema) => a.name.localeCompare(b.name)
+        if (!fork.changes.acceptCurrentToolDefinitions
+          && !isDeepStrictEqual([...rendered].sort(byName), [...captured.tools].sort(byName)))
+          throw new Error(`Tool definitions changed for ${captured.header.id}: ${[...new Set([...rendered, ...captured.tools].map(tool => tool.name))].filter(name => !isDeepStrictEqual(rendered.find(tool => tool.name === name), captured.tools.find(tool => tool.name === name))).join(', ')}; explicitly declare acceptCurrentToolDefinitions for this experiment`)
+        await this.flush(handle.agent.session)
+      }
+      this.forkHandles.set(rootId, handles)
+      const rootHandle = handles[0]
+      assert(rootHandle, 'Restored tree is missing its root')
+      rootHandle.agent.ctx.effect(() => async () => {
+        this.forkHandles.delete(rootId)
+        await Promise.all(handles.slice(1).map(handle => handle.dispose()))
+      })
+      return rootId
+    } catch (error) {
+      for (const handle of handles.reverse()) await handle.dispose()
+      throw error
+    }
+  }
+
+  private forkReviewResponse(value: JsonValue, ids: Record<string, string>): JsonValue {
+    if (Array.isArray(value)) return value.map(item => this.forkReviewResponse(item, ids))
+    if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) =>
+      [key, ['childSessionId', 'producerSessionId', 'rootSessionId'].includes(key) && typeof item === 'string' && ids[item]
+        ? ids[item] : this.forkReviewResponse(item, ids)]))
+    return value
+  }
+
+  /** Start a fully materialized fork once its caller has restored the matching journal.
+   * @param rootId - the new, isolated diagnostic root.
+   */
+  startTree(rootId: SessionId): void {
+    const handles = this.forkHandles.get(rootId)
+    if (!handles) throw new Error('Fork is not resident; restore a new fork operation after interruption')
+    const root = this.root(rootId)
+    this.requireRun(root)
+    const continuations = handles.flatMap(({ agent }) => {
+      const member = this.membership(agent)
+      assert(member, 'Restored agent is missing diagnostic membership')
+      if (this.requireExecutor().closed?.(rootId, agent.id, member.assignment.assignmentId)) return []
+      if (!agent.continueCheckpoint) throw new Error('Agent driver cannot continue checkpoints')
+      return [agent.continueCheckpoint.bind(agent)]
+    })
+    // Children start first, so the parent observes their actual activity at its next wait.
+    for (const resume of continuations.reverse()) resume()
+  }
+
+  private async reviewSchedule(root: Agent, input: { scheduleId: string; intervalMs: number }) {
+    return this.transact(root.id, async () => {
+      const prior = root.session.events.findLast(event => event.type === 'diagnostic/review-schedule' && event.data.scheduleId === input.scheduleId)
+      if (prior?.type === 'diagnostic/review-schedule') {
+        if (prior.data.intervalMs !== input.intervalMs) throw new DiagnosticWorkflowError('request_conflict', 'Review interval is immutable for this scheduleId')
+        return prior.data
+      }
+      const anchorMs = root.session.events.find(event => event.type === 'diagnostic/reservation' && event.data.childSessionId !== undefined)?.time
+      if (anchorMs === undefined) throw new DiagnosticWorkflowError('invalid_request', 'Launch a worker before anchoring its review schedule')
+      const schedule = { scheduleId: input.scheduleId, intervalMs: input.intervalMs, anchorMs, nextReview: 1 }
+      root.session.append('diagnostic/review-schedule', schedule)
+      await this.flush(root.session)
+      return schedule
+    })
+  }
+
   private async waitForWorkers(root: Agent, input: unknown, signal: AbortSignal): Promise<JsonValue> {
     const supervised = this.workflow(root).admission.diagnosticSupervisionVersion === 1
-    const args = supervised ? diagnosticSupervisionWaitSchema.parse(input) : { ...diagnosticWaitSchema.parse(input), timeoutMs: undefined }
+    const args = this.workflow(root).admission.diagnosticReviewVersion === 1 ? diagnosticReviewWaitSchema.parse(input)
+      : { ...(supervised ? diagnosticSupervisionWaitSchema.parse(input)
+        : { ...diagnosticWaitSchema.parse(input), timeoutMs: undefined }), review: undefined }
     const timeout = args.timeoutMs
-    const checkpoint = timeout === undefined ? undefined : Date.now() + timeout
+    const review = args.review
+    if (args.review && timeout !== undefined) throw new DiagnosticWorkflowError('invalid_request', 'Use review or timeoutMs, not both')
+    const previousReview = () => {
+      if (!review) return
+      const prior = root.session.events.find(event => event.type === 'diagnostic/review-result' && event.data.operationId === review.operationId)
+      if (prior?.type !== 'diagnostic/review-result') return
+      if (!isDeepStrictEqual(prior.data.request, args)) throw new DiagnosticWorkflowError('request_conflict', 'Review wait operation identity already has different input')
+      return prior.data.response
+    }
+    const previous = previousReview()
+    if (previous !== undefined) { await this.flush(root.session); return previous }
+    const schedule = args.review ? await this.reviewSchedule(root, args.review) : undefined
+    const checkpoint = schedule ? schedule.anchorMs + schedule.nextReview * schedule.intervalMs
+      : timeout === undefined ? undefined : Date.now() + timeout
     // Subscribe before checking history. Timer wakeups always reread the same cursor.
     while (true) {
       signal.throwIfAborted()
@@ -1417,12 +1726,24 @@ export class DiagnosticRuns {
           activeAssignmentIds: string[]
         }
         const due = checkpoint !== undefined && Date.now() >= checkpoint
-        if (result.updates.length || result.idle || due) {
+        if (result.updates.length || result.idle || due || supervised && this.capturing.has(root.id)) {
           await this.flush(root.session)
           if (!supervised) return result
           const reason = result.updates.length ? 'updates' : result.idle ? 'idle' : 'checkpoint'
-          return { ...result, nextSeq: reason === 'checkpoint' ? args.afterSeq : result.nextSeq, reason,
+          const response = { ...result, nextSeq: reason === 'checkpoint' ? args.afterSeq : result.nextSeq, reason,
+            ...(schedule ? { review: { ...schedule,
+              deadlineMs: schedule.anchorMs + schedule.nextReview * schedule.intervalMs, due } } : {}),
             activeWorkers: this.activeWorkers(root, result.activeAssignmentIds) }
+          if (!review) return response
+          return this.transact(root.id, async () => {
+            const prior = previousReview()
+            if (prior !== undefined) { await this.flush(root.session); return prior }
+            if (schedule && reason === 'checkpoint' && due)
+              root.session.append('diagnostic/review-schedule', { ...schedule, nextReview: Math.floor((Date.now() - schedule.anchorMs) / schedule.intervalMs) + 1 })
+            root.session.append('diagnostic/review-result', { operationId: review.operationId, request: JSON.parse(JSON.stringify(args)) as JsonValue, response })
+            await this.flush(root.session)
+            return response
+          })
         }
         await wake.promise
       } finally { clearTimeout(timer); dispose(); signal.removeEventListener('abort', abort) }
@@ -1517,7 +1838,13 @@ export class DiagnosticRuns {
       await this.flush(root.session)
       this.deliveries.add(childId)
       try {
-        const prompt = [{ type: 'text' as const, text: diagnosticCanonicalJson(record.assignment) }]
+        const { instructionSnapshot, resultSchema, ...task } = record.assignment
+        const prompt = [{ type: 'text' as const, text: diagnosticCanonicalJson({ ...task,
+          instructions: { digest: instructionSnapshot.digest, baseId: instructionSnapshot.baseId,
+            expertise: instructionSnapshot.expertise.map(({ id, version, contentDigest }) => ({ id, version, contentDigest })) },
+          reportSchema: { id: resultSchema.id, digest: resultSchema.digest,
+            submission: 'Submit the role-specific report as closeout_json.report using its tool schema. The caller publishes a separate report packet after acceptance.' },
+        }) }]
         let messageId: MessageId
         if (continuation) {
           const child = this.service('agents').get(childId)
@@ -1698,6 +2025,9 @@ export class DiagnosticRuns {
     root.session.append('diagnostic/run-state', { ...run, state: 'cancelling', quiescent: false })
     await this.flush(root.session)
     root.cancel({ kind: 'user' })
+    const restored = this.forkHandles.get(rootId) ?? []
+    for (const handle of restored) handle.agent.cancel({ kind: 'parent' })
+    await Promise.all(restored.map(handle => handle.agent.whenIdle()))
     await Promise.all([this.subagents.drainContinuableDescendants([root]), this.executor?.cancel(root.id)])
     await root.whenIdle()
     if (run.admission.diagnosticWorkflowVersion === 1) {

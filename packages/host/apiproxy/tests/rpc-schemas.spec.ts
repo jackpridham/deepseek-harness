@@ -334,6 +334,14 @@ describe('subagent domain schemas', () => {
 })
 
 describe('host domain schemas', () => {
+  it('preserves jointly advertised diagnostic review and checkpoint capabilities', () => {
+    const diagnosticChildren = { id: 'vortex-diagnostic-children-v1', capabilityVersion: 1, executorProtocolVersion: 2,
+      profiles: ['source-review-mode-a/v1'], diagnosticWorkflowVersions: [1], diagnosticSupervisionVersions: [1],
+      diagnosticReviewVersions: [1], diagnosticCheckpointVersions: [1], maxChildren: 15, maxConcurrentChildren: 6 }
+    expect(hostDescribeValueSchema.parse({ version: '1', cwd: '/x', attachedSessions: 0, home: '/h', canOpenPath: false,
+      diagnosticChildren }).diagnosticChildren).toEqual(diagnosticChildren)
+  })
+
   it('validates describe request/value', () => {
     expect(hostDescribeRequestSchema.parse({})).toEqual({})
     const value = hostDescribeValueSchema.parse({

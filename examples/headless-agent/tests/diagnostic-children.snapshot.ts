@@ -114,3 +114,30 @@ it('supervises a busy worker through the assembled application without interrupt
   expect(result.stdout).toContain(JSON.stringify({ type: 'accepted-closeout', role: 'coordinator' }))
   expect(result.stdout).not.toContain('"kind":"error"')
 }, LOADER_SMOKE_TEST_TIMEOUT_MS)
+
+it('renders optional inspection arguments and returns an anchored periodic review through the Loader', async () => {
+  const configPath = fileURLToPath(new URL('../diagnostic-children.cordis.snapshot.yml', import.meta.url))
+  const binScript = fileURLToPath(new URL('./fixtures/headless-driver.ts', import.meta.url))
+  const result = await runLoaderSmoke({ label: 'anchored diagnostic review', tempDirPrefix: 'dsh-review-snapshot-',
+    configPath, binScript, libBinScript: binScript, binArgs: [configPath, 'Review the admitted source.'],
+    env: { DSH_TEST_DIAGNOSTIC_WORKFLOW: 'review' },
+    tsconfigPath: fileURLToPath(new URL('../../../tsconfig.json', import.meta.url)),
+  })
+  const rows = result.stdout.trim().split('\n').map(line => JSON.parse(line) as { type?: string })
+  expect(rows.filter(row => ['supervision-schema', 'anchored-review'].includes(row.type ?? ''))).toMatchInlineSnapshot(`
+    [
+      {
+        "inspectRequired": [
+          "assignmentId",
+        ],
+        "type": "supervision-schema",
+      },
+      {
+        "due": true,
+        "nextReview": 1,
+        "type": "anchored-review",
+      },
+    ]
+  `)
+  expect(result.stdout).not.toContain('"kind":"error"')
+}, LOADER_SMOKE_TEST_TIMEOUT_MS)

@@ -54,6 +54,8 @@ export type InboxTarget = 'next-turn' | 'next-step'
 
 declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
+    /** Verified between-step position for explicit new-identity checkpoint continuation. */
+    'agent/checkpoint-position': { turn: number; step: number; openTurn: boolean; target: InboxTarget }
     /** A session-local model preference, persisted before its first request. */
     'model/selection': { selection: ModelSelection }
     /** A correlated managed-worker lifecycle observation for this session. */

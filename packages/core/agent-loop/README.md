@@ -90,6 +90,11 @@ Everything that goes beyond "call the model, run the tools, repeat" belongs to p
 
 Each configured session's `turn/start` records its accepted `instructionsRevision`. Instructions are frozen before the first turn; each model step assembles the current durable configuration without appending duplicate instruction messages. Resume and compaction retain that configuration independently of the visible conversation surface. See the [session instruction API](../../host/apiproxy/README.md#session-instruction-api).
 
+## Explicit checkpoint continuation
+
+`holdCheckpoint(signal)` holds a driver before the next inbox claim, after a completed step, or at idle. Acquisition does not cancel inference or tools. Releasing the hold or aborting its signal releases parked work; cancellation records its normal turn outcome. `continueCheckpoint()` is reserved for newly materialized seeds carrying `agent/checkpoint-position`. It resumes an open turn at its next step without replaying prior tools or fabricating a completed turn, preserving the full session surface and compaction history. The diagnostic tree owner coordinates capture, storage, identity remapping and executor settlement; ordinary completed-turn `session.fork` and interrupted-session repair keep their own behavior.
+
+
 ## Model Experience
 
 ### Complete conversation request

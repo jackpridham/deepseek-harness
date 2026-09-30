@@ -42,7 +42,8 @@ export async function apply(ctx: Context): Promise<void> {
     assignment: DiagnosticAssignment
   }
   const workflowMode = process.env.DSH_TEST_DIAGNOSTIC_WORKFLOW
-  const supervision = workflowMode === 'supervision'
+  const supervision = workflowMode === 'supervision' || workflowMode === 'review'
+  const review = workflowMode === 'review'
   const workflow = workflowMode === '1' || workflowMode === 'prose' || supervision
   const reading = Promise.withResolvers<boolean>(), release = Promise.withResolvers<boolean>()
   let childRequests = 0
@@ -53,6 +54,7 @@ export async function apply(ctx: Context): Promise<void> {
   }
   if (supervision) {
     input.diagnosticSupervisionVersion = 1
+    if (review) input.diagnosticReviewVersion = 1
     input.coordinatorAssignment.authority.tools.push('inspect_worker', 'send_message', 'update_progress')
     prepared.assignment.authority.tools.push('update_progress')
   }
@@ -76,9 +78,10 @@ export async function apply(ctx: Context): Promise<void> {
       }
       const child = ctx.get('agents')!.list().find(agent => agent.session.header.parentSession === input.rootSessionId)
       const identity = { assignmentId: prepared.assignment.assignmentId, childSessionId: child?.id }
+      if (review && rootRequests === 0) process.stdout.write(`${JSON.stringify({ type: 'supervision-schema', inspectRequired: (options.tools!.find(tool => tool.name === 'inspect_worker')!.parameters as { required: string[] }).required })}\n`)
       switch (rootRequests++) {
         case 0: return toolCallResponse('dispatch', 'dispatch_workers', { requests: [{ requestKey: 'discovery', name: 'Discovery', role: 'discovery', responsibility: '', namespace: '', paths: [], objective: 'Examine admitted source' }] })
-        case 1: return toolCallResponse('checkpoint', 'wait_for_workers', { afterSeq: 0, timeoutMs: 5 })
+        case 1: return toolCallResponse('checkpoint', 'wait_for_workers', { afterSeq: 0, ...(review ? { review: { scheduleId: 'periodic', operationId: 'review-1', intervalMs: 1 } } : { timeoutMs: 5 }) })
         case 2: return toolCallResponse('inspect', 'inspect_worker', { assignmentId: identity.assignmentId })
         case 3: return toolCallResponse('guide', 'send_message', { ...identity, operationId: 'review-1', message: 'Finish the guard check, then report.' })
         default: return toolCallResponse('finish', 'closeout_json', { report: { summary: 'Retained diagnostic closeout.' } })
@@ -130,6 +133,7 @@ export async function apply(ctx: Context): Promise<void> {
     state: 'awaiting-admission',
     ...(workflow ? { diagnosticWorkflowVersion: 1 as const } : {}),
     ...(supervision ? { diagnosticSupervisionVersion: 1 as const } : {}),
+    ...(review ? { diagnosticReviewVersion: 1 as const } : {}),
   }
   ctx.effect(() =>
     ctx.get('subagents')!.diagnostics.registerExecutor({
@@ -137,6 +141,7 @@ export async function apply(ctx: Context): Promise<void> {
       ...(workflow ? {
         diagnosticWorkflowVersions: [1],
         diagnosticSupervisionVersions: [1],
+        diagnosticReviewVersions: [1],
         prepareWorkers: async () => {
           await ctx.get('subagents')!.diagnostics.prepare(prepared)
           return { prepared: [{ requestKey: 'discovery', status: 'prepared', assignmentId: prepared.assignment.assignmentId }] }
@@ -187,6 +192,7 @@ export async function apply(ctx: Context): Promise<void> {
       const value = (content ? JSON.parse(content.text) : {}) as {
         reason?: string
         nextSeq?: number
+        review?: { due: boolean; nextReview: number }
         activeWorkers: unknown[]
         progress?: { resolved: string[]; acceptedEvidence: boolean }
         operationId?: string
@@ -194,6 +200,7 @@ export async function apply(ctx: Context): Promise<void> {
         duplicate?: boolean
       }
       if (value.reason) process.stdout.write(`${JSON.stringify({ type: 'supervision-checkpoint', reason: value.reason, nextSeq: value.nextSeq, active: value.activeWorkers.length })}\n`)
+      if (value.review) process.stdout.write(`${JSON.stringify({ type: 'anchored-review', due: value.review.due, nextReview: value.review.nextReview })}\n`)
       if (value.progress) process.stdout.write(`${JSON.stringify({ type: 'supervision-progress', resolved: value.progress.resolved, acceptedEvidence: value.progress.acceptedEvidence })}\n`)
       if (value.operationId) process.stdout.write(`${JSON.stringify({ type: 'supervision-guidance', status: value.status, duplicate: value.duplicate })}\n`)
     }

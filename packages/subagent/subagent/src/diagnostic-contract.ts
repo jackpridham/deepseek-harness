@@ -183,6 +183,8 @@ export function parseDiagnosticAdmission(input: unknown, now: number): Diagnosti
   const tools = value.coordinatorAssignment.authority.tools
   const workflowTools = ['dispatch_workers', 'wait_for_workers', 'read_worker_report']
   const supervision = value.diagnosticSupervisionVersion === 1
+  if ((value.diagnosticReviewVersion === 1) && !supervision)
+    throw new Error('Review scheduling requires supervision v1')
   if (supervision && (value.diagnosticWorkflowVersion !== 1
     || ['inspect_worker', 'send_message', 'update_progress'].some(tool => !tools.includes(tool as typeof tools[number]))))
     throw new Error('Supervision requires workflow v1 and its authored tool authority')

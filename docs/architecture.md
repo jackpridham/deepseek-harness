@@ -8,6 +8,8 @@ We recommend using an agent to explore the codebase and understand its architect
 
 Diagnostic session policy preserves the authored numeric output allowance. After full request assembly, the loop compacts and remeasures until input plus that allowance and the configured safety margin fits the selected context, or rejects before dispatch. This is dynamic for every supported context/output combination; proactive pressure compaction is additional headroom. Existing central history retains original events and durable compaction replacements.
 
+An opted-in diagnostic checkpoint holds an agent only before its next inbox claim, after any completed tool step has been recorded. It never cancels a model or source operation. An open-turn checkpoint can continue only through the explicit checkpoint continuation path, which resumes the same turn at its next step without replaying completed tools or synthesizing a turn end; ordinary persistence resume remains unsuitable for an open checkpoint because its crash recovery closes interrupted turns.
+
 ## Cordis
 
 [Cordis](cordis-primer.md) is the framework under dsh: plugins contribute services, typed events, and reversible effects to a shared context. Every part of the product is a plugin, including the model adapter, the tool registry, the session log, and the agent loop itself, so every part is replaceable from configuration.

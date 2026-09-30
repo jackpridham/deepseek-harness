@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LlmRuntime, { createUserMessage, CallId, LlmError, StreamChunk  } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId, TurnEndReason } from '@deepseek-ai/dsh-session'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { CompactionId } from '@deepseek-ai/dsh-compaction'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
@@ -230,6 +232,129 @@ describe('agent loop', () => {
     const types = agent.session.events.map(e => e.type)
     expect(types).toContain('tool/call')
     expect(types).toContain('tool/result')
+  })
+
+  it('holds at a completed tool step and continues an open checkpoint without replaying the tool', async () => {
+    const adapter = new MockAdapter([
+      toolCallResponse('checkpoint-call', 'echo', { text: 'captured' }),
+      textResponse('fork completed'),
+      textResponse('original completed'),
+    ])
+    const ctx = await harness(adapter)
+    const checkpoint = Promise.withResolvers<Awaited<ReturnType<NonNullable<Agent['holdCheckpoint']>>>>()
+    ctx.tools.register(defineContentToolFixture({
+      name: 'echo',
+      description: 'echo back',
+      parameters: { text: { type: 'string' } },
+      async execute(args) {
+        void agent.holdCheckpoint!(new AbortController().signal).then(checkpoint.resolve, checkpoint.reject)
+        return [{ type: 'text', text: `echo: ${args.text}` }]
+      },
+    }))
+    const agent = ctx.agentLoop.create(SessionId('checkpoint-original'), { provider: 'mock', model: 'mock' })
+
+    send(agent, 'use the tool')
+    const held = await checkpoint.promise
+    expect(held?.position).toEqual({ turn: 1, step: 1, openTurn: true, target: 'next-step' })
+    expect(agent.session.events.filter(event => event.type === 'step/end')).toHaveLength(1)
+    expect(agent.session.events.some(event => event.type === 'turn/end')).toBe(false)
+
+    // A real compaction keeps its summary as the replacement surface node;
+    // the fork must render that effective context, never the shadowed prompt.
+    const original = agent.session.events.find(event => event.type === 'user/message' && event.data.source.kind === 'user')
+    if (original?.type !== 'user/message') throw new Error('missing original prompt')
+    const compactionId = 'checkpoint-compaction' as CompactionId
+    const start = agent.session.append('compaction/start', { compactionId, turn: 1 })
+    const summary = agent.session.append('compaction/summary', {
+      compactionId,
+      summary: [{ type: 'text', text: 'compacted scope' }],
+      shadowedRange: { start: original.seq, end: original.seq },
+      shadowedSeqs: [original.seq],
+      shadowedTokenCount: 1,
+      provider: 'mock',
+      model: 'mock',
+    })
+    agent.session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'compacted scope' }],
+      source: { kind: 'plugin', plugin: 'test-compaction' },
+    }), {
+      surfaceOp: { op: 'replace', start: original.seq, end: original.seq },
+      sourceEventSeqs: [start.seq, summary.seq, original.seq],
+    })
+    agent.session.append('compaction/end', { compactionId, turn: 1 })
+    expect(agent.session.surface.replaceGeneration).toBe(1)
+
+    const seed = structuredClone(agent.session.events) as SessionEvent[]
+    seed.push({
+      type: 'agent/checkpoint-position',
+      seq: seed.length,
+      time: Date.now(),
+      data: held!.position,
+    })
+    const fork = await ctx.agents.create({
+      sessionId: SessionId('checkpoint-fork'),
+      seed,
+      meta: { seedLength: seed.length },
+      agentOptions: { provider: 'mock', model: 'mock' },
+    })
+    fork.agent.continueCheckpoint?.()
+    await waitForIdle(ctx, fork.agent)
+
+    expect(fork.agent.session.events.filter(event => event.type === 'turn/start')).toHaveLength(1)
+    expect(fork.agent.session.events.filter(event => event.type === 'tool/call')).toHaveLength(1)
+    expect(fork.agent.session.events.filter(event => event.type === 'tool/result')).toHaveLength(1)
+    expect(fork.agent.session.events.filter(event => event.type === 'turn/end')).toHaveLength(1)
+    expect(adapter.requests[1]!.messages.some(message => message.content.some(block => block.type === 'tool-result'))).toBe(true)
+    expect(JSON.stringify(adapter.requests[1]!.messages)).toContain('compacted scope')
+    expect(JSON.stringify(adapter.requests[1]!.messages)).not.toContain('use the tool')
+
+    const originalIdle = waitForIdle(ctx, agent)
+    held!.release()
+    await originalIdle
+    await fork.dispose()
+  })
+
+  it('releases an idle checkpoint on its signal and starts parked work once', async () => {
+    const adapter = new MockAdapter([textResponse('after release')])
+    const ctx = await harness(adapter)
+    const agent = ctx.agentLoop.create(SessionId('checkpoint-idle'), { provider: 'mock', model: 'mock' })
+    const controller = new AbortController()
+    const held = await agent.holdCheckpoint?.(controller.signal)
+    send(agent, 'parked until checkpoint release')
+    expect(adapter.requests).toHaveLength(0)
+
+    const idle = waitForIdle(ctx, agent)
+    controller.abort(new Error('checkpoint finished'))
+    await idle
+
+    expect(held?.position.openTurn).toBe(false)
+    expect(userTexts(agent)).toEqual(['parked until checkpoint release'])
+    expect(adapter.requests).toHaveLength(1)
+  })
+
+  it('does not leave a held running turn stuck when it is cancelled', async () => {
+    const adapter = new MockAdapter([toolCallResponse('cancel-checkpoint', 'echo', { text: 'pause' })])
+    const ctx = await harness(adapter)
+    const checkpoint = Promise.withResolvers<Awaited<ReturnType<NonNullable<Agent['holdCheckpoint']>>>>()
+    ctx.tools.register(defineContentToolFixture({
+      name: 'echo',
+      description: 'echo back',
+      parameters: { text: { type: 'string' } },
+      async execute() {
+        void agent.holdCheckpoint!(new AbortController().signal).then(checkpoint.resolve, checkpoint.reject)
+        return [{ type: 'text', text: 'paused' }]
+      },
+    }))
+    const agent = ctx.agentLoop.create(SessionId('checkpoint-cancel'), { provider: 'mock', model: 'mock' })
+
+    send(agent, 'pause after this tool')
+    await checkpoint.promise
+    const idle = waitForIdle(ctx, agent)
+    agent.cancel({ kind: 'user' })
+    await idle
+
+    const end = agent.session.events.findLast(event => event.type === 'turn/end')
+    expect(end).toMatchObject({ data: { reason: { kind: 'aborted', reason: { kind: 'user' } } } })
   })
 
   it('renders harness identity, then the persona, then tool guidance — with {{variables}} resolved', async () => {

@@ -60,6 +60,7 @@ export const diagnosticAdmissionSchema = z.object({
   capabilityId: z.literal('vortex-diagnostic-children-v1'), capabilityVersion: z.literal(1),
   diagnosticWorkflowVersion: z.literal(1).optional(),
   diagnosticSupervisionVersion: z.literal(1).optional(),
+  diagnosticReviewVersion: z.literal(1).optional(),
   runId: id, rootSessionId: id, comparisonDigest: digest, sourceRefs: sources,
   executorBindingId: id, bindingEpoch: positive,
   maxChildren: positive, maxConcurrentChildren: positive,
@@ -101,6 +102,10 @@ export const diagnosticPreparationSchema = z.object({ prepared: z.array(z.union(
 export const diagnosticWaitSchema = z.object({ afterSeq: cursor, assignmentIds: z.array(workflowId).optional() }).strict()
 /** Timed supervision wait; omission preserves report-driven waiting. */
 export const diagnosticSupervisionWaitSchema = diagnosticWaitSchema.extend({ timeoutMs: positive.max(2147483647).optional() })
+/** Server-owned periodic review anchored to the first worker reservation. */
+export const diagnosticReviewWaitSchema = diagnosticSupervisionWaitSchema.extend({
+  review: z.object({ scheduleId: id, operationId: id, intervalMs: positive.max(2147483647) }).strict().optional(),
+})
 /** Bounded worker history inspection. */
 export const diagnosticInspectWorkerSchema = z.object({
   assignmentId: id, maxEvents: positive.max(50).default(10),
