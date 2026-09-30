@@ -1025,7 +1025,7 @@ export class DiagnosticRuns {
     diagnosticCanonicalJson(args)
     if (Buffer.byteLength(JSON.stringify(args), 'utf8') > 2 * 1024 * 1024 - 16 * 1024) throw new DiagnosticWorkflowError('invalid_request', 'Publication exceeds the existing 2 MiB complete message envelope')
     const root = this.root(SessionId(args.sessionId))
-    return this.transact(root.id, async () => {
+    const publication = await this.transact(root.id, async () => {
       const run = this.run(root.session)
       if (!run || run.runId !== args.runId || run.admission.diagnosticWorkflowVersion !== 1)
         throw new DiagnosticWorkflowError('authority_denied', 'Publication requires the admitted root and workflow run')
@@ -1096,6 +1096,8 @@ export class DiagnosticRuns {
       await this.flush(root.session)
       return { reportRef, eventSeq: event.seq, duplicate: false }
     })
+    await this.refresh(root.id)
+    return publication
   }
 
   private async readWorkerReport(root: Agent, input: unknown): Promise<JsonValue> {
