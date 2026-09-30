@@ -186,6 +186,7 @@ export class DiagnosticRuns {
   constructor(
     private readonly ctx: Context,
     private readonly subagents: SubagentRuntime,
+    private readonly maxConcurrentChildren: number,
   ) {}
 
   /**
@@ -301,8 +302,8 @@ export class DiagnosticRuns {
       ...(this.executor.diagnosticWorkflowVersions?.includes(1)
         && this.executor.prepareWorkers
         && this.executor.awaitCloseout ? { diagnosticWorkflowVersions: [1] } : {}),
-      maxChildren: 8,
-      maxConcurrentChildren: 3,
+      maxChildren: Number.MAX_SAFE_INTEGER,
+      maxConcurrentChildren: this.maxConcurrentChildren,
     }
   }
 
@@ -476,6 +477,8 @@ export class DiagnosticRuns {
         }
       }
       parseDiagnosticAdmission(admission, Date.now())
+      if (admission.maxConcurrentChildren > this.maxConcurrentChildren)
+        throw new DiagnosticError('diagnostic-policy-rejected', `Requested concurrency exceeds the host limit ${this.maxConcurrentChildren}`)
       if (this.capability() === undefined)
         throw new DiagnosticError('diagnostic-capability-unavailable', 'Diagnostic child capability is unavailable')
       if (root.status !== 'idle' || root.session.events.some(event => event.type === 'turn/start'))
@@ -874,6 +877,8 @@ export class DiagnosticRuns {
       disposers.push(this.requireExecutor().install(agent, member.assignment, member.root.id))
       if (limits.diagnosticWorkflowVersion === 1) {
         disposers.push(agent.ctx.on('agent/pre-step', async (_payload, next) => {
+          await this.requireExecutor().awaitCloseout?.(member.root.id, agent.id, _payload.signal)
+          if (this.executor?.closed?.(member.root.id, agent.id, member.assignment.assignmentId)) return { kind: 'reject' }
           const decision = await next()
           if (this.executor?.closed?.(member.root.id, agent.id, member.assignment.assignmentId)) return { kind: 'reject' }
           return decision

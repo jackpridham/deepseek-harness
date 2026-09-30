@@ -61,7 +61,7 @@ export const diagnosticAdmissionSchema = z.object({
   diagnosticWorkflowVersion: z.literal(1).optional(),
   runId: id, rootSessionId: id, comparisonDigest: digest, sourceRefs: sources,
   executorBindingId: id, bindingEpoch: positive,
-  maxChildren: positive.min(2).max(8), maxConcurrentChildren: positive.max(3),
+  maxChildren: positive, maxConcurrentChildren: positive,
   maxModelRequests: positive.max(10000), deadline, maxOutputTokens: positive,
   rootSynthesisReserveTokens: positive, rootSynthesisReserveRequests: positive.max(10000),
   rootSynthesisReserveMs: positive.max(7200000), coordinatorAssignment: diagnosticAssignmentSchema,

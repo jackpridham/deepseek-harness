@@ -675,7 +675,7 @@ async start(name: string, request: SubagentStartRequest): Promise<SubagentRun>
 
 Types: [Agent](core.md) · [ContentBlock](llm-streaming.md) · [MessageId](llm-streaming.md) · [Session](session.md) · [SessionId](core.md)
 
-Source: [`packages/subagent/subagent/src/index.ts:176`](../../packages/subagent/subagent/src/index.ts)
+Source: [`packages/subagent/subagent/src/index.ts:183`](../../packages/subagent/subagent/src/index.ts)
 
 <a id="subagent-events"></a>
 
@@ -701,7 +701,7 @@ A published child settled. Scope-filtered dispatch uses the same delegating pare
 
 Types: [Scoped](scope.md)
 
-Source: [`packages/subagent/subagent/src/index.ts:171`](../../packages/subagent/subagent/src/index.ts)
+Source: [`packages/subagent/subagent/src/index.ts:172`](../../packages/subagent/subagent/src/index.ts)
 
 <a id="subagentprovider-added--emit"></a>
 
@@ -718,7 +718,7 @@ A provider became resolvable in the registry.
 'subagent/provider-added'(provider: SubagentProvider): void
 ```
 
-Source: [`packages/subagent/subagent/src/index.ts:145`](../../packages/subagent/subagent/src/index.ts)
+Source: [`packages/subagent/subagent/src/index.ts:146`](../../packages/subagent/subagent/src/index.ts)
 
 <a id="subagentprovider-removed--emit"></a>
 
@@ -735,7 +735,7 @@ A provider left the registry. Accepted runs remain holder-owned.
 'subagent/provider-removed'(name: string): void
 ```
 
-Source: [`packages/subagent/subagent/src/index.ts:151`](../../packages/subagent/subagent/src/index.ts)
+Source: [`packages/subagent/subagent/src/index.ts:152`](../../packages/subagent/subagent/src/index.ts)
 
 <a id="subagentstart--emit"></a>
 
@@ -759,7 +759,7 @@ A provider established a published child. For in-process providers, `ctx.agents.
 
 Types: [Scoped](scope.md)
 
-Source: [`packages/subagent/subagent/src/index.ts:162`](../../packages/subagent/subagent/src/index.ts)
+Source: [`packages/subagent/subagent/src/index.ts:163`](../../packages/subagent/subagent/src/index.ts)
 <!-- END GENERATED cordis-surface -->
 
 Native child presentation mutation follows the [parent-authorized title rules](../../packages/subagent/subagent/README.md#parent-authorized-child-titles), including cold-session ownership and diagnostic run validation.

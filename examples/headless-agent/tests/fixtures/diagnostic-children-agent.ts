@@ -144,6 +144,8 @@ export async function apply(ctx: Context): Promise<void> {
     .create({ sessionId: SessionId(input.rootSessionId), meta: { sessionPolicy: DIAGNOSTIC_POLICY } })
   ctx.effect(() => () => handle.dispose())
   await ctx.get('subagents')!.diagnostics.admit(input)
+  const capacity = ctx.get('subagents')!.diagnostics.capability()
+  process.stdout.write(`${JSON.stringify({ type: 'diagnostic-worker-capacity', maxChildren: capacity?.maxChildren, maxConcurrentChildren: capacity?.maxConcurrentChildren })}\n`)
   if (!workflow) await ctx.get('subagents')!.diagnostics.prepare(prepared)
   ctx.on('session/event', async (_session, event) => {
     if (event.type === 'diagnostic/child-state') {

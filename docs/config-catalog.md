@@ -2165,6 +2165,20 @@ export type JournalMode = 'wal' | 'delete' | 'truncate' | 'persist'
 
 Source: [`packages/storage/storage-sqlite/src/index.ts:24`](../packages/storage/storage-sqlite/src/index.ts)
 
+<a id="deepseek-aidsh-subagent"></a>
+
+## `@deepseek-ai/dsh-subagent`
+
+```ts config-catalog
+/** Host admission configuration for diagnostic child work. */
+export interface SubagentConfig {
+  /** Maximum concurrent children in newly admitted diagnostic runs. @default 6 */
+  diagnosticMaxConcurrentChildren?: number
+}
+```
+
+Source: [`packages/subagent/subagent/src/index.ts:177`](../packages/subagent/subagent/src/index.ts)
+
 <a id="deepseek-aidsh-subagent-acp"></a>
 
 ## `@deepseek-ai/dsh-subagent-acp`
@@ -3281,7 +3295,6 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 - `@deepseek-ai/dsh-session-stats` — requires `sessionProjections` ([`packages/session/session-stats/src/index.ts`](../packages/session/session-stats/src/index.ts))
 - `@deepseek-ai/dsh-skill-badge` — requires `skills` ([`packages/skill/skill-badge/src/index.ts`](../packages/skill/skill-badge/src/index.ts))
 - `@deepseek-ai/dsh-storage` ([`packages/storage/storage/src/index.ts`](../packages/storage/storage/src/index.ts))
-- `@deepseek-ai/dsh-subagent` ([`packages/subagent/subagent/src/index.ts`](../packages/subagent/subagent/src/index.ts))
 - `@deepseek-ai/dsh-subprocess-local` ([`packages/subprocess/subprocess-local/src/index.ts`](../packages/subprocess/subprocess-local/src/index.ts))
 - `@deepseek-ai/dsh-terminal` ([`packages/terminal/terminal/src/index.ts`](../packages/terminal/terminal/src/index.ts))
 - `@deepseek-ai/dsh-tool-ask-user` — requires `tools` · `userQuestions` ([`packages/interaction/tool-ask-user/src/index.ts`](../packages/interaction/tool-ask-user/src/index.ts))

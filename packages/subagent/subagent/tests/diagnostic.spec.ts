@@ -28,6 +28,16 @@ afterEach(async () => {
 const admission = () => parseDiagnosticAdmission(structuredClone(fixtures['admit-run']), Date.parse('2030-01-01T00:00:00Z'))
 
 describe('diagnostic admission', () => {
+  it('accepts caller-selected child counts up to the wire integer limit', () => {
+    const input = admission()
+    for (const count of [1, 9, Number.MAX_SAFE_INTEGER]) {
+      expect(parseDiagnosticAdmission({ ...input, maxChildren: count, maxConcurrentChildren: Math.min(count, 6) }, Date.parse('2030-01-01')))
+        .toMatchObject({ maxChildren: count, maxConcurrentChildren: Math.min(count, 6) })
+    }
+    for (const count of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])
+      expect(() => parseDiagnosticAdmission({ ...input, maxChildren: count, maxConcurrentChildren: count }, Date.parse('2030-01-01'))).toThrow()
+    expect(() => parseDiagnosticAdmission({ ...input, maxChildren: 2, maxConcurrentChildren: 3 }, Date.parse('2030-01-01'))).toThrow('reserves')
+  })
   it('validates the published resolved assignment without changing authored settings', () => {
     const input = admission()
     expect(input.coordinatorAssignment.roleSettings).toEqual({ outputLimit: 8192, maxReportSizeKiB: 1280 })
@@ -49,7 +59,7 @@ describe('diagnostic admission', () => {
     expect(() => parseDiagnosticAssignment(assignment)).toThrow('cannot delegate')
   })
 
-  it('persists admission before acknowledgement and refuses changed retry or direct policy mutation', async () => {
+  it.each([undefined, 2])('persists admission and enforces configured concurrency %s', async (configuredConcurrency) => {
     const ctx = new Context(); contexts.push(ctx)
     await mountAgentLoopTestDependencies(ctx)
     const directory = mkdtempSync(join(tmpdir(), 'dsh-diagnostic-')); directories.push(directory)
@@ -58,7 +68,8 @@ describe('diagnostic admission', () => {
     await ctx.plugin(TokenMeter)
     await ctx.plugin(BasicCompaction, { sessionPolicies: [DIAGNOSTIC_POLICY], thresholdRatio: 0.65 })
     await ctx.plugin(SessionProjections)
-    await ctx.plugin(Subagents)
+    const config = configuredConcurrency === undefined ? undefined : { diagnosticMaxConcurrentChildren: configuredConcurrency }
+    await ctx.plugin(Subagents, config)
     await ctx.plugin(Spawn, { providerName: 'spawn' })
     const input: DiagnosticAdmission = admission()
     let binding: DiagnosticBinding = {
@@ -74,6 +85,9 @@ describe('diagnostic admission', () => {
     const handle = await ctx.agents.create({ sessionId: SessionId(input.rootSessionId), meta: { sessionPolicy: DIAGNOSTIC_POLICY } })
     handle.agent.session.append('sandbox/mode', { mode: 'danger-full-access' })
     handle.agent.session.append('approval/policy', { policy: 'never' })
+    const limit = configuredConcurrency ?? 6
+    expect(ctx.subagents.diagnostics.capability()).toMatchObject({ maxChildren: Number.MAX_SAFE_INTEGER, maxConcurrentChildren: limit })
+    await expect(ctx.subagents.diagnostics.admit({ ...input, maxChildren: 9, maxConcurrentChildren: limit + 1 })).rejects.toThrow(`host limit ${limit}`)
     const result = await ctx.subagents.diagnostics.admit(input)
     expect(Object.keys(result).sort()).toEqual(['runId', 'rootSessionId', 'state', 'admissionDigest', 'bindingEpoch', 'duplicate'].sort())
     expect(result.duplicate).toBe(false)
