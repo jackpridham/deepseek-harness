@@ -10,6 +10,8 @@ Diagnostic session policy preserves the authored numeric output allowance. After
 
 An opted-in diagnostic checkpoint holds an agent only before its next inbox claim, after any completed tool step has been recorded. It never cancels a model or source operation. An open-turn checkpoint can continue only through the explicit checkpoint continuation path, which resumes the same turn at its next step without replaying completed tools or synthesizing a turn end; ordinary persistence resume remains unsuitable for an open checkpoint because its crash recovery closes interrupted turns.
 
+The serial `agent/turn-stopping` listener receives the proposed `TurnEndReason`. Diagnostic closeout recovery is an explicitly admitted policy on that seam: it may steer one reminder into the same turn after ordinary completion, but never changes cancellation, errors, caps or accepted closeout into further inference.
+
 ## Cordis
 
 [Cordis](cordis-primer.md) is the framework under dsh: plugins contribute services, typed events, and reversible effects to a shared context. Every part of the product is a plugin, including the model adapter, the tool registry, the session log, and the agent loop itself, so every part is replaceable from configuration.

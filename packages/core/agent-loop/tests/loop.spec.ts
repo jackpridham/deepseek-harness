@@ -911,6 +911,25 @@ describe('agent loop', () => {
     expect(adapter.requests).toHaveLength(3)
   })
 
+  it('delivers the proposed completion and output-cap reasons to turn-stopping', async () => {
+    const adapter = new MockAdapter([textResponse('complete'), maxTokensResponse('cut off')])
+    const ctx = await harness(adapter)
+    // A configured hard cap disables automatic recovery, making this a
+    // deterministic proposed max-tokens boundary.
+    const agent = ctx.agentLoop.create(SessionId('stopping-reasons'), { provider: 'mock', model: 'mock', maxTokens: 64 })
+    const reasons: TurnEndReason[] = []
+    ctx.on('agent/turn-stopping', ({ agent: subject, reason }) => {
+      if (subject === agent) reasons.push(reason)
+    })
+
+    send(agent, 'complete normally')
+    await waitForIdle(ctx, agent)
+    send(agent, 'reach the configured cap')
+    await waitForIdle(ctx, agent)
+
+    expect(reasons).toEqual([{ kind: 'completed' }, { kind: 'max-tokens' }])
+  })
+
   it('a tool can conclude the turn despite owing a follow-up request', async () => {
     const adapter = new MockAdapter([toolCallResponse('c1', 'echo', { text: 'x' })])
     const ctx = await harness(adapter)

@@ -141,3 +141,47 @@ it('renders optional inspection arguments and returns an anchored periodic revie
   `)
   expect(result.stdout).not.toContain('"kind":"error"')
 }, LOADER_SMOKE_TEST_TIMEOUT_MS)
+
+
+it('recovers worker and coordinator text-only completion in their original turns', async () => {
+  const configPath = fileURLToPath(new URL('../diagnostic-children.cordis.snapshot.yml', import.meta.url))
+  const binScript = fileURLToPath(new URL('./fixtures/headless-driver.ts', import.meta.url))
+  const result = await runLoaderSmoke({ label: 'diagnostic recovery', tempDirPrefix: 'dsh-closeout-recovery-',
+    configPath, binScript, libBinScript: binScript, binArgs: [configPath, 'Review admitted source.'],
+    env: { DSH_TEST_DIAGNOSTIC_WORKFLOW: 'recovery' },
+    tsconfigPath: fileURLToPath(new URL('../../../tsconfig.json', import.meta.url)),
+  })
+  const rows = result.stdout.trim().split('\n').map(line => JSON.parse(line) as { type?: string })
+  expect(rows.filter(row => row.type === 'closeout-recovery')).toMatchInlineSnapshot(`
+    [
+      {
+        "role": "worker",
+        "state": "pending",
+        "turn": 1,
+        "type": "closeout-recovery",
+      },
+      {
+        "role": "worker",
+        "state": "queued",
+        "turn": 1,
+        "type": "closeout-recovery",
+      },
+      {
+        "role": "coordinator",
+        "state": "pending",
+        "turn": 1,
+        "type": "closeout-recovery",
+      },
+      {
+        "role": "coordinator",
+        "state": "queued",
+        "turn": 1,
+        "type": "closeout-recovery",
+      },
+    ]
+  `)
+  expect(result.stdout).toContain('carefully review')
+  expect(result.stdout).toContain(JSON.stringify({ type: 'accepted-closeout', role: 'discovery' }))
+  expect(result.stdout).toContain(JSON.stringify({ type: 'accepted-closeout', role: 'coordinator' }))
+  expect(result.stdout).not.toContain('"kind":"error"')
+}, LOADER_SMOKE_TEST_TIMEOUT_MS)

@@ -58,6 +58,7 @@ export interface HostApi {
       diagnosticWorkflowVersions?: number[]
       diagnosticSupervisionVersions?: number[]
       diagnosticReviewVersions?: number[]
+      diagnosticCloseoutRecoveryVersions?: number[]
       diagnosticCheckpointVersions?: number[]
       maxChildren: number
       maxConcurrentChildren: number

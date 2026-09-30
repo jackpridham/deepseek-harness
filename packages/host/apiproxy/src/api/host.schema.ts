@@ -21,6 +21,7 @@ export const hostDescribeValueSchema = z.object({
     diagnosticWorkflowVersions: z.array(z.number().int()).optional(),
     diagnosticSupervisionVersions: z.array(z.number().int()).optional(),
     diagnosticReviewVersions: z.array(z.number().int()).optional(),
+    diagnosticCloseoutRecoveryVersions: z.array(z.number().int()).optional(),
     diagnosticCheckpointVersions: z.array(z.number().int()).optional(),
     maxChildren: z.number().int().positive(),
     maxConcurrentChildren: z.number().int().positive(),

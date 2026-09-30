@@ -417,7 +417,7 @@ Source: [`packages/compaction/compaction/src/types.ts:33`](../packages/compactio
 }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:183`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:200`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticcheckpoint-barrier--log-only"></a>
 
@@ -428,7 +428,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:183`](../packages/subagen
 'diagnostic/checkpoint-barrier': { state: 'requested' }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:163`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:167`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticcheckpoint-record--log-only"></a>
 
@@ -439,7 +439,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:163`](../packages/subagen
 'diagnostic/checkpoint-record': { kind: string; value: JsonValue }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:161`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:165`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticchild-state--log-only"></a>
 
@@ -450,7 +450,27 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:161`](../packages/subagen
 'diagnostic/child-state': JsonValue
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:187`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:204`](../packages/subagent/subagent/src/diagnostic.ts)
+
+<a id="diagnosticcloseout-recovery--log-only"></a>
+
+#### `diagnostic/closeout-recovery` — log-only
+
+```ts persistence-catalog
+/** One automatic same-turn reminder; delivery and acceptance are independent projections. */
+'diagnostic/closeout-recovery': {
+  reminderId: string
+  sessionId: string
+  assignmentId: string
+  turn: number
+  step: number
+  trigger: 'normal_completion_without_accepted_closeout'
+  message: UserMessage
+  state: 'pending' | 'queued' | 'missing-report'
+}
+```
+
+Source: [`packages/subagent/subagent/src/diagnostic.ts:177`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticevidence-read--log-only"></a>
 
@@ -461,7 +481,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:187`](../packages/subagen
 'diagnostic/evidence-read': JsonValue
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:189`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:206`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticexecutor--log-only"></a>
 
@@ -472,7 +492,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:189`](../packages/subagen
 'diagnostic/executor': { kind: string; value: JsonValue }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:195`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:212`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticfork-origin--log-only"></a>
 
@@ -483,7 +503,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:195`](../packages/subagen
 'diagnostic/fork-origin': { checkpointId: string; sourceSessionId: string; boundarySeq: number; changes: JsonValue; toolOrder: string[] }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:167`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:171`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticguidance--log-only"></a>
 
@@ -494,7 +514,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:167`](../packages/subagen
 'diagnostic/guidance': { operationId: string; assignmentId: string; childSessionId: string; message: UserMessage; status: 'pending' | 'queued' | 'closed' }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:175`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:192`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticinherited-state--log-only"></a>
 
@@ -505,7 +525,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:175`](../packages/subagen
 'diagnostic/inherited-state': { checkpointId: string; originRootSessionId: string; acceptedState: JsonValue }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:159`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:163`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticmember--log-only"></a>
 
@@ -516,7 +536,18 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:159`](../packages/subagen
 'diagnostic/member': { rootSessionId: string; runId: string; assignmentId: string }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:191`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:208`](../packages/subagent/subagent/src/diagnostic.ts)
+
+<a id="diagnosticmissing-report--log-only"></a>
+
+#### `diagnostic/missing-report` — log-only
+
+```ts persistence-catalog
+/** Parent-visible missing report outcome; never an accepted worker report. */
+'diagnostic/missing-report': { reminderId: string; sessionId: string; assignmentId: string; turn: number }
+```
+
+Source: [`packages/subagent/subagent/src/diagnostic.ts:188`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticorigin-event--log-only"></a>
 
@@ -527,7 +558,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:191`](../packages/subagen
 'diagnostic/origin-event': { type: string; data: JsonValue }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:165`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:169`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticprogress--log-only"></a>
 
@@ -538,7 +569,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:165`](../packages/subagen
 'diagnostic/progress': { assignmentId: string; resolved: string[]; uncertain: string[]; nextCheck: string }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:173`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:190`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticrequest--log-only"></a>
 
@@ -549,7 +580,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:173`](../packages/subagen
 'diagnostic/request': RequestData
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:193`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:210`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticreservation--log-only"></a>
 
@@ -560,7 +591,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:193`](../packages/subagen
 'diagnostic/reservation': AssignmentData
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:181`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:198`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticreview-result--log-only"></a>
 
@@ -571,7 +602,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:181`](../packages/subagen
 'diagnostic/review-result': { operationId: string; request: JsonValue; response: JsonValue }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:171`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:175`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticreview-schedule--log-only"></a>
 
@@ -582,7 +613,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:171`](../packages/subagen
 'diagnostic/review-schedule': { scheduleId: string; intervalMs: number; anchorMs: number; nextReview: number }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:169`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:173`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticrun-state--log-only"></a>
 
@@ -593,7 +624,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:169`](../packages/subagen
 'diagnostic/run-state': RunData
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:157`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:161`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticworker-report--log-only"></a>
 
@@ -604,7 +635,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:157`](../packages/subagen
 'diagnostic/worker-report': Omit<DiagnosticPublication, 'sessionId'> & { reportRef: string; sha256: string }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:179`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:196`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticworker-request--log-only"></a>
 
@@ -615,7 +646,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:179`](../packages/subagen
 'diagnostic/worker-request': { runId: string; request: DiagnosticWorkerRequest; assignmentId?: string }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:177`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:194`](../packages/subagent/subagent/src/diagnostic.ts)
 
 ### `feedback/*`
 

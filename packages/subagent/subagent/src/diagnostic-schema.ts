@@ -61,6 +61,7 @@ export const diagnosticAdmissionSchema = z.object({
   diagnosticWorkflowVersion: z.literal(1).optional(),
   diagnosticSupervisionVersion: z.literal(1).optional(),
   diagnosticReviewVersion: z.literal(1).optional(),
+  diagnosticCloseoutRecoveryVersion: z.literal(1).optional(),
   runId: id, rootSessionId: id, comparisonDigest: digest, sourceRefs: sources,
   executorBindingId: id, bindingEpoch: positive,
   maxChildren: positive, maxConcurrentChildren: positive,

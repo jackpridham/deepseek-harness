@@ -457,7 +457,7 @@ export class ReactLoopAgent implements Agent {
         signal.throwIfAborted()
         if (turnEnds && this.inbox.nextStep.length === 0) {
           if (turnEnds.kind === 'completed') this.completeContinuation(turn, step)
-          await this.dispatch.serial('agent/turn-stopping', { turn, signal })
+          await this.dispatch.serial('agent/turn-stopping', { turn, reason: turnEnds, signal })
           signal.throwIfAborted()
         }
         if (turnEnds && this.inbox.nextStep.length === 0) break

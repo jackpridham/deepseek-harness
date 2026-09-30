@@ -44,12 +44,14 @@ export async function apply(ctx: Context): Promise<void> {
   const workflowMode = process.env.DSH_TEST_DIAGNOSTIC_WORKFLOW
   const supervision = workflowMode === 'supervision' || workflowMode === 'review'
   const review = workflowMode === 'review'
-  const workflow = workflowMode === '1' || workflowMode === 'prose' || supervision
+  const recovery = workflowMode === 'recovery'
+  const workflow = workflowMode === '1' || workflowMode === 'prose' || supervision || recovery
   const reading = Promise.withResolvers<boolean>(), release = Promise.withResolvers<boolean>()
   let childRequests = 0
   const closed = new Set<string>()
   if (workflow) {
     input.diagnosticWorkflowVersion = 1
+    if (recovery) input.diagnosticCloseoutRecoveryVersion = 1
     input.coordinatorAssignment.authority.tools = ['read', 'glob', 'grep', 'closeout_json', 'dispatch_workers', 'wait_for_workers', 'read_worker_report']
   }
   if (supervision) {
@@ -88,6 +90,12 @@ export async function apply(ctx: Context): Promise<void> {
       }
     }
     if (workflow) {
+      if (recovery && options.sessionId !== input.rootSessionId && childRequests++ === 0)
+        return textResponse('Investigation finished: {"summary":"Evidence retained in context"}')
+      if (recovery && options.sessionId === input.rootSessionId && rootRequests >= 1 && rootRequests <= 2) {
+        rootRequests++
+        return textResponse('All investigations have finished; no durable coordinator report submitted yet.')
+      }
       if (workflowMode === 'prose' && options.sessionId !== input.rootSessionId)
         return textResponse('Finished without submitting a report.')
       if (workflowMode === 'prose' && rootRequests === 1) {
@@ -134,6 +142,7 @@ export async function apply(ctx: Context): Promise<void> {
     ...(workflow ? { diagnosticWorkflowVersion: 1 as const } : {}),
     ...(supervision ? { diagnosticSupervisionVersion: 1 as const } : {}),
     ...(review ? { diagnosticReviewVersion: 1 as const } : {}),
+    ...(recovery ? { diagnosticCloseoutRecoveryVersion: 1 as const } : {}),
   }
   ctx.effect(() =>
     ctx.get('subagents')!.diagnostics.registerExecutor({
@@ -142,6 +151,7 @@ export async function apply(ctx: Context): Promise<void> {
         diagnosticWorkflowVersions: [1],
         diagnosticSupervisionVersions: [1],
         diagnosticReviewVersions: [1],
+        diagnosticCloseoutRecoveryVersions: [1],
         prepareWorkers: async () => {
           await ctx.get('subagents')!.diagnostics.prepare(prepared)
           return { prepared: [{ requestKey: 'discovery', status: 'prepared', assignmentId: prepared.assignment.assignmentId }] }
@@ -204,6 +214,8 @@ export async function apply(ctx: Context): Promise<void> {
       if (value.progress) process.stdout.write(`${JSON.stringify({ type: 'supervision-progress', resolved: value.progress.resolved, acceptedEvidence: value.progress.acceptedEvidence })}\n`)
       if (value.operationId) process.stdout.write(`${JSON.stringify({ type: 'supervision-guidance', status: value.status, duplicate: value.duplicate })}\n`)
     }
+    if (event.type === 'diagnostic/closeout-recovery')
+      process.stdout.write(`${JSON.stringify({ type: 'closeout-recovery', role: _session.id === input.rootSessionId ? 'coordinator' : 'worker', state: event.data.state, turn: event.data.turn })}\n`)
     if (event.type === 'diagnostic/child-state') {
       const data = event.data as { state: string; quiescent: boolean }
       process.stdout.write(`${JSON.stringify({ type: 'diagnostic-child-outcome', state: data.state, quiescent: data.quiescent })}\n`)

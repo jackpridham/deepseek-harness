@@ -75,6 +75,7 @@ export interface DiagnosticBinding {
   diagnosticWorkflowVersion?: 1
   diagnosticSupervisionVersion?: 1
   diagnosticReviewVersion?: 1
+  diagnosticCloseoutRecoveryVersion?: 1
   executorBindingId: string
   bindingEpoch: number
   runId: string
@@ -94,6 +95,7 @@ export interface DiagnosticExecutor {
   diagnosticSupervisionVersions?: readonly number[]
   /** Joint support for durable periodic reviews. */
   diagnosticReviewVersions?: readonly number[]
+  diagnosticCloseoutRecoveryVersions?: readonly number[]
   /** Joint support for isolated diagnostic tree capture and restore. */
   diagnosticCheckpointVersions?: readonly number[]
   /** Hold the executor journal stable after all source operations have committed. */
@@ -171,6 +173,19 @@ declare module '@deepseek-ai/dsh-session/types' {
     'diagnostic/review-schedule': { scheduleId: string; intervalMs: number; anchorMs: number; nextReview: number }
     /** Exact periodic wait reply, retained for operation retries after reconnect. */
     'diagnostic/review-result': { operationId: string; request: JsonValue; response: JsonValue }
+    /** One automatic same-turn reminder; delivery and acceptance are independent projections. */
+    'diagnostic/closeout-recovery': {
+      reminderId: string
+      sessionId: string
+      assignmentId: string
+      turn: number
+      step: number
+      trigger: 'normal_completion_without_accepted_closeout'
+      message: UserMessage
+      state: 'pending' | 'queued' | 'missing-report'
+    }
+    /** Parent-visible missing report outcome; never an accepted worker report. */
+    'diagnostic/missing-report': { reminderId: string; sessionId: string; assignmentId: string; turn: number }
     /** Worker-authored status; never accepted evidence or closeout. */
     'diagnostic/progress': { assignmentId: string; resolved: string[]; uncertain: string[]; nextCheck: string }
     /** Durable supervisor intent and inbox acceptance, keyed by operation identity. */
@@ -323,6 +338,7 @@ export class DiagnosticRuns {
       diagnosticWorkflowVersions?: number[]
       diagnosticSupervisionVersions?: number[]
       diagnosticReviewVersions?: number[]
+      diagnosticCloseoutRecoveryVersions?: number[]
       diagnosticCheckpointVersions?: number[]
       maxChildren: number
       maxConcurrentChildren: number
@@ -349,6 +365,9 @@ export class DiagnosticRuns {
       ...(this.executor.diagnosticReviewVersions?.includes(1) && this.executor.diagnosticSupervisionVersions?.includes(1)
         && this.executor.diagnosticWorkflowVersions?.includes(1) && this.executor.prepareWorkers && this.executor.awaitCloseout
         ? { diagnosticReviewVersions: [1] } : {}),
+      ...(this.executor.diagnosticCloseoutRecoveryVersions?.includes(1) && this.executor.diagnosticWorkflowVersions?.includes(1)
+        && this.executor.prepareWorkers && this.executor.awaitCloseout && this.executor.closed
+        ? { diagnosticCloseoutRecoveryVersions: [1] } : {}),
       ...(this.executor.diagnosticCheckpointVersions?.includes(1) && this.executor.withCheckpoint
         ? { diagnosticCheckpointVersions: [1] } : {}),
       maxChildren: this.maxChildren,
@@ -507,6 +526,10 @@ export class DiagnosticRuns {
     if (jsonObject(input)?.diagnosticReviewVersion !== undefined
       && (jsonObject(input)?.diagnosticReviewVersion !== 1 || !this.capability()?.diagnosticReviewVersions?.includes(1)))
       throw new DiagnosticError('diagnostic-capability-unavailable', 'Diagnostic review version is unavailable')
+    if (jsonObject(input)?.diagnosticCloseoutRecoveryVersion !== undefined
+      && (jsonObject(input)?.diagnosticCloseoutRecoveryVersion !== 1
+        || !this.capability()?.diagnosticCloseoutRecoveryVersions?.includes(1)))
+      throw new DiagnosticError('diagnostic-capability-unavailable', 'Diagnostic closeout recovery version is unavailable')
     const admission = diagnosticAdmissionSchema.parse(input)
     const root = this.root(SessionId(admission.rootSessionId))
     this.requireCompaction(root)
@@ -544,6 +567,7 @@ export class DiagnosticRuns {
       if (binding.diagnosticWorkflowVersion !== admission.diagnosticWorkflowVersion
         || binding.diagnosticSupervisionVersion !== admission.diagnosticSupervisionVersion
         || binding.diagnosticReviewVersion !== admission.diagnosticReviewVersion
+        || binding.diagnosticCloseoutRecoveryVersion !== admission.diagnosticCloseoutRecoveryVersion
       )
         throw new DiagnosticError('diagnostic-capability-unavailable', 'Executor and core diagnostic workflow opt-in must agree')
       if (
@@ -958,10 +982,12 @@ export class DiagnosticRuns {
           if (this.executor?.closed?.(member.root.id, agent.id, member.assignment.assignmentId)) return { kind: 'reject' }
           return decision
         }))
-        disposers.push(agent.ctx.on('agent/turn-stopping', async ({ signal }) => {
+        disposers.push(agent.ctx.on('agent/turn-stopping', async ({ signal, turn, reason }) => {
           const executor = this.requireExecutor()
           if (!executor.awaitCloseout) throw new DiagnosticError('diagnostic-capability-unavailable', 'Terminal closeout is unavailable')
           await executor.awaitCloseout(member.root.id, agent.id, signal)
+          if (limits.diagnosticCloseoutRecoveryVersion === 1 && reason.kind === 'completed')
+            await this.recoverCloseout(agent, member.root, member.assignment, turn, signal)
         }))
       }
       if (agent === member.root && limits.diagnosticWorkflowVersion === 1) {
@@ -1264,6 +1290,9 @@ export class DiagnosticRuns {
     const value = () => ({ updates, nextSeq, activeAssignmentIds, idle: activeAssignmentIds.length === 0 })
     for (const event of root.session.events) {
       const batch: JsonValue[] = []
+      if (event.type === 'diagnostic/missing-report' && ids.has(event.data.assignmentId) && event.seq > input.afterSeq)
+        batch.push({ seq: event.seq, assignmentId: event.data.assignmentId, childSessionId: event.data.sessionId,
+          kind: 'missing_report', reminderId: event.data.reminderId, turn: event.data.turn, acceptedEvidence: false })
       if (event.type === 'diagnostic/worker-report') reports.set(event.data.assignmentId, { reportRef: event.data.reportRef, seq: event.seq })
       if (event.type === 'diagnostic/child-state') {
         const data = jsonObject(event.data)
@@ -1340,6 +1369,88 @@ export class DiagnosticRuns {
     return status
   }
 
+  private requestAllowance(root: Agent, assignment: DiagnosticAssignment, child: boolean, maxTokens: number): boolean {
+    const admission = this.requireRun(root).admission
+    const charges = root.session.events.filter(event => event.type === 'diagnostic/request').filter(event => event.data.state === 'reserved')
+    const own = charges.filter(event => event.data.assignmentId === assignment.assignmentId)
+    return Date.now() < Math.min(Date.parse(assignment.budget.deadline),
+      Date.parse(admission.deadline) - (child ? admission.rootSynthesisReserveMs : 0))
+      && charges.length < admission.maxModelRequests - (child ? admission.rootSynthesisReserveRequests : 0)
+      && charges.reduce((sum, event) => sum + event.data.outputTokens, 0) + maxTokens
+        <= admission.maxOutputTokens - (child ? admission.rootSynthesisReserveTokens : 0)
+      && own.length < assignment.budget.maxModelRequests
+      && own.reduce((sum, event) => sum + event.data.outputTokens, 0) + maxTokens <= assignment.budget.maxOutputTokens
+  }
+
+  private closeoutRecovery(events: Session['events'], accepted: boolean): JsonValue {
+    const event = events.findLast(event => event.type === 'diagnostic/closeout-recovery')
+    if (event?.type !== 'diagnostic/closeout-recovery') return null
+    const record = event.data
+    const inbox: UserMessage[] = []
+    let delivery: 'uncertain' | 'queued' | 'delivered' | 'cancelled' = 'uncertain'
+    for (const event of events) {
+      if (event.type === 'user/message' && event.data.id === record.message.id) { delivery = 'delivered'; break }
+      if (event.type !== 'agent/inbox/spliced' || event.data.target !== 'next-step') continue
+      const removed = inbox.splice(event.data.start, event.data.removedCount ?? 0, ...event.data.inserted)
+      if (event.data.inserted.some(message => message.id === record.message.id)) delivery = 'queued'
+      if (removed.some(message => message.id === record.message.id))
+        delivery = event.data.outcome === 'canceled' ? 'cancelled' : 'uncertain'
+    }
+    return { reminderId: record.reminderId, sessionId: record.sessionId, assignmentId: record.assignmentId,
+      turn: record.turn, step: record.step, trigger: record.trigger, delivery,
+      outcome: accepted ? 'accepted' : record.state === 'missing-report' ? 'missing-report' : 'awaiting-report', acceptedEvidence: false }
+  }
+
+  private async recoverCloseout(agent: Agent, root: Agent, assignment: DiagnosticAssignment, turn: number, signal: AbortSignal) {
+    await this.transact(root.id, async () => {
+      signal.throwIfAborted()
+      const executor = this.requireExecutor()
+      if (executor.closed?.(root.id, agent.id, assignment.assignmentId)) return
+      const prior = agent.session.events.findLast(event => event.type === 'diagnostic/closeout-recovery'
+        && event.data.assignmentId === assignment.assignmentId && event.data.turn === turn)
+      const step = agent.session.events.findLast(event => event.type === 'step/end')?.data.step ?? 0
+      if (prior?.type === 'diagnostic/closeout-recovery') {
+        await this.flush(agent.session)
+        const projection = jsonObject(this.closeoutRecovery(agent.session.events, false))
+        if (prior.data.state !== 'missing-report' && (projection?.delivery !== 'delivered' || step <= prior.data.step)) return
+        if (prior.data.state !== 'missing-report') {
+          agent.session.append('diagnostic/closeout-recovery', { ...prior.data, state: 'missing-report' })
+          await this.flush(agent.session)
+        }
+        if (!root.session.events.some(event => event.type === 'diagnostic/missing-report'
+          && event.data.reminderId === prior.data.reminderId)) {
+          root.session.append('diagnostic/missing-report', { reminderId: prior.data.reminderId, sessionId: agent.id,
+            assignmentId: assignment.assignmentId, turn })
+        }
+        await this.flush(root.session)
+        return
+      }
+      if (!this.requestAllowance(root, assignment, agent !== root, assignment.roleSettings.outputLimit)) return
+      const activity = executor.activity?.(root.id, agent.id)
+      if (activity && (activity.activeCalls || activity.pendingResults)) return
+      const reminderId = `${agent.id}:${assignment.assignmentId}:${turn}`
+      const message = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text:
+        'Before finishing, carefully review your preceding turn and the investigation already present in your context. '
+        + 'Reconcile every investigated candidate, including supporting evidence, counterevidence, ruled-out issues and unresolved questions. '
+        + 'Preserve your assigned scope and explicitly report limitations. Correct any recorded closeout rejection against your assigned report schema. '
+        + 'Submit the complete domain report through closeout_json. Plain assistant text, including JSON, is not the durable report. '
+        + 'Only accepted closeout completes this assignment; stop after acceptance. Use the accumulated investigation; do not broadly rediscover '
+        + 'or reread every file. Preserve all citation, evidence and independent-validation requirements.'
+        + (agent === root ? ' Reconcile coverage across all assigned work and retain your independent-validation obligations.' : ''),
+      }] })
+      const record = { reminderId, sessionId: agent.id, assignmentId: assignment.assignmentId, turn, step,
+        trigger: 'normal_completion_without_accepted_closeout' as const, message, state: 'pending' as const }
+      agent.session.append('diagnostic/closeout-recovery', record)
+      await this.flush(agent.session)
+      signal.throwIfAborted()
+      if (executor.closed?.(root.id, agent.id, assignment.assignmentId)) return
+      agent.steer(freezeMessage(message))
+      await this.flush(agent.session)
+      agent.session.append('diagnostic/closeout-recovery', { ...record, state: 'queued' })
+      await this.flush(agent.session)
+    })
+  }
+
   private async inspectWorker(root: Agent, input: unknown): Promise<JsonValue> {
     const { assignmentId, maxEvents } = diagnosticInspectWorkerSchema.parse(input)
     const { record, childId } = this.worker(root, assignmentId)
@@ -1383,6 +1494,7 @@ export class DiagnosticRuns {
           status: result === undefined ? 'pending' : result.data.message.content.some(block => block.isError) ? 'rejected' : 'returned' }
       }),
       acceptedCloseout,
+      closeoutRecovery: this.closeoutRecovery(events, acceptedCloseout),
       progress: progress?.type === 'diagnostic/progress' ? { ...progress.data, eventSeq: progress.seq, time: progress.time, acceptedEvidence: false } : null,
       guidance: latestGuidance.map((record) => {
         const delivery = this.guidanceDelivery(events, record.message.id)
@@ -1577,6 +1689,10 @@ export class DiagnosticRuns {
         const seed = captured.events.map((event) => {
           // Keep cursor-bearing history at its original sequence, with explicit new membership.
           if (event.type === 'diagnostic/request') return { ...event, data: { ...event.data, producerSessionId: mappedId(event.data.producerSessionId) } }
+          if (event.type === 'diagnostic/closeout-recovery')
+            return { ...event, data: { ...event.data, sessionId: mappedId(event.data.sessionId) } }
+          if (event.type === 'diagnostic/missing-report')
+            return { ...event, data: { ...event.data, sessionId: mappedId(event.data.sessionId) } }
           if (event.type === 'diagnostic/review-schedule' || event.type === 'diagnostic/progress') return event
           if (event.type === 'diagnostic/review-result') return { ...event, data: { ...event.data, response: this.forkReviewResponse(event.data.response, fork.sessionIds) } }
           if (event.type === 'diagnostic/worker-request') return { ...event, data: { ...event.data, runId: fork.runId } }
@@ -1933,7 +2049,7 @@ export class DiagnosticRuns {
     if (member === undefined)
       throw new DiagnosticError('diagnostic-policy-rejected', 'Diagnostic admission is required')
     const request = await this.transact(member.root.id, async () => {
-      const run = this.requireRun(member.root)
+      this.requireRun(member.root)
       const expected = selection(member.assignment)
       if (options.purpose !== undefined && options.purpose !== 'compaction')
         throw new DiagnosticError('diagnostic-policy-rejected', 'Diagnostic auxiliary requests must be compaction')
@@ -1971,22 +2087,7 @@ export class DiagnosticRuns {
         options.purpose === undefined && maxTokens !== member.assignment.roleSettings.outputLimit
       )
         throw new DiagnosticError('diagnostic-policy-rejected', 'Effective model request widens the assignment')
-      const charges = member.root.session.events
-        .filter(event => event.type === 'diagnostic/request')
-        .filter(event => event.data.state === 'reserved')
-      const own = charges.filter(event => event.data.assignmentId === member.assignment.assignmentId)
-      const child = agent !== member.root
-      const now = Date.now()
-      if (
-        now >= Date.parse(member.assignment.budget.deadline) ||
-        now >= Date.parse(run.admission.deadline) - (child ? run.admission.rootSynthesisReserveMs : 0) ||
-        charges.length >= run.admission.maxModelRequests - (child ? run.admission.rootSynthesisReserveRequests : 0) ||
-        charges.reduce((sum, event) => sum + event.data.outputTokens, 0) + maxTokens >
-          run.admission.maxOutputTokens - (child ? run.admission.rootSynthesisReserveTokens : 0) ||
-        own.length >= member.assignment.budget.maxModelRequests ||
-        own.reduce((sum, event) => sum + event.data.outputTokens, 0) + maxTokens >
-          member.assignment.budget.maxOutputTokens
-      )
+      if (!this.requestAllowance(member.root, member.assignment, agent !== member.root, maxTokens))
         throw new DiagnosticError('diagnostic-budget-exhausted', 'Diagnostic request budget is exhausted')
       const record: RequestData = {
         id: randomUUID(),

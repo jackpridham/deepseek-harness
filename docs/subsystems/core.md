@@ -275,7 +275,7 @@ type PreStepDecision =
 type RequestErrorAction = { kind: 'retry' } | undefined
 ```
 
-`agent/pre-step` is the only serial listener chain before request derivation. `agent/turn-stopping` runs when a turn has no tool or steering continuation, before one final steering drain.
+`agent/pre-step` is the only serial listener chain before request derivation. `agent/turn-stopping` runs when a turn has no tool or steering continuation, before one final steering drain. Its `reason` is the proposed durable turn-end reason at that boundary; later steering can change the final reason.
 
 `agent/session-start` carries a `SessionStartSource` (why the session lifecycle began; a bridge keys its SessionStart matcher on it):
 
@@ -883,7 +883,7 @@ A step or turn errored. The machine reports a failure here even when the error h
 
 Types: [Scoped](scope.md)
 
-Source: [`packages/core/agent/src/runtime-types.ts:313`](../../packages/core/agent/src/runtime-types.ts)
+Source: [`packages/core/agent/src/runtime-types.ts:314`](../../packages/core/agent/src/runtime-types.ts)
 
 <a id="agentinboxclaimed--emit"></a>
 
@@ -1098,16 +1098,17 @@ The turn is about to close: the model owes no response (no live tool calls, no f
  * closes only when that inbox drains.
  * @param payload.agent - the agent whose turn is at its stop boundary.
  * @param payload.turn - the turn about to close.
+ * @param payload.reason - the proposed durable end reason at this boundary. Steering may run a later step and change the final reason.
  * @param payload.signal - the current turn's explicit abort signal.
  * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
  * @mode serial
  */
-'agent/turn-stopping'(this: Scoped<Agent>, payload: { agent: Agent; turn: number; signal: AbortSignal }): Promise<void> | void
+'agent/turn-stopping'(this: Scoped<Agent>, payload: { agent: Agent; turn: number; reason: TurnEndReason; signal: AbortSignal }): Promise<void> | void
 ```
 
-Types: [Scoped](scope.md)
+Types: [Scoped](scope.md) · [TurnEndReason](session.md)
 
-Source: [`packages/core/agent/src/runtime-types.ts:301`](../../packages/core/agent/src/runtime-types.ts)
+Source: [`packages/core/agent/src/runtime-types.ts:302`](../../packages/core/agent/src/runtime-types.ts)
 
 <a id="agent-loop-events"></a>
 

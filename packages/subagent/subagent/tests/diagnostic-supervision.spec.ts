@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import { MockAdapter, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
+import { agentEvents } from '@deepseek-ai/dsh-agent'
+import { MockAdapter, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import Persistence from '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -19,7 +20,9 @@ import type { DiagnosticBinding, DiagnosticAssignment } from '../src/index.ts'
 
 const cleanup: (() => Promise<unknown>)[] = []
 afterEach(async () => { vi.useRealTimers(); for (const dispose of cleanup.splice(0)) await dispose() })
-async function setup(supervised = true, review = false, workers = 1) {
+interface RecoveryHooks { awaitCloseout?: () => Promise<void> }
+
+async function setup(supervised = true, review = false, workers = 1, recovery = false, recoveryMode: 'accepted' | 'missing' | 'rejected' | 'json' = 'accepted', hooks: RecoveryHooks = {}) {
   const ctx = new Context()
   const directory = mkdtempSync(join(tmpdir(), 'dsh-supervision-'))
   const release = Promise.withResolvers<boolean>(), reading = Promise.withResolvers<AbortSignal>()
@@ -38,6 +41,7 @@ async function setup(supervised = true, review = false, workers = 1) {
   input.maxConcurrentChildren = workers
   input.diagnosticWorkflowVersion = 1
   if (review) input.diagnosticReviewVersion = 1
+  if (recovery) input.diagnosticCloseoutRecoveryVersion = 1
   input.coordinatorAssignment.authority.tools = ['read', 'glob', 'grep', 'closeout_json', 'dispatch_workers', 'wait_for_workers', 'read_worker_report']
   if (supervised) {
     input.diagnosticSupervisionVersion = 1
@@ -47,8 +51,14 @@ async function setup(supervised = true, review = false, workers = 1) {
   for (const assignment of [input.coordinatorAssignment, prepared.assignment]) assignment.digest = diagnosticRecordDigest(assignment, true)
   const script = [
     ...Array.from({ length: workers }, (_, i) => toolCallResponse('source-' + i, 'read', {})),
-    ...(supervised ? [toolCallResponse('progress', 'update_progress', { resolved: ['Scope checked'], uncertain: ['Missing source'], nextCheck: 'Report the unresolved source' })] : []),
-    toolCallResponse('closeout', 'closeout_json', { report: {} }),
+    ...(supervised && !recovery ? [toolCallResponse('progress', 'update_progress', { resolved: ['Scope checked'], uncertain: ['Missing source'], nextCheck: 'Report the unresolved source' })] : []),
+    ...(recovery
+      ? recoveryMode === 'missing'
+        ? [textResponse('I inspected the source but have not submitted a report.'), textResponse('Still no closeout.')]
+        : recoveryMode === 'rejected'
+          ? [toolCallResponse('rejected-closeout', 'closeout_json', { report: {} }), textResponse('Corrected prose but no closeout.'), toolCallResponse('accepted-closeout', 'closeout_json', { report: {} })]
+          : [textResponse(recoveryMode === 'json' ? '{\"summary\":\"plain JSON is not a closeout\"}' : 'I inspected the source but have not submitted a report.'), toolCallResponse('recovered-closeout', 'closeout_json', { report: {} })]
+      : [toolCallResponse('closeout', 'closeout_json', { report: {} })]),
   ]
   const adapter = new MockAdapter(script)
   adapter.resolveModel = async (provider, model) => {
@@ -60,11 +70,14 @@ async function setup(supervised = true, review = false, workers = 1) {
   let binding: DiagnosticBinding = { executorBindingId: input.executorBindingId, bindingEpoch: 1,
     runId: input.runId, rootSessionId: input.rootSessionId,
     comparisonDigest: input.comparisonDigest, sourceRefs: input.sourceRefs, state: 'awaiting-admission', diagnosticWorkflowVersion: 1,
-    ...(supervised ? { diagnosticSupervisionVersion: 1 as const } : {}), ...(review ? { diagnosticReviewVersion: 1 as const } : {}) }
+    ...(supervised ? { diagnosticSupervisionVersion: 1 as const } : {}), ...(review ? { diagnosticReviewVersion: 1 as const } : {}),
+    ...(recovery ? { diagnosticCloseoutRecoveryVersion: 1 as const } : {}) }
   const closed = new Set<string>()
+  let closeoutAttempts = 0
   let preparations = 0
   ctx.subagents.diagnostics.registerExecutor({
     diagnosticWorkflowVersions: [1], diagnosticSupervisionVersions: [1], diagnosticReviewVersions: [1],
+    diagnosticCloseoutRecoveryVersions: [1],
     diagnosticCheckpointVersions: [1], binding: () => binding,
     withCheckpoint: async (_root, capture) => capture({ binding: {}, acceptedState: { receipts: [], reads: [] } }),
     admit: async () => { binding = { ...binding, state: 'active' } },
@@ -78,13 +91,14 @@ async function setup(supervised = true, review = false, workers = 1) {
       await ctx.subagents.diagnostics.prepare(value)
       return { prepared: [{ requestKey: (args as { requests: { requestKey: string }[] }).requests[0]!.requestKey, status: 'prepared', assignmentId: value.assignment.assignmentId }] }
     },
-    awaitCloseout: async () => {}, closed: (_root, producer) => closed.has(producer),
+    awaitCloseout: async () => { await hooks.awaitCloseout?.() }, closed: (_root, producer) => closed.has(producer),
     cancel: async () => {}, quiescent: () => true,
     install: (agent) => {
       const disposers = ['read', 'closeout_json'].map(name => agent.ctx.tools.register({ name, description: name, parameters: { type: 'object' },
         output: { schema: { type: 'object' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
         execute: async (_args, execution) => {
           if (name === 'read') { reading.resolve(execution.signal); await release.promise; throw new Error('Source is unavailable') }
+          if (recoveryMode === 'rejected' && closeoutAttempts++ === 0) throw new Error('Caller rejected this closeout')
           closed.add(agent.id); execution.concludeTurn(); return { accepted: true }
         },
       }))
@@ -103,6 +117,140 @@ async function setup(supervised = true, review = false, workers = 1) {
   return { ctx, root, child, execute, release, signal, input, prepared, assignmentId, adapter, script, closed,
     setBinding: (value: DiagnosticBinding) => { binding = value } }
 }
+
+it('recovers a normally completed worker with one durable reminder and an accepted closeout', async () => {
+  const { ctx, child, release, closed } = await setup(false, false, 1, true)
+  release.resolve(true)
+  await child.whenIdle()
+
+  const recovery = child.session.events.filter(event => event.type === 'diagnostic/closeout-recovery')
+  expect(recovery).toHaveLength(2)
+  expect(recovery.map(event => event.data.state)).toEqual(['pending', 'queued'])
+  expect(recovery[0]!.data.message.content[0]).toMatchObject({ type: 'text', text: expect.stringContaining('Plain assistant text') })
+  expect(child.session.events.filter(event => event.type === 'tool/call' && event.data.name === 'closeout_json')).toHaveLength(1)
+  expect(closed.has(child.id)).toBe(true)
+  await agentEvents(ctx, child).serial('agent/turn-stopping', { turn: 1, reason: { kind: 'completed' }, signal: new AbortController().signal })
+  expect(child.session.events.filter(event => event.type === 'diagnostic/closeout-recovery')).toHaveLength(2)
+})
+
+it('treats assistant JSON prose as missing closeout and recovers it once', async () => {
+  const { child, release, closed } = await setup(false, false, 1, true, 'json')
+  release.resolve(true)
+  await child.whenIdle()
+  expect(child.session.events.filter(event => event.type === 'diagnostic/closeout-recovery')).toHaveLength(2)
+  expect(closed.has(child.id)).toBe(true)
+})
+
+it('awaits pending acceptance before recovery, and acceptance wins without a reminder', async () => {
+  const entered = Promise.withResolvers<boolean>(), settled = Promise.withResolvers<boolean>()
+  let hold = false
+  const { child, release, closed } = await setup(false, false, 1, true, 'accepted', {
+    awaitCloseout: async () => { if (hold) { entered.resolve(true); await settled.promise } },
+  })
+  hold = true
+  release.resolve(true)
+  await entered.promise
+  closed.add(child.id)
+  settled.resolve(true)
+  await child.whenIdle()
+  expect(child.session.events.some(event => event.type === 'diagnostic/closeout-recovery')).toBe(false)
+})
+
+it('does not recover a coordinator after its terminal closeout is accepted', async () => {
+  const { ctx, root, execute } = await setup(false, false, 1, true)
+  expect((await execute('closeout_json', {}, root)).isError).toBe(false)
+  await agentEvents(ctx, root).serial('agent/turn-stopping', { turn: 1, reason: { kind: 'completed' }, signal: new AbortController().signal })
+  expect(root.session.events.some(event => event.type === 'diagnostic/closeout-recovery')).toBe(false)
+})
+
+it('retains a single queued reminder after its flush acknowledgement is lost', async () => {
+  const { ctx, child } = await setup(false, false, 1, true)
+  const flush = ctx.sessions.flush.bind(ctx.sessions)
+  let fail = true
+  const spy = vi.spyOn(ctx.sessions, 'flush').mockImplementation(async (...args) => {
+    if (fail && child.session.events.some(event => event.type === 'agent/inbox/spliced' && event.data.target === 'next-step')) {
+      fail = false
+      throw new Error('lost queued acknowledgement')
+    }
+    return flush(...args)
+  })
+  const payload = { turn: 1, reason: { kind: 'completed' as const }, signal: new AbortController().signal }
+  await expect(agentEvents(ctx, child).serial('agent/turn-stopping', payload)).rejects.toThrow('lost queued acknowledgement')
+  spy.mockRestore()
+  await agentEvents(ctx, child).serial('agent/turn-stopping', payload)
+  expect(child.session.events.filter(event => event.type === 'agent/inbox/spliced' && event.data.target === 'next-step')).toHaveLength(1)
+  expect(child.session.events.filter(event => event.type === 'diagnostic/closeout-recovery')).toHaveLength(1)
+})
+
+it('keeps an intent-only interrupted reminder uncertain and never re-enqueues it', async () => {
+  const { ctx, child } = await setup(false, false, 1, true)
+  const flush = ctx.sessions.flush.bind(ctx.sessions)
+  let fail = true
+  const spy = vi.spyOn(ctx.sessions, 'flush').mockImplementation(async (...args) => {
+    if (fail && child.session.events.some(event => event.type === 'diagnostic/closeout-recovery')) {
+      fail = false
+      throw new Error('interrupted before reminder delivery')
+    }
+    return flush(...args)
+  })
+  const payload = { turn: 1, reason: { kind: 'completed' as const }, signal: new AbortController().signal }
+  await expect(agentEvents(ctx, child).serial('agent/turn-stopping', payload)).rejects.toThrow('interrupted before reminder delivery')
+  spy.mockRestore()
+  await agentEvents(ctx, child).serial('agent/turn-stopping', payload)
+  expect(child.session.events.filter(event => event.type === 'diagnostic/closeout-recovery')).toHaveLength(1)
+  expect(child.session.events.some(event => event.type === 'agent/inbox/spliced' && event.data.target === 'next-step')).toBe(false)
+})
+
+it('recovers a rejected closeout followed by normal prose, then accepts the corrected closeout', async () => {
+  const { child, release, closed } = await setup(false, false, 1, true, 'rejected')
+  release.resolve(true)
+  await child.whenIdle()
+
+  expect(child.session.events.filter(event => event.type === 'tool/call' && event.data.name === 'closeout_json')).toHaveLength(2)
+  expect(child.session.events.filter(event => event.type === 'diagnostic/closeout-recovery')).toHaveLength(2)
+  expect(closed.has(child.id)).toBe(true)
+})
+
+it('reports one exhausted recovery reminder to the parent wait projection', async () => {
+  const { root, child, execute, release, assignmentId } = await setup(true, false, 1, true, 'missing')
+  const afterSeq = root.session.seq - 1
+  release.resolve(true)
+  await child.whenIdle()
+
+  expect(child.session.events.filter(event => event.type === 'diagnostic/closeout-recovery').map(event => event.data.state)).toEqual(['pending', 'queued', 'missing-report'])
+  const wait = await execute('wait_for_workers', { afterSeq, timeoutMs: 1 })
+  expect(wait.isError, JSON.stringify(wait)).toBe(false)
+  expect(wait.value).toMatchObject({ reason: 'updates' })
+  expect((wait.value as { updates: unknown[] }).updates).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'missing_report', assignmentId, childSessionId: child.id })]))
+  expect(root.session.events.filter(event => event.type === 'diagnostic/missing-report')).toHaveLength(1)
+})
+
+it('does not recover for output caps, cancellation, errors, or blocked stop reasons', async () => {
+  const { ctx, child, release } = await setup(false, false, 1, true)
+  await agentEvents(ctx, child).serial('agent/turn-stopping', { turn: 1, reason: { kind: 'max-tokens' }, signal: new AbortController().signal })
+  await agentEvents(ctx, child).serial('agent/turn-stopping', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } }, signal: new AbortController().signal })
+  await agentEvents(ctx, child).serial('agent/turn-stopping', { turn: 1, reason: { kind: 'error', error: { code: 'UNKNOWN', message: 'request failed' } }, signal: new AbortController().signal })
+  await agentEvents(ctx, child).serial('agent/turn-stopping', { turn: 1, reason: { kind: 'blocked' }, signal: new AbortController().signal })
+  expect(child.session.events.some(event => event.type === 'diagnostic/closeout-recovery')).toBe(false)
+  release.resolve(true)
+  await child.whenIdle()
+})
+
+it('does not spend a recovery request when remaining output budget is reserved', async () => {
+  const { root, child, release, input } = await setup(false, false, 1, true)
+  const charge = root.session.events.find(event => event.type === 'diagnostic/request')!
+  root.session.append('diagnostic/request', { ...charge.data, id: 'recovery-budget-reservation', state: 'reserved', outputTokens: input.maxOutputTokens })
+  release.resolve(true)
+  await child.whenIdle()
+  expect(child.session.events.some(event => event.type === 'diagnostic/closeout-recovery')).toBe(false)
+})
+
+it('keeps recovery disabled for a frozen admission that did not negotiate it', async () => {
+  const { child, release } = await setup(false)
+  release.resolve(true)
+  await child.whenIdle()
+  expect(child.session.events.some(event => event.type === 'diagnostic/closeout-recovery')).toBe(false)
+})
 
 it('returns a checkpoint without moving the report cursor or cancelling source work', async () => {
   const { root, child, execute, signal, assignmentId } = await setup()

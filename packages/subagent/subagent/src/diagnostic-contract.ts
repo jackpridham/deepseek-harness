@@ -182,6 +182,8 @@ export function parseDiagnosticAdmission(input: unknown, now: number): Diagnosti
   const value = diagnosticAdmissionSchema.parse(input)
   const tools = value.coordinatorAssignment.authority.tools
   const workflowTools = ['dispatch_workers', 'wait_for_workers', 'read_worker_report']
+  if (value.diagnosticCloseoutRecoveryVersion === 1 && value.diagnosticWorkflowVersion !== 1)
+    throw new Error('Closeout recovery requires workflow v1')
   const supervision = value.diagnosticSupervisionVersion === 1
   if ((value.diagnosticReviewVersion === 1) && !supervision)
     throw new Error('Review scheduling requires supervision v1')
