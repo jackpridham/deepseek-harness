@@ -41,7 +41,8 @@ export async function apply(ctx: Context): Promise<void> {
     idempotencyKey: string
     assignment: DiagnosticAssignment
   }
-  const workflow = process.env.DSH_TEST_DIAGNOSTIC_WORKFLOW === '1'
+  const workflowMode = process.env.DSH_TEST_DIAGNOSTIC_WORKFLOW
+  const workflow = workflowMode === '1' || workflowMode === 'prose'
   const closed = new Set<string>()
   if (workflow) {
     input.diagnosticWorkflowVersion = 1
@@ -60,6 +61,12 @@ export async function apply(ctx: Context): Promise<void> {
       return textResponse('Candidate C1; pending gap G1; evidence reference read:159. Unvalidated.')
     }
     if (workflow) {
+      if (workflowMode === 'prose' && options.sessionId !== input.rootSessionId)
+        return textResponse('Finished without submitting a report.')
+      if (workflowMode === 'prose' && rootRequests === 1) {
+        rootRequests++
+        return toolCallResponse('wait', 'wait_for_workers', { afterSeq: 0 })
+      }
       if (options.sessionId !== input.rootSessionId || rootRequests++ > 0)
         return toolCallResponse('finish', 'closeout_json', { report: { summary: 'Retained diagnostic closeout.' } })
       return toolCallResponse('dispatch', 'dispatch_workers', { requests: [{ requestKey: 'discovery', name: 'Discovery', role: 'discovery', responsibility: '', namespace: '', paths: [], objective: 'Examine admitted source' }] })
@@ -115,7 +122,7 @@ export async function apply(ctx: Context): Promise<void> {
       install: (agent, assignment) => {
         if (workflow) return agent.ctx.tools.register({ name: 'closeout_json', description: 'Submit the assignment report.', parameters: { type: 'object', properties: { report: { type: 'object' } }, required: ['report'] },
           output: { schema: { type: 'object' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
-          execute: (args, execution) => { closed.add(agent.id); process.stdout.write(`${JSON.stringify({ type: 'accepted-closeout', role: assignment.role })}\n`); execution.concludeTurn(); return args },
+          execute: async (args, execution) => { closed.add(agent.id); process.stdout.write(`${JSON.stringify({ type: 'accepted-closeout', role: assignment.role })}\n`); execution.concludeTurn(); return args },
         })
         if (assignment.role === 'discovery' && !agent.session.events.some(event => event.type === 'request/header')) {
           const snapshot = assignment.instructionSnapshot
@@ -139,6 +146,10 @@ export async function apply(ctx: Context): Promise<void> {
   await ctx.get('subagents')!.diagnostics.admit(input)
   if (!workflow) await ctx.get('subagents')!.diagnostics.prepare(prepared)
   ctx.on('session/event', async (_session, event) => {
+    if (event.type === 'diagnostic/child-state') {
+      const data = event.data as { state: string; quiescent: boolean }
+      process.stdout.write(`${JSON.stringify({ type: 'diagnostic-child-outcome', state: data.state, quiescent: data.quiescent })}\n`)
+    }
     if (event.type !== 'diagnostic/reservation' || event.data.state !== 'accepted' || !event.data.childSessionId) return
     const accepted = await ctx.get('subagents')!.renameChild(handle.agent, SessionId(event.data.childSessionId), input.runId,
       session => ctx.get('sessionTitle')!.rename(session, 'OWASP discovery child'))

@@ -446,7 +446,6 @@ export class DiagnosticRuns {
     admissionDigest: string
     bindingEpoch: number
     duplicate: boolean
-    admission: DiagnosticAdmission
   }> {
     if (jsonObject(input)?.diagnosticWorkflowVersion !== undefined
       && (jsonObject(input)?.diagnosticWorkflowVersion !== 1
@@ -473,7 +472,7 @@ export class DiagnosticRuns {
           state: 'admitted',
           admissionDigest,
           bindingEpoch: prior.bindingEpoch,
-          duplicate: true, admission: prior.admission,
+          duplicate: true,
         }
       }
       parseDiagnosticAdmission(admission, Date.now())
@@ -523,7 +522,7 @@ export class DiagnosticRuns {
         state: 'admitted',
         admissionDigest,
         bindingEpoch: binding.bindingEpoch,
-        duplicate: false, admission,
+        duplicate: false,
       }
     })
   }
@@ -646,6 +645,9 @@ export class DiagnosticRuns {
     )
     const run = this.run(root.session)
     if (!run) return
+    const workflow = run.admission.diagnosticWorkflowVersion === 1
+    const cancelled = workflow && root.session.events.some(event =>
+      event.type === 'diagnostic/run-state' && event.data.runId === run.runId && event.data.state === 'cancelling')
     const requests = new Map<string, RequestData>()
     for (const event of root.session.events)
       if (event.type === 'diagnostic/request') requests.set(event.data.id, event.data)
@@ -672,14 +674,17 @@ export class DiagnosticRuns {
         caller.activeCalls === 0 &&
         caller.pendingResults === 0 &&
         record.state === 'accepted'
-      const completed = quiescent && (acceptedCloseout || terminal?.type === 'turn/end' && terminal.data.reason.kind === 'completed')
+      const deliveryCancelled = cancelled && acceptedCloseout && !root.session.events.some(event =>
+        event.type === 'diagnostic/worker-report' && event.data.assignmentId === record.assignmentId)
+      const completed = quiescent && (workflow ? acceptedCloseout && !deliveryCancelled
+        : terminal?.type === 'turn/end' && terminal.data.reason.kind === 'completed')
       const state =
         record.state === 'uncertain' || events === undefined
           ? 'uncertain'
           : completed
             ? 'settled'
             : quiescent
-              ? terminal?.type === 'turn/end' && terminal.data.reason.kind === 'aborted' ? 'cancelled' : 'failed'
+              ? deliveryCancelled || terminal?.type === 'turn/end' && terminal.data.reason.kind === 'aborted' ? 'cancelled' : 'failed'
               : record.state === 'reserved'
                 ? 'starting'
                 : 'running'
@@ -699,6 +704,7 @@ export class DiagnosticRuns {
         activeModelRequests,
         ...caller,
         quiescent,
+        ...(deliveryCancelled ? { error: 'Accepted worker report delivery was cancelled before publication' } : {}),
         ...(quiescent ? { stopReason: completed ? 'completed' : 'failed' } : {}),
       })
     }
@@ -709,7 +715,7 @@ export class DiagnosticRuns {
       activity.activeCalls === 0 &&
       activity.pendingResults === 0 &&
       !uncertain &&
-      !(run.admission.diagnosticWorkflowVersion === 1
+      !(workflow && !cancelled
         && this.assignments(root.session).some(record => record.childSessionId
         && this.executor?.closed?.(root.id, SessionId(record.childSessionId), record.assignmentId)
         && !root.session.events.some(event => event.type === 'diagnostic/worker-report'
@@ -1486,5 +1492,6 @@ export class DiagnosticRuns {
       quiescent: this.executor?.quiescent(root.id) === true,
     })
     await this.flush(root.session)
+    if (run.admission.diagnosticWorkflowVersion === 1) await this.refresh(rootId)
   }
 }

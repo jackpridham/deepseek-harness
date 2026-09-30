@@ -97,3 +97,5 @@ None; this package neither assembles nor sends a provider request.
 The model catalog preserves optional provider `description`, `releaseDate` (`YYYY-MM-DD`), and `url` fields through both `llm.models` and `session.models`. Unknown release dates are omitted. Clients choose presentation and only render HTTP(S) source links.
 
 Diagnostic admission is opt-in: `host.describe({ diagnosticChildrenVersion: 1 })` includes `diagnosticChildren` only when core and executor support are installed. Diagnostic admission, assignment preparation and worker-report publication methods use strict versioned input schemas and typed rejection/reconciliation errors. Create their root with `sessionPolicy: 'vortex-diagnostic-children-v1'`; the [subagent owner](../../subagent/subagent/README.md#caller-prepared-diagnostic-children) defines admission and lifecycle semantics.
+
+Admission acknowledgements contain only `runId`, `rootSessionId`, `state`, `admissionDigest`, `bindingEpoch`, and `duplicate`, for both legacy and workflow runs. The full frozen admission, including any workflow opt-in, remains in `diagnostic/run-state` history.

@@ -38,6 +38,8 @@ export const KNOWN_SESSION_EVENT_TYPES: ReadonlySet<string> = new Set([
   'diagnostic/request',
   'diagnostic/reservation',
   'diagnostic/run-state',
+  'diagnostic/worker-report',
+  'diagnostic/worker-request',
   'feedback/record',
   'goal/change',
   'hook/invoked',

@@ -328,7 +328,6 @@ export interface SessionsApi {
     runId: string
     rootSessionId: string
     state: 'admitted'
-    admission: DiagnosticAdmission
     admissionDigest: string
     bindingEpoch: number
     duplicate: boolean
