@@ -188,6 +188,7 @@ export class DiagnosticRuns {
     private readonly ctx: Context,
     private readonly subagents: SubagentRuntime,
     private readonly maxConcurrentChildren: number,
+    private readonly maxChildren: number,
   ) {}
 
   /**
@@ -303,7 +304,7 @@ export class DiagnosticRuns {
       ...(this.executor.diagnosticWorkflowVersions?.includes(1)
         && this.executor.prepareWorkers
         && this.executor.awaitCloseout ? { diagnosticWorkflowVersions: [1] } : {}),
-      maxChildren: Number.MAX_SAFE_INTEGER,
+      maxChildren: this.maxChildren,
       maxConcurrentChildren: this.maxConcurrentChildren,
     }
   }
@@ -478,6 +479,8 @@ export class DiagnosticRuns {
         }
       }
       parseDiagnosticAdmission(admission, Date.now())
+      if (admission.maxChildren > this.maxChildren)
+        throw new DiagnosticError('diagnostic-policy-rejected', `Requested total children exceeds the host limit ${this.maxChildren}`)
       if (admission.maxConcurrentChildren > this.maxConcurrentChildren)
         throw new DiagnosticError('diagnostic-policy-rejected', `Requested concurrency exceeds the host limit ${this.maxConcurrentChildren}`)
       if (this.capability() === undefined)

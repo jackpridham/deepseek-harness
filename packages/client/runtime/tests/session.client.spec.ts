@@ -375,6 +375,99 @@ describe('live event path', () => {
 })
 
 describe('paging', () => {
+  function hiddenPagesSession() {
+    const api = new FakeApiClient()
+    const session = new Session(SID, api, fakeRemote(), {
+      conversation: {
+        ...TEST_CONVERSATION,
+        events: {
+          ...TEST_CONVERSATION.events,
+          entries: () => [{ ...TEST_EVENT_DEFINITION, match: event => event.type === 'permission/preset'
+            ? null : TEST_EVENT_DEFINITION.match(event),
+          buildViewNode: (context) => {
+            const node = TEST_EVENT_DEFINITION.buildViewNode(context)
+            return node && context.start?.event.type === 'turn/end' ? { ...node, kind: 'turn-tail' } : node
+          } }],
+        },
+      },
+    })
+    return { api, session }
+  }
+  const hidden = (seq: number): SessionEvent => ({ seq, time: seq, type: 'permission/preset', data: { preset: 'full-access' } }) as SessionEvent
+
+  it('opens through bookkeeping-only pages without skipping cursors', async () => {
+    const { api, session } = hiddenPagesSession()
+    api.onHistory = (payload) => {
+      const before = payload.beforeSeq ?? 42
+      return before > 1 ? histResponse([hidden(before - 1)], true) : histResponse([ev.user(0, 'retained parent')])
+    }
+    await session.open()
+    expect(chatSeqs(session.getSnapshot())).toEqual([0])
+    expect(api.callsOf('session.history').map(call => call.beforeSeq)).toEqual([undefined, ...Array.from({ length: 41 }, (_, i) => 41 - i)])
+    expect(session.getSnapshot().loadingOlder).toBe(false)
+  })
+
+  it('a footer-only tail still loads the earlier conversation', async () => {
+    const { api, session } = hiddenPagesSession()
+    api.onHistory = payload => payload.beforeSeq === undefined
+      ? histResponse([hidden(1), ev.turnEnd(2, 1)], true)
+      : histResponse([ev.user(0, 'retained question')])
+    await session.open()
+    expect(chatSeqs(session.getSnapshot())).toEqual([0, 2])
+    expect(api.callsOf('session.history')).toHaveLength(2)
+  })
+
+  it('one loadOlder traverses hidden pages despite a newly arriving live message', async () => {
+    const { api, session } = hiddenPagesSession()
+    api.onHistory = () => histResponse([ev.user(3, 'recent')], true)
+    await session.open()
+    api.onHistory = (payload) => {
+      if (payload.beforeSeq === 3) {
+        session.handleMuxEnvelope('live' as never, { type: 'session/event', sessionId: SID, event: ev.user(4, 'live') })
+        return histResponse([hidden(2)], true)
+      }
+      if (payload.beforeSeq === 2) return histResponse([hidden(1)], true)
+      return histResponse([ev.user(0, 'earlier')])
+    }
+    await session.loadOlder()
+    expect(chatSeqs(session.getSnapshot())).toEqual([0, 3, 4])
+    expect(api.callsOf('session.history')).toHaveLength(4)
+  })
+
+  it('does not install an older page from a superseded connection', async () => {
+    const { api, session } = hiddenPagesSession()
+    api.onHistory = () => histResponse([ev.user(3, 'old connection')], true)
+    await session.open()
+    const gate = deferred<Awaited<ReturnType<FakeApiClient['onHistory']>>>()
+    api.onHistory = () => gate.promise
+    const older = session.loadOlder()
+    api.onHistory = () => histResponse([ev.user(8, 'fresh connection')])
+    await session.resync()
+    gate.resolve(await histResponse([hidden(2)], true))
+    await older
+    expect(chatSeqs(session.getSnapshot())).toEqual([8])
+    expect(session.getSnapshot().loadingOlder).toBe(false)
+  })
+
+  it('stops automatic traversal on an empty page without cursor progress', async () => {
+    const { api, session } = hiddenPagesSession()
+    api.onHistory = payload => payload.beforeSeq === undefined ? histResponse([hidden(2)], true) : histResponse([], true)
+    await session.open()
+    expect(api.callsOf('session.history')).toHaveLength(2)
+    expect(session.getSnapshot().hasMore).toBe(true)
+    expect(session.getSnapshot().loadingOlder).toBe(false)
+  })
+
+  it('retries a failed older page without losing the traversed window', async () => {
+    const { api, session } = hiddenPagesSession()
+    api.onHistory = payload => payload.beforeSeq === undefined ? histResponse([hidden(2)], true) : Promise.resolve(err('TRANSPORT'))
+    await session.open()
+    expect(session.getSnapshot().openState).toBe('open')
+    api.onHistory = () => histResponse([ev.user(0, 'recovered'), hidden(1)])
+    await session.loadOlder()
+    expect(chatSeqs(session.getSnapshot())).toEqual([0])
+  })
+
   it('prepends an older page and keeps seq continuity', async () => {
     const older = plainTurn(0, 0, '旧问', '旧答')
     const newer = plainTurn(6, 1, '新问', '新答')

@@ -2172,6 +2172,8 @@ Source: [`packages/storage/storage-sqlite/src/index.ts:24`](../packages/storage/
 ```ts config-catalog
 /** Host admission configuration for diagnostic child work. */
 export interface SubagentConfig {
+  /** Maximum total children in newly admitted diagnostic runs. @default 15 */
+  diagnosticMaxChildren?: number
   /** Maximum concurrent children in newly admitted diagnostic runs. @default 6 */
   diagnosticMaxConcurrentChildren?: number
 }

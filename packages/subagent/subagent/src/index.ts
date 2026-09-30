@@ -175,14 +175,17 @@ declare module '@deepseek-ai/cordis' {
 
 /** Host admission configuration for diagnostic child work. */
 export interface SubagentConfig {
+  /** Maximum total children in newly admitted diagnostic runs. @default 15 */
+  diagnosticMaxChildren?: number
   /** Maximum concurrent children in newly admitted diagnostic runs. @default 6 */
   diagnosticMaxConcurrentChildren?: number
 }
 
 /** Named provider registry with one-shot runs, durable discovery, and continuable-child operations. */
 export class SubagentRuntime extends Service {
-  /** Host concurrency ceiling for newly admitted diagnostic runs. */
+  /** Host resource ceilings for newly admitted diagnostic runs. */
   static Config = z.object({
+    diagnosticMaxChildren: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).default(15),
     diagnosticMaxConcurrentChildren: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).default(6),
   }).prefault({})
   /** Opt-in caller-bound source-review admission and native child lifecycle. */
@@ -200,7 +203,8 @@ export class SubagentRuntime extends Service {
 
   constructor(ctx: Context, config: SubagentConfig = {}) {
     super(ctx, 'subagents')
-    this.diagnostics = new DiagnosticRuns(this.ctx, this, SubagentRuntime.Config.parse(config).diagnosticMaxConcurrentChildren)
+    const policy = SubagentRuntime.Config.parse(config)
+    this.diagnostics = new DiagnosticRuns(this.ctx, this, policy.diagnosticMaxConcurrentChildren, policy.diagnosticMaxChildren)
     this.emitLifecycle = createLifecycleEmitter(this.ctx, parent => scopeTarget(this, parent))
     ctx.inject(['agents'], (childCtx: Context) => {
       const manager = new SubagentContinuationManager(childCtx, {

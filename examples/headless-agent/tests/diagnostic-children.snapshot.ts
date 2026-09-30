@@ -63,7 +63,7 @@ it('dispatches a scoped worker and ends both assignments on accepted closeout', 
     ]
   `)
   expect(result.stdout).toContain(JSON.stringify({ type: 'accepted-closeout', role: 'discovery' }))
-  expect(result.stdout).toContain(JSON.stringify({ type: 'diagnostic-worker-capacity', maxChildren: Number.MAX_SAFE_INTEGER, maxConcurrentChildren: 6 }))
+  expect(result.stdout).toContain(JSON.stringify({ type: 'diagnostic-worker-capacity', maxChildren: 15, maxConcurrentChildren: 6 }))
   expect(result.stdout).toContain(JSON.stringify({ type: 'accepted-closeout', role: 'coordinator' }))
   expect(result.stdout).toContain('Retained diagnostic closeout.')
   expect(result.stdout).not.toContain('"kind":"error"')

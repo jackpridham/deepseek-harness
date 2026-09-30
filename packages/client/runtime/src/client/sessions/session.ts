@@ -377,39 +377,49 @@ export class Session implements SessionFace {
     return promise
   }
 
-  /** Page up: pull one earlier page with the window's first seq as beforeSeq and prepend. */
+  /** Page up through bounded raw pages until an earlier Chat node is available. */
   async loadOlder(): Promise<void> {
     if (this.openState !== 'open' || !this.hasMore || this.loadingOlder) return
+    const generation = this.openGeneration
+    const beforeSeq = this.baseSeq
     this.loadingOlder = true
     this.notifier.markDirty()
     try {
-      const { result } = await this.history({ beforeSeq: this.baseSeq, maxMessages: PAGE_MESSAGES })
-      if (!result.ok) return // keep the window as-is; do not overwrite openError (open already succeeded)
-      const older = result.value.events
-      if (older.length === 0) {
+      while (this.hasMore) {
+        const { result } = await this.history({ beforeSeq: this.baseSeq, maxMessages: PAGE_MESSAGES })
+        if (generation !== this.openGeneration || !result.ok) return
+        const older = result.value.events
+        const first = older[0]
+        if (first === undefined) {
+          this.hasMore = result.value.hasMore
+          this.conversation.prepend([], this.hasMore)
+          return // No cursor progress: never spin on an empty page with hasMore.
+        }
+        const tail = older[older.length - 1]
+        if (tail === undefined || tail.event.seq + 1 !== this.baseSeq) {
+          console.error(`[web-runtime] history page discontinuous: tail seq ${tail?.event.seq} vs baseSeq ${this.baseSeq}`)
+          this.hasMore = false
+          this.conversation.prepend([], false)
+          return
+        }
+        this.events = [...older.map(e => e.event), ...this.events]
+        this.views = [...older.map(e => e.view), ...this.views]
+        this.baseSeq = first.event.seq
         this.hasMore = result.value.hasMore
-        this.conversation.prepend([], this.hasMore)
-        return
+        this.conversation.prepend(older.map(conversationInput), this.hasMore)
+        this.notifier.markDirty()
+        // Raw bookkeeping pages may have no presentation at all. Live nodes
+        // arriving during the request must not stop traversal of older history.
+        const chat = this.getSnapshot().chat
+        if (hasHistoryContent(chat, beforeSeq)) return
       }
-      const tail = older[older.length - 1]
-      if (tail === undefined || tail.event.seq + 1 !== this.baseSeq) {
-        // Continuity assertion: on violation drop the page fail-soft rather than render an out-of-order stream.
-        console.error(`[web-runtime] history page discontinuous: tail seq ${tail?.event.seq} vs baseSeq ${this.baseSeq}`)
-        this.hasMore = false
-        this.conversation.prepend([], false)
-        return
-      }
-      this.events = [...older.map(e => e.event), ...this.events]
-      this.views = [...older.map(e => e.view), ...this.views]
-      /* v8 ignore next -- the ?? arm needs older[0] undefined, but the empty-page branch above already returned. */
-      this.baseSeq = older[0]?.event.seq ?? this.baseSeq
-      this.hasMore = result.value.hasMore
-      this.conversation.prepend(older.map(conversationInput), this.hasMore)
     } catch (error) {
-      console.error('[web-runtime] loadOlder failed:', error)
+      if (generation === this.openGeneration) console.error('[web-runtime] loadOlder failed:', error)
     } finally {
-      this.loadingOlder = false
-      this.notifier.markDirty()
+      if (generation === this.openGeneration) {
+        this.loadingOlder = false
+        this.notifier.markDirty()
+      }
     }
   }
 
@@ -425,6 +435,7 @@ export class Session implements SessionFace {
     // that follows it, so ordering is guaranteed).
     if (this.openState === 'cold') return // never opened: no window to rebuild (doOpen flips to 'loading' synchronously, so cold implies no in-flight open)
     this.openGeneration++
+    this.loadingOlder = false
     this.openPromise = null
     this.openState = 'cold'
     this.openError = null
@@ -636,6 +647,8 @@ export class Session implements SessionFace {
         if (result.ok) this.installWindow(result.value.events, result.value.hasMore, result.value.projections)
       }
       this.openState = 'open'
+      this.notifier.markDirty()
+      if (!hasHistoryContent(this.getSnapshot().chat)) await this.loadOlder()
     } catch (error) {
       if (generation !== this.openGeneration) return
       this.openState = 'error'
@@ -725,6 +738,7 @@ export class Session implements SessionFace {
     } finally {
       this.stitching = false
     }
+    if (generation === this.openGeneration && !hasHistoryContent(this.getSnapshot().chat)) await this.loadOlder()
   }
 
   private windowTailSeq(): number | null {
@@ -786,6 +800,14 @@ export class Session implements SessionFace {
 /** Convert one wire history row into the assembler's transport-neutral input. */
 function conversationInput(entry: HistoryEntry): ConversationEventInput {
   return { event: entry.event, view: entry.view }
+}
+
+/** A turn footer alone has no transcript content; keep looking for its messages. */
+function hasHistoryContent(chat: ChatSnapshot, beforeSeq = Infinity): boolean {
+  return chat.order.some((key) => {
+    const node = chat.nodes.get(key)
+    return node !== undefined && node.kind !== 'turn-tail' && node.anchorSeq < beforeSeq
+  })
 }
 
 /** A generic command row alone remains control-plane content; every other visible Chat Node activates the conversation. */

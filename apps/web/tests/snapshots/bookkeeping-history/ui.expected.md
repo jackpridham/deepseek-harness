@@ -1,0 +1,49 @@
+- banner:
+  - navigation "Session hierarchy":
+    - button "{{workspace}}" [disabled]
+  - button "Session log":
+    - text: Session log
+    - img
+  - tablist:
+    - tab "Chat" [selected]
+    - tab "Trajectory"
+- text: parent question 1 7/25 {{clock}}
+- button "Copy":
+  - img
+- paragraph: parent response 1
+- button "Copy":
+  - img
+- button "Good response":
+  - img
+- button "Bad response":
+  - img
+- button "Branch into a new conversation":
+  - img
+- text: 7/25 {{clock}} Ran for {{duration}} parent question 2 7/25 {{clock}}
+- button "Copy":
+  - img
+- paragraph: parent response 2
+- button "Copy":
+  - img
+- button "Good response":
+  - img
+- button "Bad response":
+  - img
+- button "Branch into a new conversation":
+  - img
+- text: 7/25 {{clock}} Ran for {{duration}}
+- textbox "Message the agent"
+- button "Commands":
+  - img
+- 'button "Access mode, current: Workspace Write"': Workspace Write
+- button "Select model, current DeepSeek-V4-Flash":
+  - text: DeepSeek-V4-Flash
+  - img
+- 'button "Select reasoning effort: this model does not support reasoning settings" [disabled]':
+  - text: Effort
+  - img
+- button "Output allowance":
+  - text: Output Auto
+  - img
+- button "Send message" [disabled]
+- text: 2 turns · 2 steps LLM {{duration}}

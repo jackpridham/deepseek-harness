@@ -16,6 +16,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import * as Spawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import * as Report from '../../tool-subagent-report/src/index.ts'
 import Subagents, { DIAGNOSTIC_POLICY, diagnosticCanonicalJson, diagnosticRecordDigest, parseDiagnosticAdmission, parseDiagnosticAssignment, diagnosticInstructions } from '../src/index.ts'
+import { DiagnosticRuns } from '../src/diagnostic.ts'
 import type { DiagnosticAdmission, DiagnosticBinding } from '../src/index.ts'
 
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/diagnostic-assignments.json', import.meta.url), 'utf8')) as Record<string, unknown>
@@ -59,7 +60,7 @@ describe('diagnostic admission', () => {
     expect(() => parseDiagnosticAssignment(assignment)).toThrow('cannot delegate')
   })
 
-  it.each([undefined, 2])('persists admission and enforces configured concurrency %s', async (configuredConcurrency) => {
+  it.each([[undefined, undefined], [2, 9], [6, Number.MAX_SAFE_INTEGER]])('persists admission under host limits %s/%s', async (configuredConcurrency, configuredTotal) => {
     const ctx = new Context(); contexts.push(ctx)
     await mountAgentLoopTestDependencies(ctx)
     const directory = mkdtempSync(join(tmpdir(), 'dsh-diagnostic-')); directories.push(directory)
@@ -68,7 +69,9 @@ describe('diagnostic admission', () => {
     await ctx.plugin(TokenMeter)
     await ctx.plugin(BasicCompaction, { sessionPolicies: [DIAGNOSTIC_POLICY], thresholdRatio: 0.65 })
     await ctx.plugin(SessionProjections)
-    const config = configuredConcurrency === undefined ? undefined : { diagnosticMaxConcurrentChildren: configuredConcurrency }
+    const config = configuredConcurrency === undefined ? undefined : {
+      diagnosticMaxConcurrentChildren: configuredConcurrency, diagnosticMaxChildren: configuredTotal,
+    }
     await ctx.plugin(Subagents, config)
     await ctx.plugin(Spawn, { providerName: 'spawn' })
     const input: DiagnosticAdmission = admission()
@@ -77,17 +80,21 @@ describe('diagnostic admission', () => {
       rootSessionId: input.rootSessionId, comparisonDigest: input.comparisonDigest, sourceRefs: input.sourceRefs,
       state: 'awaiting-admission',
     }
-    ctx.subagents.diagnostics.registerExecutor({
+    const executor = {
       binding: () => binding,
       admit: async () => { binding = { ...binding, state: 'active' } },
       install: () => () => {}, cancel: async () => {}, quiescent: () => true,
-    })
+    }
+    const disposeExecutor = ctx.subagents.diagnostics.registerExecutor(executor)
     const handle = await ctx.agents.create({ sessionId: SessionId(input.rootSessionId), meta: { sessionPolicy: DIAGNOSTIC_POLICY } })
     handle.agent.session.append('sandbox/mode', { mode: 'danger-full-access' })
     handle.agent.session.append('approval/policy', { policy: 'never' })
     const limit = configuredConcurrency ?? 6
-    expect(ctx.subagents.diagnostics.capability()).toMatchObject({ maxChildren: Number.MAX_SAFE_INTEGER, maxConcurrentChildren: limit })
+    expect(ctx.subagents.diagnostics.capability()).toMatchObject({ maxChildren: configuredTotal ?? 15, maxConcurrentChildren: limit })
     await expect(ctx.subagents.diagnostics.admit({ ...input, maxChildren: 9, maxConcurrentChildren: limit + 1 })).rejects.toThrow(`host limit ${limit}`)
+    if (configuredTotal !== Number.MAX_SAFE_INTEGER)
+      await expect(ctx.subagents.diagnostics.admit({ ...input, maxChildren: (configuredTotal ?? 15) + 1 })).rejects.toThrow('Requested total children exceeds')
+    input.maxChildren = configuredTotal ?? 15
     const result = await ctx.subagents.diagnostics.admit(input)
     expect(Object.keys(result).sort()).toEqual(['runId', 'rootSessionId', 'state', 'admissionDigest', 'bindingEpoch', 'duplicate'].sort())
     expect(result.duplicate).toBe(false)
@@ -99,6 +106,16 @@ describe('diagnostic admission', () => {
     expect(() => handle.agent.session.append('sandbox/mode', { mode: 'read-only' })).toThrow('immutable')
     expect(() => handle.agent.session.append('approval/policy', { policy: 'ask' })).toThrow('immutable')
     await expect(ctx.subagents.startContinuable({ provider: 'spawn', label: 'raw', signal: new AbortController().signal, request: { parent: handle.agent, prompt: [{ type: 'text', text: 'raw' }] } })).rejects.toThrow('prepared assignment')
+    if (configuredTotal === Number.MAX_SAFE_INTEGER) {
+      await handle.dispose()
+      disposeExecutor()
+      const stricter = new DiagnosticRuns(ctx, ctx.subagents, 6, 15)
+      const dispose = stricter.registerExecutor(executor)
+      const restored = await ctx.agents.resume({ resumeSessionId: SessionId(input.rootSessionId) })
+      expect(await stricter.admit(input)).toEqual({ ...result, duplicate: true })
+      expect(restored.agent.session.events.findLast(event => event.type === 'diagnostic/run-state')?.data.admission.maxChildren).toBe(Number.MAX_SAFE_INTEGER)
+      dispose()
+    }
   })
   it('runs a prepared assignment as a native child with fixed instructions and model', async () => {
     const ctx = new Context(); contexts.push(ctx)

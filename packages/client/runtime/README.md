@@ -8,6 +8,8 @@ For each prompt that can reach a local root or continuable child Agent, the runt
 
 Settings owners share the React-free `SettingsScopeSpec`, `SettingsScope`, and snapshot types defined here. ui-settings owns `ctx.settingsScope.bind(spec)`, its Host transport, schema validation, and lifecycle; see [its package contract](../ui-settings/README.md).
 
+History responses retain the Host’s byte bound. Opening or repairing a window with no visible Chat nodes follows earlier contiguous pages automatically; one “Load earlier” action traverses bookkeeping-only pages until an earlier Chat node appears. Requests run sequentially and stop at end of history, a failed response or a page without cursor progress. A reconnect invalidates older in-flight responses. The client retains its loaded raw window for conversation reconstruction; this traversal does not impose a total browser-memory cap.
+
 ## Slot declaration injection
 
 `ctx.slots.inject(name, callback)` makes a full `SlotMap` key the dependency for a contribution whose plugin can activate independently from the declaring entry. It runs `callback` synchronously when the declaration exists, otherwise waits; declaration collapse disposes the callback effect, and redeclaration reruns it. The controller belongs to the caller's plugin fiber, so unloading the contributor cancels either the wait or its active registrations. A direct `slots.register()` into an undeclared slot still throws.
