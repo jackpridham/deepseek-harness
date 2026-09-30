@@ -412,31 +412,36 @@ it('returns pending without cancelling an in-flight source call, then captures a
   expect(worker.events.filter(event => event.type === 'tool/result')).toHaveLength(1)
   await child.whenIdle()
   await new Promise(resolve => setTimeout(resolve, 25))
-  const unchanged = JSON.stringify(root.session.events)
-  const fork = { checkpointId: 'fixture-checkpoint', rootSessionId: 'fork-root', runId: 'fork-run', executorBindingId: 'fork-binding',
-    sessionIds: { [root.id]: 'fork-root', [child.id]: 'fork-child' },
-    changes: { guidance: { [child.id]: 'The source is missing. Record it as unresolved and report.' }, toolDescriptions: {}, acceptCurrentToolDefinitions: false } }
-  setBinding({ executorBindingId: fork.executorBindingId, bindingEpoch: 1, rootSessionId: fork.rootSessionId, runId: fork.runId,
-    comparisonDigest: input.comparisonDigest, sourceRefs: input.sourceRefs, state: 'active', diagnosticWorkflowVersion: 1, diagnosticSupervisionVersion: 1 })
-  await ctx.subagents.diagnostics.restoreTree(snapshot, fork)
-  expect(JSON.stringify(root.session.events)).toBe(unchanged)
-  const restored = ctx.agents.get(SessionId('fork-child'))!, forkRoot = ctx.agents.get(SessionId('fork-root'))!
-  expect(restored.session.header.parentSession).toBe(forkRoot.id)
-  expect(restored.session.events.filter(event => event.type === 'tool/result')).toEqual(worker.events.filter(event => event.type === 'tool/result'))
-  expect(forkRoot.session.events.findLast(event => event.type === 'diagnostic/run-state')!.data.admission.maxChildren).toBe(input.maxChildren)
-  expect(forkRoot.session.events.filter(event => event.type === 'diagnostic/request')).toHaveLength(snapshot.sessions[0]!.events.filter(event => event.type === 'diagnostic/request').length)
-  expect(await ctx.subagents.listChildren(forkRoot.id)).toMatchObject([{ kind: 'child', id: restored.id }])
-  expect(restored.status).toBe('idle')
-  script.push(toolCallResponse('fork-closeout', 'closeout_json', { report: {} }), toolCallResponse('root-closeout', 'closeout_json', { report: {} }))
-  ctx.subagents.diagnostics.startTree(forkRoot.id)
-  await restored.whenIdle(); await forkRoot.whenIdle()
-  const continued = adapter.requests.find(request => request.sessionId === restored.id)!
-  expect(JSON.stringify(continued.messages)).toContain('Source is unavailable')
-  expect(JSON.stringify(continued.messages)).toContain(fork.changes.guidance[child.id])
-  expect(restored.session.events.filter(event => event.type === 'tool/call' && event.data.name === 'read')).toHaveLength(1)
-  expect(restored.session.events.filter(event => event.type === 'turn/start')).toHaveLength(1)
-  expect(forkRoot.session.events.findLast(event => event.type === 'diagnostic/reservation')!.data.assignmentId).toBe(assignmentId)
-  expect(JSON.stringify(root.session.events)).toBe(unchanged)
+  const originalHold = await root.holdCheckpoint!(new AbortController().signal)
+  try {
+    const unchanged = JSON.stringify(root.session.events)
+    const fork = { checkpointId: 'fixture-checkpoint', rootSessionId: 'fork-root', runId: 'fork-run', executorBindingId: 'fork-binding',
+      sessionIds: { [root.id]: 'fork-root', [child.id]: 'fork-child' },
+      changes: { guidance: { [child.id]: 'The source is missing. Record it as unresolved and report.' }, toolDescriptions: {}, acceptCurrentToolDefinitions: false } }
+    setBinding({ executorBindingId: fork.executorBindingId, bindingEpoch: 1, rootSessionId: fork.rootSessionId, runId: fork.runId,
+      comparisonDigest: input.comparisonDigest, sourceRefs: input.sourceRefs, state: 'active', diagnosticWorkflowVersion: 1, diagnosticSupervisionVersion: 1 })
+    await ctx.subagents.diagnostics.restoreTree(snapshot, fork)
+    expect(JSON.stringify(root.session.events)).toBe(unchanged)
+    const restored = ctx.agents.get(SessionId('fork-child'))!, forkRoot = ctx.agents.get(SessionId('fork-root'))!
+    expect(restored.session.header.parentSession).toBe(forkRoot.id)
+    expect(restored.session.events.filter(event => event.type === 'tool/result')).toEqual(worker.events.filter(event => event.type === 'tool/result'))
+    expect(forkRoot.session.events.findLast(event => event.type === 'diagnostic/run-state')!.data.admission.maxChildren).toBe(input.maxChildren)
+    expect(forkRoot.session.events.filter(event => event.type === 'diagnostic/request')).toHaveLength(snapshot.sessions[0]!.events.filter(event => event.type === 'diagnostic/request').length)
+    expect(await ctx.subagents.listChildren(forkRoot.id)).toMatchObject([{ kind: 'child', id: restored.id }])
+    expect(restored.status).toBe('idle')
+    script.push(toolCallResponse('fork-closeout', 'closeout_json', { report: {} }), toolCallResponse('root-closeout', 'closeout_json', { report: {} }))
+    ctx.subagents.diagnostics.startTree(forkRoot.id)
+    await restored.whenIdle(); await forkRoot.whenIdle()
+    const continued = adapter.requests.find(request => request.sessionId === restored.id)!
+    expect(JSON.stringify(continued.messages)).toContain('Source is unavailable')
+    expect(JSON.stringify(continued.messages)).toContain(fork.changes.guidance[child.id])
+    expect(restored.session.events.filter(event => event.type === 'tool/call' && event.data.name === 'read')).toHaveLength(1)
+    expect(restored.session.events.filter(event => event.type === 'turn/start')).toHaveLength(1)
+    expect(forkRoot.session.events.findLast(event => event.type === 'diagnostic/reservation')!.data.assignmentId).toBe(assignmentId)
+    expect(JSON.stringify(root.session.events)).toBe(unchanged)
+  } finally {
+    originalHold.release()
+  }
 })
 
 it('captures all active workers after their source calls settle, without changing frozen limits', async () => {
