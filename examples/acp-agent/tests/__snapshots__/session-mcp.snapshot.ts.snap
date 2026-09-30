@@ -1,3 +1,17 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`discovers through HTTP, isolates same-named session attachments, runs a tool and requires explicit reattachment after restart 1`] = `[]`;
+exports[`discovers through HTTP, isolates same-named session attachments, runs a tool and requires explicit reattachment after restart 1`] = `
+[
+  {
+    "content": [
+      {
+        "text": "{"invoice":"tenant-a"}",
+        "type": "text",
+      },
+    ],
+    "isError": false,
+    "toolCallId": "a",
+    "type": "tool-result",
+  },
+]
+`;

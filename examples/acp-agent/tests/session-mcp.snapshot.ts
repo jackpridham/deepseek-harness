@@ -112,7 +112,7 @@ it('discovers through HTTP, isolates same-named session attachments, runs a tool
     agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Get my invoice' }], source: { kind: 'user' } }))
     await agent.whenIdle()
   }
-  expect(mock.requests[1]!.messages.filter(message => message.role === 'tool')).toMatchSnapshot()
+  expect(mock.requests[1]!.messages.flatMap(message => message.content).filter(block => block.type === 'tool-result')).toMatchSnapshot()
   expect(calls).toEqual(['tenant-a', 'tenant-b'])
   expect(JSON.stringify(mock.requests[1]?.messages)).toContain('tenant-a')
   expect(JSON.stringify(mock.requests[3]?.messages)).toContain('tenant-b')
