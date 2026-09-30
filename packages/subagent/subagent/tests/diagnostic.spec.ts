@@ -142,6 +142,9 @@ describe('diagnostic admission', () => {
     await expect(ctx.subagents.renameChild(agent, SessionId('absent'), input.runId, () => undefined)).rejects.toThrow('unavailable')
     await child?.whenIdle()
     await ctx.subagents.diagnostics.refresh(agent.id)
+    const settledSeq = agent.session.seq
+    for (let i = 0; i < 100; i++) await ctx.subagents.diagnostics.refresh(agent.id)
+    expect(agent.session.seq).toBe(settledSeq)
     expect(agent.session.events.findLast(event => event.type === 'diagnostic/child-state')?.data).toMatchObject({ state: 'settled', quiescent: true })
     const persisted = await ctx.sessionPersistence.load(SessionId(childId))
     expect(persisted.meta.sessionPolicy).toBe(DIAGNOSTIC_POLICY)

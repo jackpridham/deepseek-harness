@@ -18,6 +18,21 @@ function committed(source: PreparedSource): Promise<{ source: PreparedSource; st
 }
 
 describe('SessionPreparations inspection', () => {
+  it('evicts by retained weight and keeps one oversized source resumable', async () => {
+    const pool = new SessionPreparations<PreparedSource, string>(5, source => source.label.length, 10)
+    const load = (name: string) => pool.inspect(SessionId(name), () => Promise.resolve(prepared(name)))
+    await load('aaaaaa')
+    await load('bbbbbb')
+    expect(pool.has(SessionId('aaaaaa'))).toBe(false)
+    const large = await load('oversized-source')
+    expect(pool.has(SessionId('bbbbbb'))).toBe(false)
+    const reservation = await pool.reserve(large.session.id, () => { throw new Error('must reuse') }, committed)
+    expect(reservation?.source).toBe(large)
+    await load('small')
+    expect(pool.has(large.session.id)).toBe(true)
+    pool.discard(reservation!)
+  })
+
   it('shares in-flight and ready sources, then invalidates them', async () => {
     const preparations = new SessionPreparations<PreparedSource, string>(2)
     const id = SessionId('shared-inspection')

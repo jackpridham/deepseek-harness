@@ -168,6 +168,31 @@ describe('mux live view computation', () => {
     expect(byCall.get('tool/result:c-gen')?.view).toEqual({ for: 'result', view: { card: 'generic', title: 'gen done' } })
   })
 
+  it('pages large bookkeeping gaps without losing events or rewriting their data', async () => {
+    const { ctx } = await harness()
+    const api = createApiProxy(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' })
+    const session = ctx.sessions.create()
+    appendUserText(session, 'inspect retained history')
+    for (let i = 0; i < 40; i++) appendExtension(session, 'fixture/state', { text: '界🙂'.repeat(20000), i })
+    const seen: number[] = []
+    let beforeSeq: number | undefined
+    for (;;) {
+      const response = await api.sessions.history({
+        rpcId: RpcId('bounded-history'), payload: { sessionId: session.id, ...beforeSeq === undefined ? {} : { beforeSeq } },
+      })
+      if (!response.result.ok) throw new Error('history failed')
+      const { events, hasMore } = response.result.value
+      expect(Buffer.byteLength(JSON.stringify(events))).toBeLessThan(2 * 1024 * 1024)
+      expect(events.length).toBeGreaterThan(0)
+      for (const { event } of events) expect(event).toEqual(session.events[event.seq])
+      seen.unshift(...events.map(entry => entry.event.seq))
+      if (!hasMore) break
+      beforeSeq = events[0]!.event.seq
+    }
+    expect(seen).toEqual(session.events.map(event => event.seq))
+    await ctx.fiber.dispose()
+  })
+
   it('serves history entries with call/result views, backscan pairing, and soft-falls', async () => {
     const { ctx } = await harness()
     const api = createApiProxy(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' })

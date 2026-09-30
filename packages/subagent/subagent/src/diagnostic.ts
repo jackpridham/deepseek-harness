@@ -134,6 +134,7 @@ interface RequestData {
   assignmentId: string
   outputTokens: number
   state: 'reserved' | 'settled'
+  stopReason?: 'cancelled'
 }
 
 declare module '@deepseek-ai/dsh-session/types' {
@@ -693,7 +694,7 @@ export class DiagnosticRuns {
                 : 'running'
       if (!quiescent) activeChildren++
       uncertain ||= state === 'uncertain'
-      root.session.append('diagnostic/child-state', {
+      const childState = {
         runId: run.runId,
         rootSessionId: root.id,
         parentSessionId: root.id,
@@ -709,7 +710,10 @@ export class DiagnosticRuns {
         quiescent,
         ...(deliveryCancelled ? { error: 'Accepted worker report delivery was cancelled before publication' } : {}),
         ...(quiescent ? { stopReason: completed ? 'completed' : 'failed' } : {}),
-      })
+      } as const
+      const previous = root.session.events.findLast(event => event.type === 'diagnostic/child-state'
+        && jsonObject(event.data)?.['assignmentId'] === record.assignmentId)
+      if (!isDeepStrictEqual(previous?.data, childState)) root.session.append('diagnostic/child-state', childState)
     }
     const quiescent =
       root.status === 'idle' &&
@@ -734,14 +738,15 @@ export class DiagnosticRuns {
           : quiescent && run.state === 'cancelling'
             ? 'incomplete'
             : run.state
-    root.session.append('diagnostic/run-state', {
+    const next = {
       ...run,
       state,
       activeChildren,
       activeModelRequests: activeRequests.length,
       ...activity,
       quiescent,
-    })
+    }
+    if (!isDeepStrictEqual(run, next)) root.session.append('diagnostic/run-state', next)
     await this.flush(root.session)
   }
 
@@ -1480,8 +1485,7 @@ export class DiagnosticRuns {
     const run = this.run(root.session)
     if (
       run === undefined ||
-      run.state === 'cancelling' ||
-      run.state === 'incomplete' ||
+      (run.admission.diagnosticWorkflowVersion !== 1 && (run.state === 'cancelling' || run.state === 'incomplete')) ||
       run.state === 'completed' ||
       run.state === 'failed'
     )
@@ -1491,6 +1495,16 @@ export class DiagnosticRuns {
     root.cancel({ kind: 'user' })
     await Promise.all([this.subagents.drainContinuableDescendants([root]), this.executor?.cancel(root.id)])
     await root.whenIdle()
+    if (run.admission.diagnosticWorkflowVersion === 1) {
+      // Cancellation retires native inference reservations after execution stops;
+      // caller dispatch/result uncertainty remains governed by executor receipts.
+      const requests = new Map<string, RequestData>()
+      for (const event of root.session.events)
+        if (event.type === 'diagnostic/request') requests.set(event.data.id, event.data)
+      for (const request of requests.values())
+        if (request.state === 'reserved')
+          root.session.append('diagnostic/request', { ...request, state: 'settled', stopReason: 'cancelled' })
+    }
     root.session.append('diagnostic/run-state', {
       ...run,
       state: 'incomplete',

@@ -77,3 +77,5 @@ JSONL storage does not mutate live request prefixes. A resumed loop can reuse pr
 - **Nothing deletes session files** — logs accumulate under `root` until removed externally (the seam has no deletion API).
 - **One live writer per session** — append and repair are coordinated only inside the owning backend instance. Another backend instance or process must not write the same session until that owner reaches quiescent disposal; initial same-id publication remains collision-safe through the POSIX no-overwrite hard link or Windows write-through rename without replacement.
 - **POSIX materialization requires hard-link support** — first append uses `link()` so same-id races fail instead of overwriting a committed log; Windows uses write-through rename without replacement.
+
+JSONL decoding shares repeated immutable strings of at least 1,024 code units through an 8 MiB per-scan pool. Events and mutable payload objects remain distinct; stored bytes, event identities and recovered operation references are unchanged. This reduces restored diagnostic admissions without requiring history migration.

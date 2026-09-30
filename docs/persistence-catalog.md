@@ -406,7 +406,7 @@ Source: [`packages/compaction/compaction/src/types.ts:33`](../packages/compactio
 }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:150`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:151`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticchild-state--log-only"></a>
 
@@ -417,7 +417,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:150`](../packages/subagen
 'diagnostic/child-state': JsonValue
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:154`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:155`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticevidence-read--log-only"></a>
 
@@ -428,7 +428,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:154`](../packages/subagen
 'diagnostic/evidence-read': JsonValue
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:156`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:157`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticexecutor--log-only"></a>
 
@@ -439,7 +439,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:156`](../packages/subagen
 'diagnostic/executor': { kind: string; value: JsonValue }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:162`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:163`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticmember--log-only"></a>
 
@@ -450,7 +450,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:162`](../packages/subagen
 'diagnostic/member': { rootSessionId: string; runId: string; assignmentId: string }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:158`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:159`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticrequest--log-only"></a>
 
@@ -461,7 +461,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:158`](../packages/subagen
 'diagnostic/request': RequestData
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:160`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:161`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticreservation--log-only"></a>
 
@@ -472,7 +472,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:160`](../packages/subagen
 'diagnostic/reservation': AssignmentData
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:148`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:149`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticrun-state--log-only"></a>
 
@@ -483,7 +483,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:148`](../packages/subagen
 'diagnostic/run-state': RunData
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:142`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:143`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticworker-report--log-only"></a>
 
@@ -494,7 +494,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:142`](../packages/subagen
 'diagnostic/worker-report': Omit<DiagnosticPublication, 'sessionId'> & { reportRef: string; sha256: string }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:146`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:147`](../packages/subagent/subagent/src/diagnostic.ts)
 
 <a id="diagnosticworker-request--log-only"></a>
 
@@ -505,7 +505,7 @@ Source: [`packages/subagent/subagent/src/diagnostic.ts:146`](../packages/subagen
 'diagnostic/worker-request': { runId: string; request: DiagnosticWorkerRequest; assignmentId?: string }
 ```
 
-Source: [`packages/subagent/subagent/src/diagnostic.ts:144`](../packages/subagent/subagent/src/diagnostic.ts)
+Source: [`packages/subagent/subagent/src/diagnostic.ts:145`](../packages/subagent/subagent/src/diagnostic.ts)
 
 ### `feedback/*`
 

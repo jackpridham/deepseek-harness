@@ -278,6 +278,8 @@ function parseHeaderRecord(record: Buffer): SessionHeader {
 export class SessionLogScanner {
   private readonly meta: SessionHeader
   private readonly events: SessionEvent[] = []
+  private readonly strings = new Map<string, string>()
+  private stringBytes = 0
   private fragments: Buffer[] = []
   private fragmentBytes = 0
   private inputBytes: number
@@ -349,12 +351,32 @@ export class SessionLogScanner {
     return { meta: this.meta, events: this.events, committedBytes: this.committedBytes }
   }
 
+  /** Share immutable repeated payload strings without sharing mutable event objects. */
+  private internString(value: unknown): unknown {
+    if (typeof value !== 'string' || value.length < 1024) return value
+    const bytes = value.length * 2
+    const limit = 8 * 1024 * 1024
+    if (bytes > limit) return value
+    const existing = this.strings.get(value)
+    if (existing !== undefined) return existing
+    while (this.stringBytes + bytes > limit) {
+      const oldest = this.strings.keys().next().value as string
+      this.strings.delete(oldest)
+      this.stringBytes -= oldest.length * 2
+    }
+    this.strings.set(value, value)
+    this.stringBytes += bytes
+    return value
+  }
+
   /** Decode one complete event row and update the contiguous prefix. */
   private consumeEventLine(line: Buffer, endByte: number): void {
     this.eventLine += 1
     let decoded: SessionEvent[]
     try {
-      decoded = decodeStorageRecord(JSON.parse(line.toString('utf8')))
+      decoded = decodeStorageRecord(JSON.parse(
+        line.toString('utf8'), (_key: string, value: unknown) => this.internString(value),
+      ))
     } catch {
       this.issue ??= new Error(`corrupt session log: unparsable committed event at line ${this.eventLine}`)
       return

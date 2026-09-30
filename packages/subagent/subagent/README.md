@@ -178,3 +178,7 @@ Prefix-stable within a child: the statement never changes during the child's lif
 ### Parent-authorized child titles
 
 `renameChild(parent, childId, runId, rename)` runs a synchronous session-title callback under the existing native child lock and flushes before returning. The caller must authenticate parent authority before invoking this trusted service method. Direct lineage, native continuable ownership and diagnostic run/member/accepted-assignment identities are checked by the owner. Running and idle children use the same path; a cold session uses persistence preparation and a temporary session attachment without an Agent or model loop. Missing child state fails explicitly. The callback must only invoke the existing title service; explicit titles retain sanitization, configured byte limits and user pinning. No model tool or generic session ownership exception is added. Naming follows verified child creation, not role-label assignment. See the [decision record](../../../.agents/notes/implemented/bug-fix/2026-09-29-native-child-titles.md).
+
+Diagnostic refresh appends child and run state only when the observed values change. Empty executor polls retain their own receipts without duplicating the frozen admission or unchanged child states.
+
+Explicit workflow cancellation also drains restored incomplete runs and records stale native inference reservations as cancelled after execution stops. Source-operation uncertainty remains in the executor journal and still blocks quiescent detachment.

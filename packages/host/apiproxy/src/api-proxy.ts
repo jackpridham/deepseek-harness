@@ -239,27 +239,29 @@ function paginate(
   beforeSeq: number | undefined,
   maxMessages: number,
 ): { events: SessionEvent[]; hasMore: boolean } {
-  const window = beforeSeq === undefined ? [...events] : events.filter(event => event.seq < beforeSeq)
+  const end = beforeSeq === undefined ? events.length : events.findIndex(event => event.seq >= beforeSeq)
+  const tail = end < 0 ? events.length : end
   let count = 0
-  let cut = 0
-  for (let i = window.length - 1; i >= 0; i--) {
-    const event = window[i] as SessionEvent
-    if (!MESSAGE_TYPES.has(event.type) || !isAppendSurfaceEvent(event)) continue
-    count++
-    const sources = (event as { sourceEventSeqs?: number[] }).sourceEventSeqs
-    let groupStart = event.seq
-    if (sources !== undefined) {
-      for (const source of sources) {
-        if (source < groupStart) groupStart = source
-      }
+  let cut = tail
+  let bytes = 0
+  let groupStart = tail
+  // Bookkeeping events can dominate a page without consuming the message quota.
+  // Keep complete message groups, but allow an event-only page between them.
+  for (let i = tail - 1; i >= 0; i--) {
+    const event = events[i] as SessionEvent
+    const eventBytes = Buffer.byteLength(JSON.stringify(event), 'utf8')
+    if (cut < tail && i < groupStart && bytes + eventBytes > 2 * 1024 * 1024) break
+    bytes += eventBytes
+    cut = i
+    if (MESSAGE_TYPES.has(event.type) && isAppendSurfaceEvent(event)) {
+      count++
+      groupStart = event.seq
+      const sources = (event as { sourceEventSeqs?: number[] }).sourceEventSeqs
+      for (const source of sources ?? []) groupStart = Math.min(groupStart, source)
     }
-    if (count >= maxMessages) {
-      cut = groupStart
-      break
-    }
+    if (count >= maxMessages && i <= groupStart) break
   }
-  const page = window.filter(event => event.seq >= cut)
-  return { events: page, hasMore: cut > 0 }
+  return { events: events.slice(cut, tail), hasMore: cut > 0 }
 }
 
 /** Wrap an ok result echoing the request's rpcId. */

@@ -32,7 +32,11 @@ export interface SessionPreparationReservation<Source, CommitState> {
 export class SessionPreparations<Source extends PreparedSource, CommitState> {
   private readonly entries = new Map<SessionId, PreparationEntry<Source, CommitState>>()
 
-  constructor(private readonly capacity: number) {}
+  constructor(
+    private readonly capacity: number,
+    private readonly weight: (source: Source) => number = () => 0,
+    private readonly maxWeight: number = Infinity,
+  ) {}
 
   /**
    * Whether this pool currently knows about an unpublished identity.
@@ -300,15 +304,14 @@ export class SessionPreparations<Source extends PreparedSource, CommitState> {
   private touch(entry: PreparationEntry<Source, CommitState>): void {
     this.entries.delete(entry.id)
     this.entries.set(entry.id, entry)
-    let readyCount = 0
-    for (const candidate of this.entries.values()) {
-      if (candidate.phase === 'ready') readyCount += 1
-    }
-    if (readyCount <= this.capacity) return
-    for (const [id, candidate] of this.entries) {
-      if (candidate.phase !== 'ready') continue
-      this.entries.delete(id)
-      return
+    const ready = [...this.entries.values()].filter(candidate => candidate.phase === 'ready')
+    let total = ready.reduce((sum, candidate) => sum + this.weight(candidate.source as Source), 0)
+    // A single oversized preparation remains available for exclusive resume.
+    // In-flight loads and reservations are never evicted by this read cache.
+    while (ready.length > 1 && (ready.length > this.capacity || total > this.maxWeight)) {
+      const oldest = ready.shift() as PreparationEntry<Source, CommitState>
+      total -= this.weight(oldest.source as Source)
+      this.remove(oldest)
     }
   }
 }

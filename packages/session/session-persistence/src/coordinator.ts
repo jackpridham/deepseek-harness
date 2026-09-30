@@ -250,6 +250,7 @@ interface LiveSessionState {
 /** One validated cold source and the exact unpublished Session built from it. */
 interface PreparedSessionSource<TornMarker> {
   readonly inspection: SessionInspection
+  readonly retainedBytes: number
   readonly session: Session
   readonly revision: SessionPersistenceRevision
   /** Session length after constructor-owned seed markers were appended. */
@@ -627,7 +628,9 @@ export class PersistenceCoordinator<TornMarker = unknown> {
       throw new TypeError(`writeBatchMaxDelayMs must be an integer between 1 and ${MAX_WRITE_BATCH_DELAY_MS}`)
     }
     this.writeBatchMaxDelayMs = options.writeBatchMaxDelayMs
-    this.preparations = new SessionPreparations(options.preparedSessionCacheSize)
+    this.preparations = new SessionPreparations(
+      options.preparedSessionCacheSize, source => source.retainedBytes, 64 * 1024 * 1024,
+    )
     this.installWritePath()
   }
 
@@ -949,8 +952,14 @@ export class PersistenceCoordinator<TornMarker = unknown> {
         meta: session.header,
         events: Object.freeze(balanced),
       })
+      let retainedBytes = 0
+      for (const event of balanced) {
+        retainedBytes += Buffer.byteLength(JSON.stringify(event), 'utf8')
+        if (retainedBytes > 64 * 1024 * 1024) break
+      }
       return {
         inspection,
+        retainedBytes,
         session,
         revision,
         sessionLength: session.events.length,
