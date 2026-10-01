@@ -33,6 +33,32 @@ describe('HTTP bridge abort', () => {
     expect(destroyed).toHaveLength(1)
   })
 
+  it('does not apply the generic body cap to durable diagnostic report publication', async () => {
+    const body = JSON.stringify({ packet: { report: 'x'.repeat(60_000) } })
+    const request = Readable.from([Buffer.from(body)]) as unknown as IncomingMessage
+    Object.assign(request, {
+      url: '/api/session.publishDiagnosticWorkerReport',
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(body)) },
+    })
+    const response = Object.assign(new EventEmitter(), {
+      writableEnded: false,
+      writeHead() { return this },
+      write() { return true },
+      end() { this.writableEnded = true; return this },
+    }) as unknown as ServerResponse
+    let received: string | undefined
+
+    await bridge(request, response, {
+      fetch: async (input) => {
+        received = await input.text()
+        return Response.json({ ok: true })
+      },
+    }, 1_000)
+
+    expect(received).toBe(body)
+  })
+
   it('aborts a pending native picker request when the browser disconnects', async () => {
     const body = JSON.stringify({
       type: 'client-request', rpcId: 'picker-1', method: 'host.pickDirectory', payload: {},

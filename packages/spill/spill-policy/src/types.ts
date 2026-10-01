@@ -21,6 +21,8 @@ export interface SpillPolicyExec {
         /** The canonical session identity — the spill owner. */
         id: SessionId
       }
+      /** Diagnostic sessions carry either the root admission or child membership marker. */
+      events?: readonly { type: string }[]
     }
   }
 }

@@ -209,3 +209,27 @@ it('retrieves complete paged reports in model requests without spill access', as
   expect(result.stdout).not.toContain('Full formatted result stored at')
   expect(result.stdout).not.toContain('"kind":"error"')
 }, LOADER_SMOKE_TEST_TIMEOUT_MS)
+
+
+it('delivers complete inspection scope above the spill limit to the model', async () => {
+  const configPath = fileURLToPath(new URL('../diagnostic-children.cordis.snapshot.yml', import.meta.url))
+  const binScript = fileURLToPath(new URL('./fixtures/headless-driver.ts', import.meta.url))
+  const result = await runLoaderSmoke({ label: 'complete diagnostic inspection', tempDirPrefix: 'dsh-inspection-',
+    configPath, binScript, libBinScript: binScript, binArgs: [configPath, 'Inspect the complete worker investigation.'],
+    env: { DSH_TEST_DIAGNOSTIC_WORKFLOW: 'inspection' },
+    tsconfigPath: fileURLToPath(new URL('../../../tsconfig.json', import.meta.url)),
+  })
+  const rows = result.stdout.trim().split('\n').map(line => JSON.parse(line) as { type?: string })
+  expect(rows.filter(row => row.type === 'complete-inspection')).toMatchInlineSnapshot(`
+    [
+      {
+        "bytesAboveOldCap": true,
+        "exact": true,
+        "type": "complete-inspection",
+      },
+    ]
+  `)
+  expect(result.stdout).not.toContain('unexpected-spill')
+  expect(result.stdout).not.toContain('Full formatted result stored at')
+  expect(result.stdout).not.toContain('"kind":"error"')
+}, LOADER_SMOKE_TEST_TIMEOUT_MS)

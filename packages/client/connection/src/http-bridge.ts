@@ -11,6 +11,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
  * each body in memory, so this cap is also the per-request resident bound. */
 export const DEFAULT_MAX_REQUEST_BODY_BYTES = 160 * 1024 * 1024
 
+/** The diagnostic publication RPC carries immutable reports whose size is not capped. */
+const UNBOUNDED_REQUEST_PATHS = new Set(['/api/session.publishDiagnosticWorkerReport'])
+
 /** Transport-independent request handler consumed by the Host HTTP bridge. */
 export interface FetchHandler {
   /**
@@ -27,7 +30,7 @@ export interface FetchHandler {
  * @param req - incoming node:http request (fully read before dispatch).
  * @param res - node:http response the bridge writes and owns to completion.
  * @param apiHandler - fetch-shaped API carrier the request is dispatched to.
- * @param maxRequestBodyBytes - maximum body bytes buffered before dispatch.
+ * @param maxRequestBodyBytes - maximum body bytes buffered before dispatch, except for an unbounded diagnostic report publication.
  */
 export async function bridge(
   req: IncomingMessage,
@@ -44,8 +47,10 @@ export async function bridge(
   res.on('close', () => {
     if (!res.writableEnded) abort.abort()
   })
+  const requestPath = new URL(req.url ?? '/', 'http://dsh.internal').pathname
+  const unbounded = UNBOUNDED_REQUEST_PATHS.has(requestPath)
   const declaredLength = req.headers['content-length']
-  if (declaredLength !== undefined && Number(declaredLength) > maxRequestBodyBytes) {
+  if (!unbounded && declaredLength !== undefined && Number(declaredLength) > maxRequestBodyBytes) {
     res.writeHead(413, { connection: 'close' })
     res.end()
     req.destroy()
@@ -56,7 +61,7 @@ export async function bridge(
   for await (const chunk of req) {
     const buffer = chunk as Buffer
     received += buffer.byteLength
-    if (received > maxRequestBodyBytes) {
+    if (!unbounded && received > maxRequestBodyBytes) {
       res.writeHead(413, { connection: 'close' })
       res.end()
       req.destroy()

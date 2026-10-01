@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { MockAdapter, textResponse, toolCallResponse, maxTokensResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { CallId, createUserMessage, createMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionProjections from '@deepseek-ai/dsh-session-projection'
 import BasicCompaction from '@deepseek-ai/dsh-compaction-basic'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
@@ -15,7 +16,7 @@ import JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import * as Spawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import * as Report from '../../tool-subagent-report/src/index.ts'
-import Subagents, { DIAGNOSTIC_POLICY, diagnosticCanonicalJson, diagnosticRecordDigest, parseDiagnosticAdmission, parseDiagnosticAssignment, diagnosticInstructions } from '../src/index.ts'
+import Subagents, { DIAGNOSTIC_POLICY, diagnosticCanonicalJson, diagnosticContentDigest, diagnosticRecordDigest, parseDiagnosticAdmission, parseDiagnosticAssignment, diagnosticInstructions } from '../src/index.ts'
 import { DiagnosticRuns } from '../src/diagnostic.ts'
 import type { DiagnosticAdmission, DiagnosticBinding } from '../src/index.ts'
 
@@ -27,6 +28,14 @@ afterEach(async () => {
   for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true })
 })
 const admission = () => parseDiagnosticAdmission(structuredClone(fixtures['admit-run']), Date.parse('2030-01-01T00:00:00Z'))
+
+class PartialUsageFailureAdapter extends MockAdapter {
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    this.requests.push(options)
+    yield { type: 'usage', usage: { inputTokens: 10, outputTokens: 7 } }
+    throw new Error('partial stream failed')
+  }
+}
 
 describe('diagnostic admission', () => {
   it('accepts caller-selected child counts up to the wire integer limit', () => {
@@ -46,10 +55,35 @@ describe('diagnostic admission', () => {
     expect(() => parseDiagnosticAssignment({ ...input.coordinatorAssignment, objective: 'changed' })).toThrow('digest mismatch')
   })
 
-  it('matches Python ASCII encoding and rejects ambiguous numbers', () => {
+  it('admits any number of uniquely identified sources, including repeated sides', () => {
+    const input = admission()
+    const sourceRefs = structuredClone(input.sourceRefs)
+    for (let index = 3; index < 8; index++) {
+      const sourceRootId = `source-${index}`, snapshotId = `snapshot-${index}`
+      sourceRefs.push({
+        sourceRootId, snapshotId, side: index % 2 ? 'base' : 'head', revision: `${index}`.repeat(40),
+        digestDomain: 'source-root-descriptor-v1',
+        digest: diagnosticContentDigest(JSON.stringify([sourceRootId, snapshotId, index % 2 ? 'base' : 'head', `${index}`.repeat(40)])),
+      })
+    }
+    input.sourceRefs = sourceRefs
+    input.comparisonDigest = diagnosticContentDigest(JSON.stringify(sourceRefs.map(source => source.revision)))
+    input.coordinatorAssignment.sourceRefs = structuredClone(sourceRefs)
+    input.coordinatorAssignment.authority.readRoots = sourceRefs.map(source => source.sourceRootId)
+    input.coordinatorAssignment.digest = diagnosticRecordDigest(input.coordinatorAssignment, true)
+    expect(parseDiagnosticAdmission(input, Date.parse('2030-01-01T00:00:00Z')).sourceRefs).toEqual(sourceRefs)
+  })
+
+  it('uses sorted ASCII JSON with ordinary finite numeric report values', () => {
     expect(diagnosticCanonicalJson({ '\u{10000}': '\u007f', '\ue000': 'é', a: '\n' })).toBe('{"a":"\\n","\\ue000":"\\u00e9","\\ud800\\udc00":"\\u007f"}')
-    expect(() => diagnosticCanonicalJson({ cap: 1.5 })).toThrow('safe integers')
-    expect(() => diagnosticCanonicalJson({ cap: Infinity })).toThrow('lossless JSON')
+    expect(diagnosticCanonicalJson({ whole: 42, confidence: 0.95, negativeZero: -0, nested: { negative: -12.5, small: 1e-7 } }))
+      .toBe('{"confidence":0.95,"negativeZero":0,"nested":{"negative":-12.5,"small":1e-7},"whole":42}')
+    expect(diagnosticRecordDigest({ b: 2, a: 1 })).toBe('43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777')
+    expect(() => diagnosticCanonicalJson({ cap: Infinity })).toThrow('finite JSON numbers')
+    expect(() => diagnosticCanonicalJson({ unsupported: () => undefined })).toThrow('JSON values')
+    const cyclic: { self?: unknown } = {}
+    cyclic.self = cyclic
+    expect(() => diagnosticCanonicalJson(cyclic)).toThrow('cannot be cyclic')
   })
 
   it('rejects child delegation even after a caller recomputes its digest', () => {
@@ -192,8 +226,8 @@ describe('diagnostic admission', () => {
     }
   })
 
-  it.each(['coordinator', 'discovery', 'validation', 'automatic', 'irreducible', 'truncated', 'summary-failure', 'unavailable', 'cancelled', 'small-output', 'medium-output', 'small-context'] as const)('diagnostic output admission: %s', async (scenario) => {
-    const outputLimit = scenario === 'small-output' ? 4096 : scenario === 'medium-output' ? 32768 : scenario === 'small-context' ? 8192 : 65536
+  it.each(['coordinator', 'discovery', 'validation', 'automatic', 'irreducible', 'truncated', 'summary-failure', 'partial-failure', 'unavailable', 'cancelled', 'small-output', 'medium-output', 'small-context', 'settled-accounting'] as const)('diagnostic output admission: %s', async (scenario) => {
+    const outputLimit = scenario === 'small-output' || scenario === 'settled-accounting' ? 4096 : scenario === 'medium-output' ? 32768 : scenario === 'small-context' ? 8192 : 65536
     const contextWindow = scenario === 'small-context' ? 32768 : 262144
     const role = scenario === 'discovery' || scenario === 'validation' ? scenario : 'coordinator'
     const ctx = new Context(); contexts.push(ctx)
@@ -209,7 +243,9 @@ describe('diagnostic admission', () => {
     const input = admission()
     input.maxOutputTokens = 2_000_000
     input.coordinatorAssignment.roleSettings.outputLimit = outputLimit
-    input.coordinatorAssignment.budget.maxOutputTokens = 1_000_000
+    input.coordinatorAssignment.budget.maxOutputTokens = scenario === 'settled-accounting'
+      ? outputLimit + 'Candidate C1; unresolved gap G1; evidence read:159. Not independent validation.'.length
+      : 1_000_000
     input.coordinatorAssignment.commonModel.contextWindow = contextWindow
     input.coordinatorAssignment.digest = diagnosticRecordDigest(input.coordinatorAssignment, true)
     const prepared = structuredClone(fixtures[role === 'validation' ? 'prepare-validation' : 'prepare-discovery']) as { runId: string; rootSessionId: string; idempotencyKey: string; assignment: typeof input.coordinatorAssignment }
@@ -217,7 +253,12 @@ describe('diagnostic admission', () => {
     prepared.assignment.budget.maxOutputTokens = 1_000_000
     prepared.assignment.commonModel.contextWindow = contextWindow
     prepared.assignment.digest = diagnosticRecordDigest(prepared.assignment, true)
-    const adapter = new MockAdapter(scenario === 'cancelled' ? ['hang'] : scenario === 'truncated' ? [maxTokensResponse('partial'), maxTokensResponse('partial again')]
+    const adapter = scenario === 'partial-failure' ? new PartialUsageFailureAdapter([]) : new MockAdapter(scenario === 'cancelled' ? [{ hangAfter: [
+      { type: 'block-start', index: 0, blockType: 'text' },
+      { type: 'text-delta', index: 0, text: 'partial' },
+      { type: 'block-end', index: 0, block: { type: 'text', text: 'partial' } },
+      { type: 'usage', usage: { inputTokens: 10, outputTokens: 7 } },
+    ] }] : scenario === 'truncated' ? [maxTokensResponse('partial'), maxTokensResponse('partial again')]
       : scenario === 'summary-failure' ? [() => { throw new Error('summary offline') }]
         : [textResponse('Candidate C1; unresolved gap G1; evidence read:159. Not independent validation.'), textResponse('Continue review.')])
     adapter.resolveModel = async (provider, model) => ({ provider, id: model, name: model, context: { contextWindow },
@@ -291,14 +332,22 @@ describe('diagnostic admission', () => {
       expect(adapter.requests[0]?.purpose).toBe('compaction')
       expect(target!.session.surface.replaceGeneration).toBe(0)
       expect(events.findLast(event => event.type === 'turn/end')?.data.reason.kind).not.toBe('completed')
+      const settled = events.findLast(event => event.type === 'diagnostic/request')
+      expect(settled?.type === 'diagnostic/request' && settled.data).toMatchObject({ state: 'settled' })
+      expect(settled?.type === 'diagnostic/request' && settled.data.usedOutputTokens).toBeUndefined()
       return
     }
-    if (['irreducible', 'truncated', 'summary-failure'].includes(scenario)) {
+    if (['irreducible', 'truncated', 'summary-failure', 'partial-failure'].includes(scenario)) {
       const outcome = events.findLast(event => event.type === 'turn/end')?.data.reason
       expect(outcome).toMatchObject({ kind: 'error', error: { code: scenario === 'irreducible' ? 'OUTPUT_BUDGET_EXCEEDED' : scenario === 'truncated' ? 'COMPACTION_SUMMARY_TRUNCATED' : 'UNKNOWN' } })
       expect(adapter.requests.every(request => request.purpose === 'compaction')).toBe(true)
       expect(target!.session.surface.replaceGeneration).toBe(0)
       expect(originalSeqs.every(seq => events[seq] !== undefined)).toBe(true)
+      if (scenario === 'partial-failure') {
+        const settled = handle.agent.session.events.findLast(event => event.type === 'diagnostic/request')
+        expect(settled?.type === 'diagnostic/request' && settled.data).toMatchObject({ state: 'settled' })
+        expect(settled?.type === 'diagnostic/request' && settled.data.usedOutputTokens).toBeUndefined()
+      }
       return
     }
     expect(events.findLast(event => event.type === 'turn/end')?.data.reason).toEqual({ kind: 'completed' })
@@ -319,6 +368,11 @@ describe('diagnostic admission', () => {
     expect(budget.data.inputTokens + budget.data.effective + budget.data.safetyMargin).toBeLessThanOrEqual(contextWindow)
     const charges = handle.agent.session.events.filter(event => event.type === 'diagnostic/request').filter(event => event.data.state === 'reserved')
     expect(charges.map(event => event.data.outputTokens)).toEqual([Math.min(8192, outputLimit), outputLimit])
+    const settledCharges = handle.agent.session.events.filter(event => event.type === 'diagnostic/request').filter(event => event.data.state === 'settled')
+    expect(settledCharges.map(event => event.data.usedOutputTokens)).toEqual([
+      'Candidate C1; unresolved gap G1; evidence read:159. Not independent validation.'.length,
+      'Continue review.'.length,
+    ])
     expect(handle.agent.session.events.findLast(event => event.type === 'diagnostic/run-state')?.data.state).not.toBe('completed')
     if (scenario === 'discovery' || scenario === 'validation') {
       const childId = target!.id
@@ -341,6 +395,51 @@ describe('diagnostic admission', () => {
       expect(adapter.requests.at(-1)?.maxTokens).toBe(outputLimit)
       expect(handle.agent.session.events.findLast(event => event.type === 'diagnostic/run-state')?.data.state).not.toBe('completed')
     }
+  })
+
+  it('reconstructs settled usage while retaining concurrent and uncertain reservations', async () => {
+    const ctx = new Context(); contexts.push(ctx)
+    await mountAgentLoopTestDependencies(ctx)
+    const directory = mkdtempSync(join(tmpdir(), 'dsh-diagnostic-settlement-')); directories.push(directory)
+    await ctx.plugin(JsonlPersistence, { root: directory })
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(TokenMeter)
+    await ctx.plugin(BasicCompaction, { sessionPolicies: [DIAGNOSTIC_POLICY] })
+    await ctx.plugin(SessionProjections)
+    await ctx.plugin(Subagents)
+    await ctx.plugin(Spawn, { providerName: 'spawn' })
+    const input = admission()
+    input.maxOutputTokens = 100
+    input.maxModelRequests = 10
+    input.rootSynthesisReserveTokens = 1
+    input.rootSynthesisReserveRequests = 1
+    input.coordinatorAssignment.budget.maxOutputTokens = 99
+    input.coordinatorAssignment.budget.maxModelRequests = 10
+    input.coordinatorAssignment.digest = diagnosticRecordDigest(input.coordinatorAssignment, true)
+    let binding: DiagnosticBinding = { executorBindingId: input.executorBindingId, bindingEpoch: input.bindingEpoch,
+      runId: input.runId, rootSessionId: input.rootSessionId, comparisonDigest: input.comparisonDigest, sourceRefs: input.sourceRefs, state: 'awaiting-admission' }
+    ctx.subagents.diagnostics.registerExecutor({ binding: () => binding, admit: async () => { binding = { ...binding, state: 'active' } },
+      install: () => () => {}, cancel: async () => {}, quiescent: () => true })
+    let handle = await ctx.agents.create({ sessionId: SessionId(input.rootSessionId), meta: { sessionPolicy: DIAGNOSTIC_POLICY } })
+    handle.agent.session.append('sandbox/mode', { mode: 'danger-full-access' })
+    handle.agent.session.append('approval/policy', { policy: 'never' })
+    await ctx.subagents.diagnostics.admit(input)
+    const allowance = (ctx.subagents.diagnostics as unknown as {
+      requestAllowance(root: import('@deepseek-ai/dsh-agent').Agent, assignment: typeof input.coordinatorAssignment, child: boolean, maxTokens: number): boolean
+    }).requestAllowance.bind(ctx.subagents.diagnostics)
+    const settled = { id: 'settled', producerSessionId: handle.agent.id, assignmentId: input.coordinatorAssignment.assignmentId, outputTokens: 60, state: 'reserved' as const }
+    handle.agent.session.append('diagnostic/request', settled)
+    handle.agent.session.append('diagnostic/request', { ...settled, state: 'settled' as const, usedOutputTokens: 2 })
+    expect(allowance(handle.agent, input.coordinatorAssignment, false, 97)).toBe(true)
+    const inFlight = { id: 'in-flight', producerSessionId: handle.agent.id, assignmentId: input.coordinatorAssignment.assignmentId, outputTokens: 1, state: 'reserved' as const }
+    handle.agent.session.append('diagnostic/request', inFlight)
+    expect(allowance(handle.agent, input.coordinatorAssignment, false, 97)).toBe(false)
+    await ctx.sessions.flush(handle.agent.session)
+    await handle.dispose()
+    handle = await ctx.agents.resume({ resumeSessionId: SessionId(input.rootSessionId) })
+    expect(allowance(handle.agent, input.coordinatorAssignment, false, 97)).toBe(false)
+    handle.agent.session.append('diagnostic/request', { ...inFlight, state: 'settled' })
+    expect(allowance(handle.agent, input.coordinatorAssignment, false, 97)).toBe(false)
   })
 
 })

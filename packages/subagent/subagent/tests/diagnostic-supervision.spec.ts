@@ -24,8 +24,15 @@ import type { DiagnosticBinding, DiagnosticAssignment } from '../src/index.ts'
 const cleanup: (() => Promise<unknown>)[] = []
 afterEach(async () => { vi.useRealTimers(); for (const dispose of cleanup.splice(0)) await dispose() })
 interface RecoveryHooks { awaitCloseout?: () => Promise<void> }
+interface InspectionFixture {
+  assignmentObjective?: string
+  closeoutAfter?: number
+  maxModelRequests?: number
+  paths?: string[]
+  sourceFailureMessage?: string
+}
 
-async function setup(supervised = true, review = false, workers = 1, recovery = false, recoveryMode: 'accepted' | 'missing' | 'rejected' | 'json' = 'accepted', hooks: RecoveryHooks = {}) {
+async function setup(supervised = true, review = false, workers = 1, recovery = false, recoveryMode: 'accepted' | 'missing' | 'rejected' | 'json' = 'accepted', hooks: RecoveryHooks = {}, inspection: InspectionFixture = {}) {
   const ctx = new Context()
   const directory = mkdtempSync(join(tmpdir(), 'dsh-supervision-'))
   const release = Promise.withResolvers<boolean>(), reading = Promise.withResolvers<AbortSignal>()
@@ -41,6 +48,12 @@ async function setup(supervised = true, review = false, workers = 1, recovery = 
   const fixtures = JSON.parse(readFileSync(new URL('./fixtures/diagnostic-assignments.json', import.meta.url), 'utf8')) as Record<string, unknown>
   const input = parseDiagnosticAdmission(fixtures['admit-run'], Date.parse('2030-01-01'))
   const prepared = fixtures['prepare-discovery'] as { runId: string; rootSessionId: string; idempotencyKey: string; assignment: DiagnosticAssignment }
+  if (inspection.assignmentObjective !== undefined) prepared.assignment.objective = inspection.assignmentObjective
+  if (inspection.maxModelRequests !== undefined) {
+    input.maxModelRequests = inspection.maxModelRequests + input.rootSynthesisReserveRequests
+    input.coordinatorAssignment.budget.maxModelRequests = inspection.maxModelRequests
+    prepared.assignment.budget.maxModelRequests = inspection.maxModelRequests
+  }
   input.maxConcurrentChildren = workers
   input.diagnosticWorkflowVersion = 1
   if (review) input.diagnosticReviewVersion = 1
@@ -76,7 +89,7 @@ async function setup(supervised = true, review = false, workers = 1, recovery = 
     ...(supervised ? { diagnosticSupervisionVersion: 1 as const } : {}), ...(review ? { diagnosticReviewVersion: 1 as const } : {}),
     ...(recovery ? { diagnosticCloseoutRecoveryVersion: 1 as const } : {}) }
   const closed = new Set<string>()
-  let closeoutAttempts = 0
+  let closeoutAttempts = 0, acceptedCloseouts = 0
   let preparations = 0
   ctx.subagents.diagnostics.registerExecutor({
     diagnosticWorkflowVersions: [1], diagnosticSupervisionVersions: [1], diagnosticReviewVersions: [1],
@@ -100,9 +113,10 @@ async function setup(supervised = true, review = false, workers = 1, recovery = 
       const disposers = ['read', 'closeout_json'].map(name => agent.ctx.tools.register({ name, description: name, parameters: { type: 'object' },
         output: { schema: { type: 'object' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
         execute: async (_args, execution) => {
-          if (name === 'read') { reading.resolve(execution.signal); await release.promise; throw new Error('Source is unavailable') }
+          if (name === 'read') { reading.resolve(execution.signal); await release.promise; throw new Error(inspection.sourceFailureMessage ?? 'Source is unavailable') }
           if (recoveryMode === 'rejected' && closeoutAttempts++ === 0) throw new Error('Caller rejected this closeout')
-          closed.add(agent.id); execution.concludeTurn(); return { accepted: true }
+          if (++acceptedCloseouts >= (inspection.closeoutAfter ?? 1)) { closed.add(agent.id); execution.concludeTurn() }
+          return { accepted: true }
         },
       }))
       return () => { disposers.forEach((dispose) => { dispose() }) }
@@ -111,7 +125,7 @@ async function setup(supervised = true, review = false, workers = 1, recovery = 
   const { agent: root } = await ctx.agents.create({ sessionId: SessionId(input.rootSessionId), meta: { sessionPolicy: DIAGNOSTIC_POLICY } })
   await ctx.subagents.diagnostics.admit(input)
   const execute = (name: string, args: object, agent = root) => ctx.tools.execute({ name, callId: CallId('test-' + name), agent, arguments: args, signal: new AbortController().signal })
-  const dispatch = await execute('dispatch_workers', { requests: [{ requestKey: 'worker', name: 'Guard check', role: 'discovery', objective: 'Inspect source', namespace: '', responsibility: '', paths: [] }] })
+  const dispatch = await execute('dispatch_workers', { requests: [{ requestKey: 'worker', name: 'Guard check', role: 'discovery', objective: 'Inspect source', namespace: '', responsibility: '', paths: inspection.paths ?? [] }] })
   expect(dispatch.isError, JSON.stringify(dispatch)).toBe(false)
   const signal = await reading.promise
   const childId = root.session.events.findLast(event => event.type === 'diagnostic/reservation')!.data.childSessionId!
@@ -266,6 +280,43 @@ it('returns a checkpoint without moving the report cursor or cancelling source w
   expect(inspection.value).toMatchObject({ scope: { objective: expect.any(String) as unknown }, activity: { pendingTools: [{ name: 'read' }] }, progress: null, acceptedCloseout: false })
 })
 
+it('returns every oversized inspection field through the formatter without spilling', async () => {
+  const count = 51
+  const paths = Array.from({ length: count }, (_, index) => `source-${index}/${'p'.repeat(3000)}`)
+  const objective = 'Complete scope: ' + 'o'.repeat(60_000)
+  const failure = 'source failure: ' + 'f'.repeat(3000)
+  const { ctx, child, execute, release, script, assignmentId } = await setup(true, false, 1, false, 'accepted', {}, {
+    assignmentObjective: objective, closeoutAfter: count, maxModelRequests: count * 3, paths, sourceFailureMessage: failure,
+  })
+  await ctx.plugin(PagingSpillStore)
+  await ctx.plugin(SpillPolicy, { maxInlineBytes: 50_000 })
+  script.splice(1, script.length,
+    ...Array.from({ length: count - 1 }, (_, index) => toolCallResponse(`source-${index + 1}`, 'read', {})),
+    ...Array.from({ length: count }, (_, index) => toolCallResponse(`closeout-${index}`, 'closeout_json', { report: {} })),
+  )
+  release.resolve(true)
+  await child.whenIdle()
+
+  const result = await execute('inspect_worker', { assignmentId })
+  expect(result.isError).toBe(false)
+  expect(result.content).toEqual([{ type: 'text', text: JSON.stringify(result.value) }])
+  const rendered = result.content[0]
+  if (rendered?.type !== 'text') throw new Error('Expected inspection text')
+  expect(Buffer.byteLength(rendered.text, 'utf8')).toBeGreaterThan(50_000)
+  expect(rendered.text).not.toContain('Full formatted result stored at:')
+  expect((ctx.spillStore as PagingSpillStore).saves).toEqual([])
+  const inspection = JSON.parse(rendered.text) as {
+    scope: { objective: string; request: { paths: string[] } }
+    recentToolFailures: { detail: string }[]
+    reportAttempts: unknown[]
+  }
+  expect(inspection.scope.objective).toBe(objective)
+  expect(inspection.scope.request.paths).toEqual(paths)
+  expect(inspection.recentToolFailures).toHaveLength(count)
+  expect(inspection.recentToolFailures.every(entry => entry.detail.includes(failure))).toBe(true)
+  expect(inspection.reportAttempts).toHaveLength(count)
+})
+
 it('delivers guidance once after a source call, retains progress separately and keeps closeout terminal', async () => {
   const { ctx, root, child, execute, release, signal, assignmentId, prepared, adapter } = await setup()
   const frozen = JSON.stringify(prepared.assignment)
@@ -283,7 +334,7 @@ it('delivers guidance once after a source call, retains progress separately and 
   expect(closed.isError, JSON.stringify(closed)).toBe(false)
   expect(closed.value).toMatchObject({ status: 'closed', duplicate: false })
   expect((await execute('send_message', { ...args, operationId: 'review-2' })).value).toMatchObject({ ...closed.value as object, duplicate: true })
-  expect((await execute('inspect_worker', { assignmentId, maxEvents: 1 })).value).toMatchObject({
+  expect((await execute('inspect_worker', { assignmentId })).value).toMatchObject({
     acceptedCloseout: true, recentToolFailures: [{ tool: 'read', callEventSeq: expect.any(Number) as unknown, detail: expect.stringContaining('Source is unavailable') as unknown }], reportAttempts: [{ status: 'returned' }],
     progress: { resolved: ['Scope checked'], uncertain: ['Missing source'], nextCheck: 'Report the unresolved source', acceptedEvidence: false },
   })
@@ -365,7 +416,7 @@ it('retains cancelled guidance without replaying it', async () => {
   expect((await execute('send_message', args)).value).toMatchObject({ status: 'cancelled', duplicate: true })
 })
 
-it('advertises optional inspection defaults and distinguishes source failures from report attempts', async () => {
+it('advertises complete inspection and distinguishes source failures from report attempts', async () => {
   const { ctx, root, child, execute, release, assignmentId } = await setup()
   const schema = ctx.tools.schemas(root).find(tool => tool.name === 'inspect_worker')!.parameters
   expect(schema.required).toEqual(['assignmentId'])

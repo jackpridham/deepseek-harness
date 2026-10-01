@@ -11,7 +11,7 @@ const source = z.object({
   revision: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
   digestDomain: z.literal('source-root-descriptor-v1'), digest,
 }).strict()
-const sources = z.array(source).min(1).max(3)
+const sources = z.array(source).min(1)
 const document = z.object({
   id, version: z.string().min(1).max(128), digest,
   kind: z.enum(['threat-model', 'evidence', 'candidate', 'coverage']),
@@ -45,7 +45,7 @@ export const diagnosticAssignmentSchema = z.object({
   }).strict(),
   authority: z.object({
     tools: z.array(z.enum(['read', 'glob', 'grep', 'closeout_json', 'subagent', 'send_message', 'dispatch_workers', 'wait_for_workers', 'read_worker_report', 'inspect_worker', 'update_progress'])).min(1).max(11),
-    readRoots: z.array(id).min(1).max(3), writeRoots: z.array(z.never()).max(0),
+    readRoots: z.array(id).min(1), writeRoots: z.array(z.never()).max(0),
     networkCeiling: z.literal('none'), mayDelegate: z.boolean(),
   }).strict(),
   budget: z.object({ maxModelRequests: positive.max(10000), deadline, maxOutputTokens: positive }).strict(),
@@ -107,10 +107,8 @@ export const diagnosticSupervisionWaitSchema = diagnosticWaitSchema.extend({ tim
 export const diagnosticReviewWaitSchema = diagnosticSupervisionWaitSchema.extend({
   review: z.object({ scheduleId: id, operationId: id, intervalMs: positive.max(2147483647) }).strict().optional(),
 })
-/** Bounded worker history inspection. */
-export const diagnosticInspectWorkerSchema = z.object({
-  assignmentId: id, maxEvents: positive.max(50).default(10),
-}).strict()
+/** Complete worker history inspection. */
+export const diagnosticInspectWorkerSchema = z.object({ assignmentId: id }).strict()
 /** Idempotent guidance to an existing worker, without assignment overrides. */
 export const diagnosticGuidanceSchema = z.object({
   operationId: id, assignmentId: id, childSessionId: id, message: text.max(8192),

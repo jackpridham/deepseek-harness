@@ -154,9 +154,27 @@ interface RequestData {
   id: string
   producerSessionId: string
   assignmentId: string
+  /** The admitted maximum, held while the stream outcome is unknown. */
   outputTokens: number
   state: 'reserved' | 'settled'
+  /** Provider-reported output after a completed stream. Absence remains a full conservative charge. */
+  usedOutputTokens?: number
   stopReason?: 'cancelled'
+}
+
+/** Latest durable state for each request identity; append-only settlements supersede reservations. */
+function diagnosticRequests(session: Session): RequestData[] {
+  const requests = new Map<string, RequestData>()
+  for (const event of session.events)
+    if (event.type === 'diagnostic/request') requests.set(event.data.id, event.data)
+  return [...requests.values()]
+}
+
+/** Unknown or in-flight work retains its full admitted reservation. */
+function chargedOutputTokens(request: RequestData): number {
+  return request.state === 'settled' && request.usedOutputTokens !== undefined
+    ? request.usedOutputTokens
+    : request.outputTokens
 }
 
 declare module '@deepseek-ai/dsh-session/types' {
@@ -1007,7 +1025,7 @@ export class DiagnosticRuns {
           ['wait_for_workers', 'Wait for any worker report, terminal change or requested supervision checkpoint.', limits.diagnosticReviewVersion === 1 ? diagnosticReviewWaitSchema : limits.diagnosticSupervisionVersion === 1 ? diagnosticSupervisionWaitSchema : diagnosticWaitSchema, (args: unknown, execution: ToolExecution) => this.waitForWorkers(agent, args, execution.signal)],
           ['read_worker_report', 'Read an immutable worker report page.', diagnosticReadReportSchema, (args: unknown) => this.readWorkerReport(agent, args)],
           ...(limits.diagnosticSupervisionVersion === 1 ? [
-            ['inspect_worker', 'Inspect bounded worker scope, activity and progress; progress is not accepted evidence.', diagnosticInspectWorkerSchema, (args: unknown) => this.inspectWorker(agent, args)],
+            ['inspect_worker', 'Inspect the complete worker scope, activity and progress; progress is not accepted evidence.', diagnosticInspectWorkerSchema, (args: unknown) => this.inspectWorker(agent, args)],
             ['send_message', 'Send idempotent guidance at the next safe worker step; preserve its assignment and evidence requirements.', diagnosticGuidanceSchema, (args: unknown, execution: ToolExecution) => this.guideWorker(agent, args, execution.signal)],
           ] as const : []),
         ] as const
@@ -1159,7 +1177,6 @@ export class DiagnosticRuns {
   async publishWorkerReport(input: unknown): Promise<DiagnosticPublicationResult> {
     const args = diagnosticPublishSchema.parse(input)
     diagnosticCanonicalJson(args)
-    if (Buffer.byteLength(JSON.stringify(args), 'utf8') > 2 * 1024 * 1024 - 16 * 1024) throw new DiagnosticWorkflowError('invalid_request', 'Publication exceeds the existing 2 MiB complete message envelope')
     const root = this.root(SessionId(args.sessionId))
     const publication = await this.transact(root.id, async () => {
       const run = this.run(root.session)
@@ -1219,12 +1236,13 @@ export class DiagnosticRuns {
         || nativeResult.data.turn !== nativeCall.data.turn
         || nativeResult.data.step !== nativeCall.data.step)
         throw new DiagnosticWorkflowError('report_unavailable', 'Native closeout call/result evidence is missing or unsuccessful')
-      const nativeBlock = nativeResult.data.message.content.find(block => block.type === 'tool-result')
-      const content = nativeBlock?.content
-      let acknowledged: unknown
-      try { acknowledged = content?.length === 1 && content[0]?.type === 'text' ? JSON.parse(content[0].text) : undefined }
-      catch { throw new DiagnosticWorkflowError('report_unavailable', 'Native closeout acknowledgement is not JSON') }
-      if (!isDeepStrictEqual(acknowledged, outcome.value) || !isDeepStrictEqual(JSON.parse(nativeCall.data.arguments), call.arguments))
+      // The executor receipt is the committed closeout result. Tool rendering is
+      // presentation only and may independently page or elide a large report.
+      // The durable native call still proves the exact arguments that produced it.
+      let nativeArguments: unknown
+      try { nativeArguments = JSON.parse(nativeCall.data.arguments) }
+      catch { throw new DiagnosticWorkflowError('report_unavailable', 'Native closeout arguments are not JSON') }
+      if (diagnosticCanonicalJson(nativeArguments) !== diagnosticCanonicalJson(call.arguments))
         throw new DiagnosticWorkflowError('report_unavailable', 'Native closeout content differs from its accepted receipt')
       const reportRef = `${root.id}:${randomUUID()}`
       const { sessionId: _sessionId, ...identity } = args
@@ -1384,15 +1402,15 @@ export class DiagnosticRuns {
 
   private requestAllowance(root: Agent, assignment: DiagnosticAssignment, child: boolean, maxTokens: number): boolean {
     const admission = this.requireRun(root).admission
-    const charges = root.session.events.filter(event => event.type === 'diagnostic/request').filter(event => event.data.state === 'reserved')
-    const own = charges.filter(event => event.data.assignmentId === assignment.assignmentId)
+    const charges = diagnosticRequests(root.session)
+    const own = charges.filter(request => request.assignmentId === assignment.assignmentId)
     return Date.now() < Math.min(Date.parse(assignment.budget.deadline),
       Date.parse(admission.deadline) - (child ? admission.rootSynthesisReserveMs : 0))
       && charges.length < admission.maxModelRequests - (child ? admission.rootSynthesisReserveRequests : 0)
-      && charges.reduce((sum, event) => sum + event.data.outputTokens, 0) + maxTokens
+      && charges.reduce((sum, event) => sum + chargedOutputTokens(event), 0) + maxTokens
         <= admission.maxOutputTokens - (child ? admission.rootSynthesisReserveTokens : 0)
       && own.length < assignment.budget.maxModelRequests
-      && own.reduce((sum, event) => sum + event.data.outputTokens, 0) + maxTokens <= assignment.budget.maxOutputTokens
+      && own.reduce((sum, event) => sum + chargedOutputTokens(event), 0) + maxTokens <= assignment.budget.maxOutputTokens
   }
 
   private closeoutRecovery(events: Session['events'], accepted: boolean): JsonValue {
@@ -1465,10 +1483,9 @@ export class DiagnosticRuns {
   }
 
   private async inspectWorker(root: Agent, input: unknown): Promise<JsonValue> {
-    const { assignmentId, maxEvents } = diagnosticInspectWorkerSchema.parse(input)
+    const { assignmentId } = diagnosticInspectWorkerSchema.parse(input)
     const { record, childId } = this.worker(root, assignmentId)
     const events = await this.workerEvents(childId)
-    const clip = (text: string, limit = 2048) => text.length > limit ? text.slice(0, limit) + '…' : text
     const calls = events.filter(event => event.type === 'tool/call')
     const results = events.filter(event => event.type === 'tool/result')
     const resultFor = (call: typeof calls[number]) => results.find(event => event.data.turn === call.data.turn
@@ -1481,29 +1498,28 @@ export class DiagnosticRuns {
     const activity = this.requireExecutor().activity?.(root.id, childId) ?? { activeCalls: 0, pendingResults: 0 }
     const guidance = root.session.events.filter(event => event.type === 'diagnostic/guidance')
       .filter(event => event.data.assignmentId === assignmentId)
-    const latestGuidance = [...new Map(guidance.map(event => [event.data.operationId, event.data])).values()].slice(-maxEvents)
+    const latestGuidance = [...new Map(guidance.map(event => [event.data.operationId, event.data])).values()]
     const acceptedCloseout = this.requireExecutor().closed?.(root.id, childId, assignmentId) === true
     return {
       assignmentId, childSessionId: childId, assignmentDigest: record.assignmentDigest,
-      scope: { objective: clip(record.assignment.objective), ownershipBoundary: clip(record.assignment.ownershipBoundary),
-        request: scope === undefined ? null : { requestKey: clip(scope.requestKey), name: clip(scope.name), role: scope.role,
-          responsibility: clip(scope.responsibility), namespace: clip(scope.namespace), objective: clip(scope.objective),
-          paths: scope.paths.slice(0, 40).map(path => clip(path, 512)), truncated: scope.paths.length > 40 },
-        textLimit: 2048 },
+      scope: { objective: record.assignment.objective, ownershipBoundary: record.assignment.ownershipBoundary,
+        request: scope === undefined ? null : { requestKey: scope.requestKey, name: scope.name, role: scope.role,
+          responsibility: scope.responsibility, namespace: scope.namespace, objective: scope.objective,
+          paths: scope.paths } },
       activity: { state: acceptedCloseout ? 'closed' : this.service('agents').get(childId)?.status ?? 'not-resident', ...activity,
-        pendingTools: calls.filter(event => !resultFor(event)).slice(-maxEvents)
+        pendingTools: calls.filter(event => !resultFor(event))
           .map(event => ({ name: event.data.name, eventSeq: event.seq, elapsedMs: Math.max(0, Date.now() - event.time) })) },
-      recentToolFailures: failures.filter(event => callFor(event)?.data.name !== 'closeout_json').slice(-maxEvents).map((event) => {
+      recentToolFailures: failures.filter(event => callFor(event)?.data.name !== 'closeout_json').map((event) => {
         const call = callFor(event)
         return { eventSeq: event.seq, callEventSeq: call?.seq ?? null, tool: call?.data.name ?? null,
-          callId: event.data.message.source.callId, detail: clip(JSON.stringify(event.data.message.content)) }
+          callId: event.data.message.source.callId, detail: JSON.stringify(event.data.message.content) }
       }),
-      reportAttempts: calls.filter(event => event.data.name === 'closeout_json').slice(-maxEvents).map((event) => {
+      reportAttempts: calls.filter(event => event.data.name === 'closeout_json').map((event) => {
         const result = resultFor(event)
         const outcome = this.requireExecutor().toolOutcome?.(root.id, childId, event.seq)
         return { callEventSeq: event.seq, resultEventSeq: result?.seq ?? null, tool: 'closeout_json',
           attribution: outcome?.stage ?? null, acceptance: outcome?.status ?? 'unknown', origin: outcome?.origin ?? null,
-          detail: result ? clip(JSON.stringify(result.data.message.content)) : null,
+          detail: result ? JSON.stringify(result.data.message.content) : null,
           status: result === undefined ? 'pending' : result.data.message.content.some(block => block.isError) ? 'rejected' : 'returned' }
       }),
       acceptedCloseout,
@@ -1514,7 +1530,6 @@ export class DiagnosticRuns {
         return { operationId: record.operationId, status: delivery === 'delivered' ? delivery
           : acceptedCloseout ? 'closed' : delivery ?? record.status }
       }),
-      maxEvents,
     }
   }
 
@@ -1915,12 +1930,10 @@ export class DiagnosticRuns {
           'Prior child delivery requires history reconciliation',
           true,
         )
-      const charged = root.session.events.filter(
-        event => event.type === 'diagnostic/request' && event.data.state === 'reserved',
-      )
+      const charged = diagnosticRequests(root.session)
       if (
         charged.length >= run.admission.maxModelRequests - run.admission.rootSynthesisReserveRequests ||
-        charged.reduce((sum, event) => sum + (event.type === 'diagnostic/request' ? event.data.outputTokens : 0), 0) +
+        charged.reduce((sum, event) => sum + chargedOutputTokens(event), 0) +
           record.assignment.roleSettings.outputLimit >
           run.admission.maxOutputTokens - run.admission.rootSynthesisReserveTokens ||
         Date.now() >=
@@ -2115,10 +2128,26 @@ export class DiagnosticRuns {
       await this.refresh(member.root.id)
       return record
     })
+    let usedOutputTokens: number | undefined
+    let finished = false
+    let completed = false
     try {
-      yield* next()
+      for await (const chunk of next()) {
+        if (chunk.type === 'usage' && Number.isSafeInteger(chunk.usage.outputTokens) && chunk.usage.outputTokens >= 0)
+          usedOutputTokens = chunk.usage.outputTokens
+        if (chunk.type === 'finish')
+          finished = chunk.reason.kind === 'stop' || chunk.reason.kind === 'tool-calls' || chunk.reason.kind === 'max-tokens'
+        yield chunk
+      }
+      completed = true
     } finally {
-      member.root.session.append('diagnostic/request', { ...request, state: 'settled' })
+      // The original reservation remains in history for recovery. A durable usage
+      // receipt replaces its charge only after a complete terminal stream reported one.
+      member.root.session.append('diagnostic/request', {
+        ...request,
+        state: 'settled',
+        ...(completed && finished && usedOutputTokens !== undefined ? { usedOutputTokens } : {}),
+      })
       await this.refresh(member.root.id)
     }
   }

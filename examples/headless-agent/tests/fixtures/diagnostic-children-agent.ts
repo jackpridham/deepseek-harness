@@ -52,7 +52,8 @@ export async function apply(ctx: Context): Promise<void> {
     assignment: DiagnosticAssignment
   }
   const workflowMode = process.env.DSH_TEST_DIAGNOSTIC_WORKFLOW
-  const supervision = workflowMode === 'supervision' || workflowMode === 'review'
+  const inspection = workflowMode === 'inspection'
+  const supervision = workflowMode === 'supervision' || workflowMode === 'review' || inspection
   const review = workflowMode === 'review'
   const recovery = workflowMode === 'recovery'
   const paging = workflowMode === 'paging'
@@ -71,6 +72,7 @@ export async function apply(ctx: Context): Promise<void> {
     input.coordinatorAssignment.authority.tools.push('inspect_worker', 'send_message', 'update_progress')
     prepared.assignment.authority.tools.push('update_progress')
   }
+  if (inspection) prepared.assignment.objective = 'Investigate the full assigned scope. '.repeat(3000)
   input.maxOutputTokens = 2_000_000
   for (const assignment of [input.coordinatorAssignment, prepared.assignment]) {
     assignment.roleSettings.outputLimit = 65536
@@ -78,9 +80,9 @@ export async function apply(ctx: Context): Promise<void> {
     assignment.digest = diagnosticRecordDigest(assignment, true)
   }
   const reportRef = `${input.rootSessionId}:00000000-0000-4000-8000-000000000000`
-  const packet = { summary: '漢😀\"\\\n'.repeat(150), report: {}, candidateRefs: [], evidenceRefs: ['accepted-read:1'], unresolvedQuestions: [], crossAreaDependencies: [] }
+  const packet = { summary: '漢😀\"\\\n'.repeat(150), report: { confidence: 0.95 }, candidateRefs: [], evidenceRefs: ['accepted-read:1'], unresolvedQuestions: [], crossAreaDependencies: [] }
   let reconstructed = '', pageCount = 0
-  if (paging) {
+  if (paging || inspection) {
     await ctx.plugin(FixtureSpill)
     await ctx.plugin(SpillPolicy, { maxInlineBytes: 1500 })
   }
@@ -116,7 +118,17 @@ export async function apply(ctx: Context): Promise<void> {
         case 0: return toolCallResponse('dispatch', 'dispatch_workers', { requests: [{ requestKey: 'discovery', name: 'Discovery', role: 'discovery', responsibility: '', namespace: '', paths: [], objective: 'Examine admitted source' }] })
         case 1: return toolCallResponse('checkpoint', 'wait_for_workers', { afterSeq: 0, ...(review ? { review: { scheduleId: 'periodic', operationId: 'review-1', intervalMs: 1 } } : { timeoutMs: 5 }) })
         case 2: return toolCallResponse('inspect', 'inspect_worker', { assignmentId: identity.assignmentId })
-        case 3: return toolCallResponse('guide', 'send_message', { ...identity, operationId: 'review-1', message: 'Finish the guard check, then report.' })
+        case 3: {
+          if (inspection) {
+            const result = options.messages.flatMap(message => message.content).findLast(block => block.type === 'tool-result')
+            if (result?.type !== 'tool-result' || result.content[0]?.type !== 'text') throw new Error('Missing model-visible inspection')
+            const text = result.content[0].text
+            const value = JSON.parse(text) as { scope: { objective: string } }
+            if (value.scope.objective !== prepared.assignment.objective) throw new Error('Inspection scope was truncated')
+            process.stdout.write(JSON.stringify({ type: 'complete-inspection', bytesAboveOldCap: Buffer.byteLength(text) > 50000, exact: true }) + '\n')
+          }
+          return toolCallResponse('guide', 'send_message', { ...identity, operationId: 'review-1', message: 'Finish the guard check, then report.' })
+        }
         default: return toolCallResponse('finish', 'closeout_json', { report: { summary: 'Retained diagnostic closeout.' } })
       }
     }

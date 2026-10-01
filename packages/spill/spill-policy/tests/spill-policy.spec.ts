@@ -56,9 +56,9 @@ function textTool(name: string, text: string) {
 }
 
 /** A minimal exec carrying a session header id (the spill owner). */
-function exec(name: string, session = 's1'): ToolExecution {
+function exec(name: string, session = 's1', diagnostic = false): ToolExecution {
   // Only agent.session.header.id is read by the policy; a structural stub suffices.
-  const agent = { session: { header: { id: SessionId(session) } } }
+  const agent = { session: { header: { id: SessionId(session) }, events: diagnostic ? [{ type: 'diagnostic/run-state' }] : [] } }
   return { callId: CallId(`call-${name}`), name, arguments: {}, agent, signal: testToolSignal } as unknown as ToolExecution
 }
 
@@ -126,6 +126,24 @@ describe('config validation', () => {
 })
 
 describe('oversized plain-text replacement', () => {
+  it.each(['inspect_worker', 'read_worker_report', 'closeout_json'])('keeps complete diagnostic %s output inline', async (name) => {
+    const { ctx, spill } = await setup({ maxInlineBytes: 200 })
+    const body = 'complete diagnostic content '.repeat(10_000)
+    ctx.tools.register(textTool(name, body))
+    const result = await ctx.tools.execute(exec(name, 's1', true))
+    expect(result.isError).toBe(false)
+    expect(textOf(result.content)).toBe(body)
+    expect(spill?.saves).toEqual([])
+  })
+
+  it('still spills a similarly named non-diagnostic tool', async () => {
+    const { ctx, spill } = await setup({ maxInlineBytes: 200 })
+    ctx.tools.register(textTool('closeout_json', 'ordinary tool output '.repeat(10_000)))
+    const result = await ctx.tools.execute(exec('closeout_json'))
+    expect(textOf(result.content)).toContain('Full formatted result stored at:')
+    expect(spill?.saves).toHaveLength(1)
+  })
+
   it('spills the full text and replaces the result with a preview + locator within the cap', async () => {
     const { ctx, spill } = await setup({ maxInlineBytes: 200 })
     const body = 'HEAD'.repeat(200) + 'TAIL'.repeat(200) // 1600 bytes > 200

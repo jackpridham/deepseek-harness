@@ -1,26 +1,46 @@
 /** Immutable caller assignments for executor-bound source-review children. */
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import { snapshotJsonValue } from '@deepseek-ai/dsh-session'
-import type { JsonValue, SessionInstructions } from '@deepseek-ai/dsh-session'
+import type { SessionInstructions } from '@deepseek-ai/dsh-session'
 
 import { diagnosticAssignmentSchema, diagnosticAdmissionSchema } from './diagnostic-schema.ts'
 import type { DiagnosticAssignment, DiagnosticAdmission } from './diagnostic-schema.ts'
 export * from './diagnostic-schema.ts'
 
 /**
- * Python-compatible sorted, ASCII-escaped JSON for the handoff's safe-integer digest domain.
+ * Sorted, ASCII-escaped JSON for immutable diagnostic records.
  * @param value - JSON input at a caller or durable-data boundary.
  * @returns canonical ASCII JSON, with nested digest fields retained.
  */
 export function diagnosticCanonicalJson(value: unknown): string {
-  const snapshot = snapshotJsonValue(value)
-  if (snapshot === undefined) throw new Error('Diagnostic records require lossless JSON')
-  function encode(input: JsonValue): string {
-    if (typeof input === 'number' && !Number.isSafeInteger(input))
-      throw new Error('Diagnostic records require safe integers')
-    if (Array.isArray(input)) return `[${input.map(encode).join(',')}]`
-    if (input !== null && typeof input === 'object') {
+  const ancestors = new Set<object>()
+  function encode(input: unknown): string {
+    if (input === null || typeof input === 'boolean' || typeof input === 'string') {
+      return JSON.stringify(input).replace(
+        /[\u007f-\uffff]/g,
+        char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`,
+      )
+    }
+    if (typeof input === 'number') {
+      if (!Number.isFinite(input)) throw new Error('Diagnostic records require finite JSON numbers')
+      return JSON.stringify(input)
+    }
+    if (input === null || typeof input !== 'object') throw new Error('Diagnostic records require JSON values')
+    if (ancestors.has(input)) throw new Error('Diagnostic records cannot be cyclic')
+    if (Array.isArray(input)) {
+      if (Reflect.ownKeys(input).length !== input.length + 1 || input.some((_, index) => !Object.hasOwn(input, index)))
+        throw new Error('Diagnostic records require dense JSON arrays')
+      ancestors.add(input)
+      const result = `[${input.map(encode).join(',')}]`
+      ancestors.delete(input)
+      return result
+    }
+    if (Object.getPrototypeOf(input) !== Object.prototype && Object.getPrototypeOf(input) !== null)
+      throw new Error('Diagnostic records require plain JSON objects')
+    if (Reflect.ownKeys(input).some(key => typeof key !== 'string' || !Object.prototype.propertyIsEnumerable.call(input, key)))
+      throw new Error('Diagnostic records require enumerable string keys')
+    ancestors.add(input)
+    try {
       // Python sorts Unicode code points; UTF-16 sorting differs for astral keys.
       const compare = (a: string, b: string): number => {
         const left = [...a]
@@ -35,13 +55,11 @@ export function diagnosticCanonicalJson(value: unknown): string {
         .sort(([a], [b]) => compare(a, b))
         .map(([key, value]) => `${encode(key)}:${encode(value)}`)
         .join(',')}}`
+    } finally {
+      ancestors.delete(input)
     }
-    return JSON.stringify(input).replace(
-      /[\u007f-\uffff]/g,
-      char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`,
-    )
   }
-  return encode(snapshot as JsonValue)
+  return encode(value)
 }
 
 /**
@@ -197,11 +215,6 @@ export function parseDiagnosticAdmission(input: unknown, now: number): Diagnosti
     : workflowTools.some(tool => tools.includes(tool as typeof tools[number])))
     throw new Error('Coordinator tools must match the frozen diagnostic workflow version')
   const assignment = parseDiagnosticAssignment(value.coordinatorAssignment)
-  if (
-    value.sourceRefs.length !== 3 ||
-    value.sourceRefs.some((root, i) => root.side !== ['base', 'head', 'controls'][i])
-  )
-    throw new Error('Admission requires ordered base, head and controls sources')
   requireEqual(
     value.comparisonDigest,
     diagnosticContentDigest(JSON.stringify(value.sourceRefs.map(root => root.revision))),

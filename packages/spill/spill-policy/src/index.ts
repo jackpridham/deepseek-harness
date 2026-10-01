@@ -91,6 +91,13 @@ function ownerSessionId(exec: ToolExecution): SessionId | undefined {
   return (exec as SpillPolicyExec).agent?.session.header.id
 }
 
+/** Diagnostic supervision and durable-report tools must remain wholly visible to their parent. */
+function preservesDiagnosticContent(exec: ToolExecution): boolean {
+  if (!['inspect_worker', 'read_worker_report', 'closeout_json'].includes(exec.name)) return false
+  return (exec as SpillPolicyExec).agent?.session.events?.some(event =>
+    event.type === 'diagnostic/run-state' || event.type === 'diagnostic/member') ?? false
+}
+
 /** Build the bounded head/tail preview for `text`, splitting `budget` bytes across the two ends. */
 function preview(text: string, budget: number): { text: string; omitted: Omitted } {
   const headBytes = Math.ceil(budget / 2)
@@ -199,7 +206,7 @@ export function apply(ctx: Context, config: Config): void {
     const decision = await next()
     // Skip `read` to avoid a read → spill → read again loop.
     if (decision.kind !== 'accept' || Object.hasOwn(decision, 'value')
-      || exec.parent !== undefined || exec.name === 'read') return decision
+      || exec.parent !== undefined || exec.name === 'read' || preservesDiagnosticContent(exec)) return decision
 
     const content = decision.content ?? result.content
     const text = flattenPlainText(content)

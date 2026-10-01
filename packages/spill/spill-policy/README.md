@@ -17,7 +17,7 @@ The policy advertises its validated cap through `tools/inline-text-budget` in th
 ## Behavior
 
 1. Let the tool run (delegates via `next()`, so it bounds whatever a downstream hook accepted).
-2. Skip nested executions (`exec.parent` is present — their DURABLE copy is bounded by the dispatch-log arm below), accepted value replacements (the registry must revalidate and rerender them), `read` (avoids a `read → spill → read again` loop), and any non-`accept` decision (a `block`'s corrective feedback passes through).
+2. Skip nested executions (`exec.parent` is present — their DURABLE copy is bounded by the dispatch-log arm below), accepted value replacements (the registry must revalidate and rerender them), `read` (avoids a `read → spill → read again` loop), diagnostic inspection and report tools (their results must remain complete), and any non-`accept` decision (a `block`'s corrective feedback passes through).
 3. Flatten the accepted content only when it is **plain text** (all `text` blocks); a result with any non-text block is left untouched.
 4. If its UTF-8 size is `≤ maxInlineBytes`, leave it unchanged.
 5. Otherwise save the full text and replace the result with a preview + this notice, sized so the whole replacement (preview + blank line + notice) stays within `maxInlineBytes` — the notice's byte cost is reserved out of the budget, so the preview shrinks to fit and the model-facing result never exceeds the cap:
@@ -44,7 +44,7 @@ The policy sees only the FINAL formatted model-facing result—not a tool's inte
 
 #### What the model sees
 
-Results at or below `maxInlineBytes`, nested results, `read` results, blocked decisions, and results containing non-text blocks are unchanged. An oversized plain-text model-facing result becomes a bounded head/tail preview followed by `(Omitted <bytes> bytes. Full formatted result stored at: <locator>. <retrievalHint>)`; storage or ownership failures leave the original result visible.
+Results at or below `maxInlineBytes`, nested results, `read` results, diagnostic inspection/report results, blocked decisions, and results containing non-text blocks are unchanged. An oversized plain-text model-facing result becomes a bounded head/tail preview followed by `(Omitted <bytes> bytes. Full formatted result stored at: <locator>. <retrievalHint>)`; storage or ownership failures leave the original result visible.
 
 #### Token effect
 
