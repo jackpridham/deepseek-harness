@@ -10,6 +10,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import { createScope } from '@deepseek-ai/dsh-scope'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { createUserMessage, CallId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -601,4 +602,19 @@ describe('disposal (HMR safety)', () => {
     expect(textOf(after.content)).toBe(body)
     expect(spill?.saves).toHaveLength(1)
   })
+})
+
+it('advertises the smallest visible inline budget and removes it on disposal', async () => {
+  const { ctx, fiber } = await setup({ maxInlineBytes: 50000 })
+  const scope = exec('scope').agent!, other = exec('other').agent!
+  const scoped = createScope(ctx, scope)
+  const local = await scoped.ctx.plugin(SpillPolicy, { maxInlineBytes: 1200 })
+  expect(await ctx.tools.inlineTextBudget()).toBe(50000)
+  expect(await ctx.tools.inlineTextBudget(scope)).toBe(1200)
+  expect(await ctx.tools.inlineTextBudget(other)).toBe(50000)
+  await local.dispose()
+  expect(await ctx.tools.inlineTextBudget(scope)).toBe(50000)
+  await fiber.dispose()
+  expect(await ctx.tools.inlineTextBudget(scope)).toBeUndefined()
+  await ctx.fiber.dispose()
 })

@@ -27,6 +27,8 @@ tools:
 - `ctx.tools.execute(exec)` losslessly snapshots and freezes arguments, assigns an opaque token, runs the complete policy/dispatch/result pipeline, then independently snapshots the authoritative outcome before final observation. Invalid arguments use the same result path without reaching policy or the body. Around wrappers may replace only `signal`; the registry re-fuses the original caller signal immediately before the body.
 - `ctx.tools.executionMode(exec)` returns `parallel` only when the visible definition's `isConcurrencySafe(exec.arguments)` classifier returns exactly `true`; unknown, hidden, undeclared, invalid, or throwing classifications are exclusive.
 
+Paged text producers use `ctx.tools.inlineTextBudget(scope)` to query the tightest active formatter cap in UTF-8 bytes before rendering a page. `undefined` means no formatter advertises a cap. The scoped `tools/inline-text-budget` waterfall composes limits by minimum; this query does not format, spill or exempt a result from normal post-processing.
+
 ### Injected services
 
 `SystemPrompt` — the registry automatically feeds its tool schemas into the system-prompt assembly via `ctx.systemPrompt.tools()`. The approval seam is consumed opportunistically instead (`ctx.get('approval')`, no static inject): a deployment without it keeps the ask→deny degrade, and the registry stays active either way.

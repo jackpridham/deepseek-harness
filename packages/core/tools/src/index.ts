@@ -141,6 +141,14 @@ declare module '@deepseek-ai/cordis' {
 
   interface Events {
     /**
+     * Query the maximum intact plain-text result size imposed by active formatters.
+     * Listeners delegate and return the smallest configured UTF-8 byte cap.
+     * Scope-filtered dispatch: only formatters visible to the requesting scope participate.
+     * @param agent - the caller agent, or undefined for global calls.
+     * @mode waterfall
+     */
+    'tools/inline-text-budget'(this: Scoped<ToolRuntime>, agent: Agent | undefined, next: () => Promise<number | undefined>): Promise<number | undefined>
+    /**
      * Allow, deny, or ask before dispatch. `next()` delegates to allow; missing
      * approval support turns `ask` into denial. Async gates must observe
      * `exec.signal`; the registry rechecks cancellation after they settle but
@@ -836,6 +844,15 @@ export class ToolRuntime extends Service {
       ctx.systemPrompt.section(this.collapseSection())
       ctx.systemPrompt.section(this.sdkSection())
     }
+  }
+
+  /**
+   * Read the tightest configured plain-text formatting cap without formatting or spilling.
+   * @param agent - the caller agent whose formatter policies apply.
+   * @returns UTF-8 byte cap, or undefined when no formatter imposes one.
+   */
+  inlineTextBudget(agent?: Agent): Promise<number | undefined> {
+    return this.ctx.waterfall(scopeTarget(this, agent), 'tools/inline-text-budget', agent, async () => undefined)
   }
 
   /**

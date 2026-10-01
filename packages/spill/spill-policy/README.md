@@ -12,6 +12,8 @@ This plugin registers **no service** and owns no storage or preview mechanics: p
 |---|---|---|
 | `maxInlineBytes` | *(omitted)* | Model-facing context cap for a plain-text result, in UTF-8 bytes (a non-negative integer; validated at load). **Omitted disables the policy entirely** (the plugin registers nothing). When set, a larger result is spilled and replaced with a preview derived from the same budget (head/tail split). |
 
+The policy advertises its validated cap through `tools/inline-text-budget` in the same scope as its formatter. Paged tools can measure their complete rendered text against that limit, including JSON escaping and metadata. The cap counts UTF-8 bytes; this policy imposes no separate character or line limit. Multiple visible policies return the smallest cap, and disposal removes the contribution.
+
 ## Behavior
 
 1. Let the tool run (delegates via `next()`, so it bounds whatever a downstream hook accepted).

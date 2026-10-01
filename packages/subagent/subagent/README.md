@@ -193,6 +193,12 @@ Diagnostic refresh appends child and run state only when the observed values cha
 
 Explicit workflow cancellation also drains restored incomplete runs and records stale native inference reservations as cancelled after execution stops. Source-operation uncertainty remains in the executor journal and still blocks quiescent detachment.
 
+### Intact diagnostic report pages
+
+`read_worker_report` accepts `reportRef` and optional `offset`, measured in JavaScript UTF-16 code units of the canonical packet. Pages preserve the publication identity and digest; concatenate `text` and follow `nextOffset` until null to recover the exact packet. Identical reads under the same formatter configuration return identical pages. An offset at the end returns empty text with a null continuation; offsets past the end reject.
+
+Report and worker-update paging account for the complete rendered JSON text and the existing transport envelope. They query the active scoped formatter byte budget instead of assuming the transport allowance reaches the model. Worker updates also include supervision/review metadata in that measurement and leave unreturned events behind the cursor. A metadata envelope or indivisible update too large for the configured budget fails explicitly. No spill-file access, new tool argument, global limit increase, admission change or report rewriting is required. See the [decision record](../../../.agents/notes/implemented/bug-fix/2026-10-01-diagnostic-report-paging.md).
+
 ### Anchored reviews and tree checkpoints
 
 `diagnosticReviewVersion:1` adds `review:{scheduleId,operationId,intervalMs}` to `wait_for_workers` for jointly opted-in bindings/admissions. DSH anchors the cadence to the first launched worker, retains replies by operation identity, and preserves the next deadline across early reports, inspection time and reconnects. Each new wait needs a new operation identity; exact retries return the durable reply. Existing admissions retain their relative waits. Inspection identifies each ordinary failure's tool and separates report attempts and established backend/caller attribution; `maxEvents` is optional with default 10.

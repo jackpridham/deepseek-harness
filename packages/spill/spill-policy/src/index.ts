@@ -120,6 +120,11 @@ export function apply(ctx: Context, config: Config): void {
   // Narrowed once for the nested arms (closure narrowing does not survive awaits).
   const cap: number = maxInlineBytes
 
+  ctx.on('tools/inline-text-budget', async (_scope, next) => {
+    const other = await next()
+    return other === undefined ? cap : Math.min(cap, other)
+  })
+
   /**
    * Spill `text` and build the bounded replacement (preview + notice), or
    * return `undefined` when the policy must keep the original (no session

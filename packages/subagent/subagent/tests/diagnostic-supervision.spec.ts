@@ -4,6 +4,9 @@ import { readFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
+import * as SpillPolicy from '@deepseek-ai/dsh-spill-policy'
+import { SpillStore, SpillLocator } from '@deepseek-ai/dsh-spill'
+import type { SaveTextSpill } from '@deepseek-ai/dsh-spill'
 import { CallId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { agentEvents } from '@deepseek-ai/dsh-agent'
@@ -15,7 +18,7 @@ import Projections from '@deepseek-ai/dsh-session-projection'
 import Compaction from '@deepseek-ai/dsh-compaction-basic'
 import Meter from '@deepseek-ai/dsh-token-meter'
 import * as Spawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
-import Subagents, { DIAGNOSTIC_POLICY, diagnosticRecordDigest, parseDiagnosticAdmission } from '../src/index.ts'
+import Subagents, { DIAGNOSTIC_POLICY, diagnosticCanonicalJson, diagnosticRecordDigest, parseDiagnosticAdmission } from '../src/index.ts'
 import type { DiagnosticBinding, DiagnosticAssignment } from '../src/index.ts'
 
 const cleanup: (() => Promise<unknown>)[] = []
@@ -459,4 +462,95 @@ it('captures all active workers after their source calls settle, without changin
   expect(snapshot.sessions.filter(session => session.header.origin === 'subagent').every(session => session.events.some(event => event.type === 'tool/result'))).toBe(true)
   expect(signal.aborted).toBe(false)
   await Promise.all(ctx.agents.list().map(agent => agent.whenIdle()))
+})
+
+class PagingSpillStore extends SpillStore {
+  saves: string[] = []
+  async saveText(input: SaveTextSpill) {
+    this.saves.push(input.content)
+    return { locator: SpillLocator('/inaccessible/report.txt'), bytes: Buffer.byteLength(input.content), retrievalHint: 'Read the backend spill file.' }
+  }
+}
+
+it.each(['below', 'at', 'above', 'large', 'escaped', 'unicode', 'lines'] as const)('delivers intact report pages through the formatter: %s', async (shape) => {
+  const { ctx, root, input, prepared, execute } = await setup(false)
+  await ctx.plugin(PagingSpillStore)
+  await ctx.plugin(SpillPolicy, { maxInlineBytes: 50_000 })
+  const reportRef = `${root.id}:00000000-0000-4000-8000-000000000000`
+  const packet = { summary: '', report: {}, candidateRefs: [], evidenceRefs: ['accepted-read:1'], unresolvedQuestions: [], crossAreaDependencies: [] }
+  const empty = { reportRef, offset: 0, nextOffset: null, text: diagnosticCanonicalJson(packet), sha256: 'a'.repeat(64) }
+  const remaining = 50_000 - Buffer.byteLength(JSON.stringify(empty))
+  packet.summary = shape === 'below' ? 'x'.repeat(remaining - 1)
+    : shape === 'at' ? 'x'.repeat(remaining)
+      : shape === 'above' ? 'x'.repeat(remaining + 1)
+        : shape === 'escaped' ? '\"\\\t\u0000'.repeat(30_000)
+          : shape === 'unicode' ? '漢é😀'.repeat(40_000)
+            : shape === 'lines' ? 'line\n'.repeat(40_000) : 'x'.repeat(220_000)
+  const sha256 = diagnosticRecordDigest(packet)
+  root.session.append('diagnostic/worker-report', { runId: input.runId, assignmentId: prepared.assignment.assignmentId,
+    childSessionId: 'worker', closeoutRef: { producerSessionId: 'worker', executorCorrelationId: 'accepted', callEventSeq: 1, resultEventSeq: 2 },
+    packet, reportRef, sha256 })
+  const before = diagnosticCanonicalJson(packet)
+  let offset: number | null = 0, text = '', pages = 0
+  while (offset !== null) {
+    const args = { reportRef, offset }
+    const result = await execute('read_worker_report', args)
+    expect(result.isError).toBe(false)
+    expect(result.content).toEqual([{ type: 'text', text: JSON.stringify(result.value) }])
+    const rendered = result.content[0]!
+    expect(rendered.type).toBe('text')
+    if (rendered.type !== 'text') throw new Error('Expected report text')
+    expect(Buffer.byteLength(rendered.text)).toBeLessThanOrEqual(50_000)
+    const page = JSON.parse(rendered.text) as { offset: number; nextOffset: number | null; text: string; reportRef: string; sha256: string }
+    expect(page).toMatchObject({ reportRef, sha256, offset })
+    expect(page.text).toBe(before.slice(offset, offset + page.text.length))
+    expect(page.nextOffset).toBe(offset + page.text.length === before.length ? null : offset + page.text.length)
+    expect((await execute('read_worker_report', args)).content).toEqual(result.content)
+    text += page.text; offset = page.nextOffset; pages++
+    expect(pages).toBeLessThan(100)
+  }
+  expect(text).toBe(before)
+  const end = await execute('read_worker_report', { reportRef, offset: text.length })
+  expect(end.value).toEqual({ reportRef, offset: text.length, nextOffset: null, text: '', sha256 })
+  expect(end.content).toEqual([{ type: 'text', text: JSON.stringify(end.value) }])
+  expect(diagnosticRecordDigest(packet)).toBe(sha256)
+  expect((ctx.spillStore as PagingSpillStore).saves).toEqual([])
+  expect(pages).toBeGreaterThanOrEqual(['below', 'at'].includes(shape) ? 1 : 2)
+  if (['below', 'at'].includes(shape)) expect(pages).toBe(1)
+  if (shape === 'below') {
+    const foreign = await ctx.agents.create({ sessionId: SessionId('other-run') })
+    const publication = root.session.events.find(event => event.type === 'diagnostic/worker-report')!
+    if (publication.type !== 'diagnostic/worker-report') throw new Error('Missing fixture publication')
+    const foreignRef = reportRef.replace(root.id, foreign.agent.id)
+    foreign.agent.session.append('diagnostic/worker-report', { ...publication.data, reportRef: foreignRef })
+    const denied = await execute('read_worker_report', { reportRef: foreignRef })
+    expect(denied.isError).toBe(true)
+    expect(JSON.parse((denied.content[0] as { text: string }).text).error.code).toBe('authority_denied')
+    expect((await execute('read_worker_report', { reportRef }, foreign.agent)).isError).toBe(true)
+  }
+})
+
+it.each(['legacy', 'supervision', 'review'] as const)('pages worker updates including the %s envelope through the formatter', async (mode) => {
+  const { ctx, root, child, assignmentId, execute } = await setup(mode !== 'legacy', mode === 'review')
+  await ctx.plugin(PagingSpillStore)
+  await ctx.plugin(SpillPolicy, { maxInlineBytes: 1500 })
+  let afterSeq = root.session.seq - 1
+  const expected = Array.from({ length: 40 }, (_, i) => root.session.append('diagnostic/missing-report', {
+    reminderId: 'reminder-' + i + 'x'.repeat(100), sessionId: child.id, assignmentId, turn: i + 1,
+  }).seq)
+  const seen: number[] = []
+  let pages = 0
+  while (seen.length < expected.length) {
+    const result = await execute('wait_for_workers', { afterSeq, ...(mode === 'review' ? { review: { scheduleId: 'paging', operationId: 'page-' + pages, intervalMs: 1800000 } } : {}) })
+    expect(result.isError).toBe(false)
+    expect(result.content).toEqual([{ type: 'text', text: JSON.stringify(result.value) }])
+    const page = JSON.parse((result.content[0] as { text: string }).text) as { updates: { seq: number; kind: string }[]; nextSeq: number }
+    seen.push(...page.updates.filter(update => update.kind === 'missing_report').map(update => update.seq))
+    expect(page.nextSeq).toBeGreaterThan(afterSeq)
+    afterSeq = page.nextSeq
+    expect(++pages).toBeLessThan(50)
+  }
+  expect(seen).toEqual(expected)
+  expect(pages).toBeGreaterThan(1)
+  expect((ctx.spillStore as PagingSpillStore).saves).toEqual([])
 })

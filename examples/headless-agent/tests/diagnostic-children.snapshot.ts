@@ -185,3 +185,27 @@ it('recovers worker and coordinator text-only completion in their original turns
   expect(result.stdout).toContain(JSON.stringify({ type: 'accepted-closeout', role: 'coordinator' }))
   expect(result.stdout).not.toContain('"kind":"error"')
 }, LOADER_SMOKE_TEST_TIMEOUT_MS)
+
+it('retrieves complete paged reports in model requests without spill access', async () => {
+  const configPath = fileURLToPath(new URL('../diagnostic-children.cordis.snapshot.yml', import.meta.url))
+  const binScript = fileURLToPath(new URL('./fixtures/headless-driver.ts', import.meta.url))
+  const result = await runLoaderSmoke({ label: 'diagnostic report paging', tempDirPrefix: 'dsh-report-paging-',
+    configPath, binScript, libBinScript: binScript, binArgs: [configPath, 'Read the complete retained worker report.'],
+    env: { DSH_TEST_DIAGNOSTIC_WORKFLOW: 'paging' },
+    tsconfigPath: fileURLToPath(new URL('../../../tsconfig.json', import.meta.url)),
+  })
+  const rows = result.stdout.trim().split('\n').map(line => JSON.parse(line) as { type?: string })
+  expect(rows.filter(row => row.type === 'report-paging')).toMatchInlineSnapshot(`
+    [
+      {
+        "exact": true,
+        "intact": true,
+        "multiplePages": true,
+        "type": "report-paging",
+      },
+    ]
+  `)
+  expect(result.stdout).not.toContain('unexpected-spill')
+  expect(result.stdout).not.toContain('Full formatted result stored at')
+  expect(result.stdout).not.toContain('"kind":"error"')
+}, LOADER_SMOKE_TEST_TIMEOUT_MS)

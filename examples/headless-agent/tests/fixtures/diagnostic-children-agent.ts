@@ -8,12 +8,22 @@ import Titles from '@deepseek-ai/dsh-session-title'
 import Projections from '@deepseek-ai/dsh-session-projection'
 import BasicCompaction from '@deepseek-ai/dsh-compaction-basic'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
-import Subagents, { DIAGNOSTIC_POLICY, parseDiagnosticAdmission, diagnosticRecordDigest } from '@deepseek-ai/dsh-subagent'
+import Subagents, { DIAGNOSTIC_POLICY, parseDiagnosticAdmission, diagnosticRecordDigest, diagnosticCanonicalJson } from '@deepseek-ai/dsh-subagent'
 import type { DiagnosticBinding, DiagnosticAssignment } from '@deepseek-ai/dsh-subagent'
 import * as Spawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
+import * as SpillPolicy from '@deepseek-ai/dsh-spill-policy'
+import { SpillStore, SpillLocator } from '@deepseek-ai/dsh-spill'
+import type { SaveTextSpill } from '@deepseek-ai/dsh-spill'
 import { MockAdapter, textResponse, toolCallResponse } from '../../../../packages/core/agent-loop/tests/mock-adapter.ts'
+
+class FixtureSpill extends SpillStore {
+  async saveText(input: SaveTextSpill) {
+    process.stdout.write(JSON.stringify({ type: 'unexpected-spill' }) + '\n')
+    return { locator: SpillLocator('/unavailable/report.txt'), bytes: Buffer.byteLength(input.content), retrievalHint: 'Read backend spill.' }
+  }
+}
 
 /** Loader fixture name. */
 export const name = 'diagnostic-children-snapshot'
@@ -45,7 +55,8 @@ export async function apply(ctx: Context): Promise<void> {
   const supervision = workflowMode === 'supervision' || workflowMode === 'review'
   const review = workflowMode === 'review'
   const recovery = workflowMode === 'recovery'
-  const workflow = workflowMode === '1' || workflowMode === 'prose' || supervision || recovery
+  const paging = workflowMode === 'paging'
+  const workflow = workflowMode === '1' || workflowMode === 'prose' || supervision || recovery || paging
   const reading = Promise.withResolvers<boolean>(), release = Promise.withResolvers<boolean>()
   let childRequests = 0
   const closed = new Set<string>()
@@ -66,11 +77,31 @@ export async function apply(ctx: Context): Promise<void> {
     assignment.budget.maxOutputTokens = 1_000_000
     assignment.digest = diagnosticRecordDigest(assignment, true)
   }
+  const reportRef = `${input.rootSessionId}:00000000-0000-4000-8000-000000000000`
+  const packet = { summary: '漢😀\"\\\n'.repeat(150), report: {}, candidateRefs: [], evidenceRefs: ['accepted-read:1'], unresolvedQuestions: [], crossAreaDependencies: [] }
+  let reconstructed = '', pageCount = 0
+  if (paging) {
+    await ctx.plugin(FixtureSpill)
+    await ctx.plugin(SpillPolicy, { maxInlineBytes: 1500 })
+  }
   let rootRequests = 0
   const response = (options: import('@deepseek-ai/dsh-llm').GenerateOptions) => {
     if (options.purpose === 'compaction') {
       process.stdout.write(`${JSON.stringify({ type: 'diagnostic-summary', contextWindow: options.contextWindow, maxTokens: options.maxTokens })}\n`)
       return textResponse('Candidate C1; pending gap G1; evidence reference read:159. Unvalidated.')
+    }
+    if (paging) {
+      if (rootRequests++ === 0) return toolCallResponse('page-0', 'read_worker_report', { reportRef })
+      const toolResult = options.messages.flatMap(message => message.content).findLast(block => block.type === 'tool-result')
+      if (toolResult?.type !== 'tool-result' || toolResult.content[0]?.type !== 'text') throw new Error('Expected model-visible report page')
+      const rendered = toolResult.content[0].text
+      const page = JSON.parse(rendered) as { text: string; offset: number; nextOffset: number | null; sha256: string }
+      if (page.offset !== reconstructed.length || page.sha256 !== diagnosticRecordDigest(packet) || Buffer.byteLength(rendered) > 1500)
+        throw new Error('Invalid model-visible page')
+      reconstructed += page.text; pageCount++
+      if (page.nextOffset !== null) return toolCallResponse('page-' + pageCount, 'read_worker_report', { reportRef, offset: page.nextOffset })
+      process.stdout.write(JSON.stringify({ type: 'report-paging', multiplePages: pageCount > 1, exact: reconstructed === diagnosticCanonicalJson(packet), intact: true }) + '\n')
+      return toolCallResponse('finish', 'closeout_json', { report: { summary: 'Complete report retrieved.' } })
     }
     if (supervision) {
       if (options.sessionId !== input.rootSessionId) {
@@ -192,6 +223,11 @@ export async function apply(ctx: Context): Promise<void> {
     .create({ sessionId: SessionId(input.rootSessionId), meta: { sessionPolicy: DIAGNOSTIC_POLICY } })
   ctx.effect(() => () => handle.dispose())
   await ctx.get('subagents')!.diagnostics.admit(input)
+  if (paging) handle.agent.session.append('diagnostic/worker-report', {
+    runId: input.runId, assignmentId: prepared.assignment.assignmentId, childSessionId: 'retained-worker',
+    closeoutRef: { producerSessionId: 'retained-worker', executorCorrelationId: 'accepted-closeout', callEventSeq: 1, resultEventSeq: 2 },
+    reportRef, packet, sha256: diagnosticRecordDigest(packet),
+  })
   const capacity = ctx.get('subagents')!.diagnostics.capability()
   process.stdout.write(`${JSON.stringify({ type: 'diagnostic-worker-capacity', maxChildren: capacity?.maxChildren, maxConcurrentChildren: capacity?.maxConcurrentChildren })}\n`)
   if (!workflow) await ctx.get('subagents')!.diagnostics.prepare(prepared)

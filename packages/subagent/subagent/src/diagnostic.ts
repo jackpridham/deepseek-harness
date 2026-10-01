@@ -66,9 +66,13 @@ export class DiagnosticWorkflowError extends Error {
 function jsonObject(value: unknown): Record<string, JsonValue> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, JsonValue> : undefined
 }
-function workflowResultFits(value: unknown): boolean {
-  return Buffer.byteLength(JSON.stringify({ content: [{ type: 'text', text: JSON.stringify(value) }] }), 'utf8') <= 2 * 1024 * 1024 - 16 * 1024
+function workflowResultFits(value: unknown, inlineBytes: number | undefined): boolean {
+  const text = JSON.stringify(value)
+  return (inlineBytes === undefined || Buffer.byteLength(text, 'utf8') <= inlineBytes)
+    && Buffer.byteLength(JSON.stringify({ content: [{ type: 'text', text }] }), 'utf8') <= 2 * 1024 * 1024 - 16 * 1024
 }
+
+type WorkerUpdates = { updates: JsonValue[]; nextSeq: number; activeAssignmentIds: string[]; idle: boolean }
 
 /** Immutable identity returned by the authoritative executor bridge. */
 export interface DiagnosticBinding {
@@ -1254,18 +1258,25 @@ export class DiagnosticRuns {
     const page = (end: number) => ({
       reportRef, offset, nextOffset: end === text.length ? null : end, text: text.slice(offset, end), sha256: event.data.sha256,
     })
-    let low = offset, high = text.length
+    const inlineBytes = await root.ctx.tools.inlineTextBudget(root)
+    if (workflowResultFits(page(text.length), inlineBytes)) return page(text.length)
+    let low = offset, high = text.length - 1
     while (low < high) {
       const end = Math.ceil((low + high) / 2)
-      if (workflowResultFits(page(end))) low = end
+      if (workflowResultFits(page(end), inlineBytes)) low = end
       else high = end - 1
     }
-    if (low === offset
-      && offset < text.length) throw new DiagnosticWorkflowError('invalid_request', 'Report reference leaves no room for a page')
+    if (low === offset && (offset < text.length || !workflowResultFits(page(low), inlineBytes)))
+      throw new DiagnosticWorkflowError('invalid_request', 'Report reference leaves no room for a page')
     return page(low)
   }
 
-  private workerUpdates(root: Agent, input: z.infer<typeof diagnosticWaitSchema>): JsonValue {
+  private workerUpdates(
+    root: Agent,
+    input: z.infer<typeof diagnosticWaitSchema>,
+    inlineBytes: number | undefined,
+    render: (value: WorkerUpdates) => JsonValue,
+  ): WorkerUpdates {
     this.workflow(root)
     const assignments = this.assignments(root.session).filter(
       (record): record is AssignmentData & { childSessionId: string } => record.childSessionId !== undefined,
@@ -1316,13 +1327,15 @@ export class DiagnosticRuns {
         else if (end && end.state !== 'settled') add(end.state === 'cancelled' ? 'cancelled' : 'failed', { error: { code: 'assignment_rejected', message: `Worker ${record.assignmentId} ended without a completed report (${end.state})`, retry: 'never' } })
       }
       if (event.seq <= input.afterSeq) continue
-      if (batch.length && !workflowResultFits({ ...value(), updates: [...updates, ...batch], nextSeq: event.seq })) {
-        if (!updates.length) throw new DiagnosticWorkflowError('invalid_request', 'A complete worker update exceeds the transport envelope')
+      if (batch.length && !workflowResultFits(render({ ...value(), updates: [...updates, ...batch], nextSeq: event.seq }), inlineBytes)) {
+        if (!updates.length) throw new DiagnosticWorkflowError('invalid_request', 'A complete worker update exceeds the inline result budget')
         break
       }
       updates.push(...batch)
       nextSeq = event.seq
     }
+    if (!workflowResultFits(render(value()), inlineBytes))
+      throw new DiagnosticWorkflowError('invalid_request', 'Worker status metadata exceeds the inline result budget')
     return value()
   }
 
@@ -1341,13 +1354,13 @@ export class DiagnosticRuns {
     return { record, childId: SessionId(record.childSessionId) }
   }
 
-  private activeWorkers(root: Agent, ids: string[]) {
+  private activeWorkers(root: Agent, ids: string[], observedAt: number) {
     return ids.map((assignmentId) => {
       const { record, childId } = this.worker(root, assignmentId)
       const started = root.session.events.find(event => event.type === 'diagnostic/reservation'
         && event.data.assignmentId === assignmentId && event.data.childSessionId !== undefined)
       return { assignmentId, childSessionId: childId, role: record.assignment.role,
-        elapsedMs: Math.max(0, Date.now() - (started?.time ?? root.session.header.createdAt)) }
+        elapsedMs: Math.max(0, observedAt - (started?.time ?? root.session.header.createdAt)) }
     })
   }
 
@@ -1835,21 +1848,23 @@ export class DiagnosticRuns {
       signal.addEventListener('abort', abort, { once: true })
       const timer = checkpoint === undefined ? undefined : setTimeout(() => { wake.resolve() }, Math.max(0, checkpoint - Date.now()))
       try {
-        const result = this.workerUpdates(root, args) as {
-          updates: JsonValue[]
-          idle: boolean
-          nextSeq: number
-          activeAssignmentIds: string[]
+        const inlineBytes = await root.ctx.tools.inlineTextBudget(root)
+        const observedAt = Date.now()
+        const due = checkpoint !== undefined && observedAt >= checkpoint
+        const render = (result: WorkerUpdates) => {
+          if (!supervised) return result
+          const reason = result.updates.length ? 'updates' : result.idle ? 'idle' : 'checkpoint'
+          return { ...result, nextSeq: reason === 'checkpoint' ? args.afterSeq : result.nextSeq, reason,
+            ...(schedule ? { review: { ...schedule,
+              deadlineMs: schedule.anchorMs + schedule.nextReview * schedule.intervalMs, due } } : {}),
+            activeWorkers: this.activeWorkers(root, result.activeAssignmentIds, observedAt) }
         }
-        const due = checkpoint !== undefined && Date.now() >= checkpoint
+        const result = this.workerUpdates(root, args, inlineBytes, render)
         if (result.updates.length || result.idle || due || supervised && this.capturing.has(root.id)) {
           await this.flush(root.session)
           if (!supervised) return result
           const reason = result.updates.length ? 'updates' : result.idle ? 'idle' : 'checkpoint'
-          const response = { ...result, nextSeq: reason === 'checkpoint' ? args.afterSeq : result.nextSeq, reason,
-            ...(schedule ? { review: { ...schedule,
-              deadlineMs: schedule.anchorMs + schedule.nextReview * schedule.intervalMs, due } } : {}),
-            activeWorkers: this.activeWorkers(root, result.activeAssignmentIds) }
+          const response = render(result)
           if (!review) return response
           return this.transact(root.id, async () => {
             const prior = previousReview()

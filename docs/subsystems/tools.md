@@ -483,6 +483,13 @@ Tool registry and execution pipeline. Scoped registrations shadow globals; one v
 
 ```ts cordis-catalog
 /**
+ * Read the tightest configured plain-text formatting cap without formatting or spilling.
+ * @param agent - the caller agent whose formatter policies apply.
+ * @returns UTF-8 byte cap, or undefined when no formatter imposes one.
+ */
+inlineTextBudget(agent?: Agent): Promise<number | undefined>
+
+/**
  * Present the calling scope's tools in `mode` instead of the deployment
  * default. Nearest scope on the chain wins, so a preset's standing
  * declaration covers every agent joined under it.
@@ -577,9 +584,9 @@ executionMode(exec: ToolExecutionInput): ToolExecutionMode
 async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>
 ```
 
-Types: [ScopeKey](scope.md)
+Types: [Agent](core.md) · [ScopeKey](scope.md)
 
-Source: [`packages/core/tools/src/index.ts:789`](../../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:797`](../../packages/core/tools/src/index.ts)
 
 <a id="tools-events"></a>
 
@@ -604,7 +611,7 @@ A tool was registered or unregistered, or a scoped restriction changed (the avai
 'tools/change'(): void
 ```
 
-Source: [`packages/core/tools/src/index.ts:207`](../../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:215`](../../packages/core/tools/src/index.ts)
 
 <a id="toolscode-dispatch-log--waterfall"></a>
 
@@ -631,7 +638,7 @@ Allow a listener to replace content in the DURABLE LOG COPY of one `run_code` su
 
 Types: [ContentBlock](llm-streaming.md) · [Scoped](scope.md)
 
-Source: [`packages/core/tools/src/index.ts:189`](../../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:197`](../../packages/core/tools/src/index.ts)
 
 <a id="toolsexecute--waterfall"></a>
 
@@ -655,7 +662,28 @@ Around-dispatch waterfall for timeout, retry, or metrics. `next()` returns a nor
 
 Types: [Scoped](scope.md)
 
-Source: [`packages/core/tools/src/index.ts:163`](../../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:171`](../../packages/core/tools/src/index.ts)
+
+<a id="toolsinline-text-budget--waterfall"></a>
+
+#### `tools/inline-text-budget` — waterfall
+
+Query the maximum intact plain-text result size imposed by active formatters. Listeners delegate and return the smallest configured UTF-8 byte cap. Scope-filtered dispatch: only formatters visible to the requesting scope participate.
+
+```ts cordis-catalog
+/**
+ * Query the maximum intact plain-text result size imposed by active formatters.
+ * Listeners delegate and return the smallest configured UTF-8 byte cap.
+ * Scope-filtered dispatch: only formatters visible to the requesting scope participate.
+ * @param agent - the caller agent, or undefined for global calls.
+ * @mode waterfall
+ */
+'tools/inline-text-budget'(this: Scoped<ToolRuntime>, agent: Agent | undefined, next: () => Promise<number | undefined>): Promise<number | undefined>
+```
+
+Types: [Agent](core.md) · [Scoped](scope.md)
+
+Source: [`packages/core/tools/src/index.ts:150`](../../packages/core/tools/src/index.ts)
 
 <a id="toolspost-execute--waterfall"></a>
 
@@ -680,7 +708,7 @@ Accept, replace, enrich, or block a normalized dispatch result. `next()` accepts
 
 Types: [Scoped](scope.md)
 
-Source: [`packages/core/tools/src/index.ts:175`](../../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:183`](../../packages/core/tools/src/index.ts)
 
 <a id="toolspre-execute--waterfall"></a>
 
@@ -703,7 +731,7 @@ Allow, deny, or ask before dispatch. `next()` delegates to allow; missing approv
 
 Types: [Scoped](scope.md)
 
-Source: [`packages/core/tools/src/index.ts:152`](../../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:160`](../../packages/core/tools/src/index.ts)
 
 <a id="toolsresult--emit"></a>
 
@@ -724,5 +752,5 @@ Observe the frozen, lossless-JSON final outcome. Listener failures are contained
 
 Types: [Scoped](scope.md)
 
-Source: [`packages/core/tools/src/index.ts:197`](../../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:205`](../../packages/core/tools/src/index.ts)
 <!-- END GENERATED cordis-surface -->
