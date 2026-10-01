@@ -219,6 +219,7 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
       },
     },
     agentPresets: {
+      installProfile: request => Promise.resolve({ rpcId: request.rpcId, result: { ok: false as const, error: { code: 'agent-profile-invalid' as const, message: 'fixture', details: {} } } }),
       list(request: RpcRequest<{}>) {
         return Promise.resolve({
           rpcId: request.rpcId,

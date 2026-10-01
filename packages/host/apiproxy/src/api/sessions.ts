@@ -4,6 +4,7 @@
  * else references RequestPayload<'session.*'> / ResponseValue<'session.*'>.
  */
 
+import type { AgentProfileRef, AgentProfileState } from '@deepseek-ai/dsh-agent-presets/types'
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { AttachmentIdType, ImageAttachmentLimits, ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
@@ -406,6 +407,7 @@ export interface SessionsApi {
     cwd?: string
     sessionId?: SessionId
     agentPreset?: string
+    agentProfile?: AgentProfileRef
     instructions?: SessionInstructions
     mcpAttachment?: SessionMcpAttachment
     sessionPolicy?: SessionPolicyId
@@ -413,6 +415,7 @@ export interface SessionsApi {
   Promise<RpcResponse<{
     sessionId: SessionId
     agentPreset?: string
+    agentProfile?: AgentProfileState
     policy?: SessionPolicyAttestation
     instructionsRevision?: number
     mcpAttachment?: SessionMcpAttachmentState

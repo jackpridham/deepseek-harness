@@ -6,9 +6,10 @@
  * business errors are always 200 + ServerResponse.
  */
 
-import { randomUUID } from 'node:crypto'
+import { randomUUID, timingSafeEqual } from 'node:crypto'
 import type { z } from 'zod'
 import type { ApiProxy, MuxFrame, HostFrame } from '../api/index.ts'
+import { agentPresetInstallProfileRequestSchema } from '../api/agent-profiles.schema.ts'
 import { sessionLogQuerySchema } from '../api/downloads.schema.ts'
 import type { RequestPayload, ResponseValue, RpcMethodMap } from '../api/rpc-map.ts'
 import type { ClientRequest, RpcError, RpcRequest, RpcResponse, ServerRequest, ServerResponse } from '../api/rpc.ts'
@@ -134,6 +135,7 @@ const UNARY_ROUTES: UnaryRoutes = {
   'workspace.archiveSession': { schema: workspaceArchiveSessionRequestSchema, invoke: (api, r) => api.workspace.archiveSession(r) },
   'workspace.deleteSession': { schema: workspaceDeleteSessionRequestSchema, invoke: (api, r) => api.workspace.deleteSession(r) },
   'skill.list': { schema: skillListRequestSchema, invoke: (api, r) => api.skills.list(r) },
+  'agentPreset.installProfile': { schema: agentPresetInstallProfileRequestSchema, invoke: (api, r) => api.agentPresets.installProfile(r) },
   'agentPreset.list': { schema: agentPresetListRequestSchema, invoke: (api, r) => api.agentPresets.list(r) },
   'agentPreset.select': { schema: agentPresetSelectRequestSchema, invoke: (api, r) => api.agentPresets.select(r) },
   'agentPreset.read': { schema: agentPresetReadRequestSchema, invoke: (api, r) => api.agentPresets.read(r) },
@@ -294,6 +296,18 @@ export function toFetchHandler(api: ApiProxy): { fetch: typeof fetch } {
 
       if (req.method !== 'POST' || !path.startsWith('/api/')) {
         return new Response('not found', { status: 404 })
+      }
+
+      if (path === '/api/agentPreset.installProfile') {
+        const token = process.env.DSH_PROFILE_INSTALL_TOKEN
+        const supplied = req.headers.get('authorization') ?? ''
+        const expected = `Bearer ${token ?? ''}`
+        if (!token || req.headers.has('origin') || req.headers.has('referer')
+          || [...req.headers.keys()].some(name => name.startsWith('sec-fetch-'))
+          || Buffer.byteLength(supplied) !== Buffer.byteLength(expected)
+          || !timingSafeEqual(Buffer.from(supplied), Buffer.from(expected))) {
+          return new Response('forbidden', { status: 403 })
+        }
       }
 
       // Cross-site write fence: browsers send "simple" POSTs (text/plain,

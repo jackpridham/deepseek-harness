@@ -195,6 +195,9 @@ export class FakeApiClient implements IApiClient {
 
 
   readonly agentPresets: IApiClient['agentPresets'] = {
+    installProfile: () => Promise.resolve({ rpcId: RpcId('profile-fixture'), result: {
+      ok: false, error: { code: 'agent-profile-invalid', message: 'Profile installation requires a trusted backend', details: {} },
+    } }),
     list: (payload: unknown) => this.record('agentPreset.list', payload, Promise.resolve(ok({ presets: [], authorable: false, hasDocument: false }))),
     select: (payload: { agentPreset: string }) =>
       this.record('agentPreset.select', payload, Promise.resolve(ok({ agentPreset: payload.agentPreset }))),

@@ -58,6 +58,7 @@ describe('session policy assembled snapshot', () => {
         },
         "runtimeContextEvaluations": 0,
         "sessionPolicies": [
+          "managed-agent-profile-v1",
           "test-isolated-v1",
         ],
         "toolSchemas": [],

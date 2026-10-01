@@ -149,6 +149,30 @@ describe('denyAllTools()', () => {
 })
 
 describe('restrict()', () => {
+  it('applies a final allowlist to own, inherited and later tools and restores it on disposal', async () => {
+    const ctx = await mount()
+    try {
+      const { scope, key } = await mintAgentScope(ctx, 'profile')
+      ctx.tools.register(tool('shell'))
+      scope.ctx.tools.register(tool('invoice'))
+      const names = ['invoice']
+      const restore = scope.ctx.tools.allowOnlyTools(names)
+      names.push('shell')
+      scope.ctx.tools.register(tool('late'))
+      expect(ctx.tools.schemas(key).map(tool => tool.name)).toEqual(['invoice'])
+      expect(await run(ctx, 'invoice', key)).toBe('ran:invoice')
+      expect(await run(ctx, 'shell', key)).toBe('Error: unknown tool "shell"')
+      expect(await run(ctx, 'late', key)).toBe('Error: unknown tool "late"')
+      expect(await run(ctx, 'shell')).toBe('ran:shell')
+      const deny = scope.ctx.tools.allowOnlyTools([])
+      expect(ctx.tools.schemas(key)).toEqual([])
+      deny()
+      restore()
+      expect(ctx.tools.schemas(key).map(tool => tool.name)).toEqual(['shell', 'invoice', 'late'])
+      expect(() => ctx.tools.allowOnlyTools([])).toThrow('requires a scoped context')
+    } finally { await ctx.fiber.dispose() }
+  })
+
   it('masks global tools, merges scope-local tools afterward, and keeps assembly with execution', async () => {
     const ctx = await mount()
     const { scope, key } = await mintAgentScope(ctx, 'a')

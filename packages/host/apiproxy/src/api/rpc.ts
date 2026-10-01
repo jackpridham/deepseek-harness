@@ -53,6 +53,9 @@ export interface RpcErrorDetailsMap {
   'session-policy-unavailable': {}
   'session-policy-conflict': { sessionId: SessionId; requestedMode: string; existingMode: string }
   'session-policy-invalid': {}
+  'agent-profile-invalid': {}
+  'agent-profile-conflict': {}
+  'agent-profile-not-found': {}
   'mcp-attachment-conflict': {}
   'mcp-attachment-required': {}
   'mcp-attachment-failed': {}

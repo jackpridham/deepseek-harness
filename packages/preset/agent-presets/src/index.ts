@@ -63,6 +63,8 @@ export {
   PresetNotWritableError, readComposition, writableRoot,
 } from './authoring.ts'
 export { resolveSessionPreset, type PresetBearingSession } from './session.ts'
+export { AgentProfileError, agentProfileDigest, installAgentProfile, loadAgentProfile, parseAgentProfile } from './profiles.ts'
+export type { AgentProfileDefinition, AgentProfileRef, AgentProfileState } from './types.ts'
 export { PresetMountError, UnknownPresetError } from './preset.ts'
 export type { AgentPreset, Config, PresetRoot, PresetTrust } from './preset.ts'
 
@@ -164,7 +166,7 @@ export class AgentPresets extends Service {
     // does that today — the Web surface mounts in `setup` and children join
     // through `composeFrom` before publication.
     ctx.on('agent/created', ({ agent }) => {
-      if (this.resolvedRoots.length === 0) return
+      if (this.resolvedRoots.length === 0 || ctx.get('agents')?.policyFor(agent.id)?.presets === false) return
       if (this.composedPreset(agent.ctx) !== undefined) return
       ctx.logger.warn(
         `agent "${agent.id}" was published without joining an agent preset; `

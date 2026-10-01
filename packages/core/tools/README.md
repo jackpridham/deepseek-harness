@@ -131,6 +131,8 @@ Under `code` — not `both` — the transport is also the only entry the model m
 
 The agent loop groups consecutive `parallel` calls into a bounded rolling pool and treats each `exclusive` call as an ordering barrier. Only dispatch/body overlaps; policy, durable results, and context retain model order. Code Mode bindings reuse the same classification through the bridge's own pool. The [parallel tool-call Agent Note](../../../.agents/notes/implemented/feature/2026-07-10-parallel-tool-call-execution.md) owns the shipped declarations and rationale.
 
+`allowOnlyTools(names)` applies a final scope-local allowlist to inherited, local and later registrations, including the Code Mode transport. Both schemas and dispatch enforce it; multiple allowlists intersect, and disposing the registration removes its restriction. Unlike `restrict`, local tools receive no exemption.
+
 ## Model Experience
 
 ### Normal tool schemas

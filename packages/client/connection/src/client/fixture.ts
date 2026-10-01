@@ -2845,6 +2845,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
       },
     },
     agentPresets: {
+      installProfile: request => err(request, { code: 'agent-profile-invalid', message: 'Profile installation requires a trusted backend', details: {} }),
       // Both trusts appear, because a surface must present a locally authored
       // preset differently from one the deployment vetted.
       list: request => ok(request, {
@@ -3273,6 +3274,7 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'workspace.archiveSession': return this.api.workspace.archiveSession(request)
       case 'workspace.deleteSession': return this.api.workspace.deleteSession(request)
       case 'skill.list': return this.api.skills.list(request)
+      case 'agentPreset.installProfile': return this.api.agentPresets.installProfile(request)
       case 'agentPreset.list': return this.api.agentPresets.list(request)
       case 'agentPreset.select': return this.api.agentPresets.select(request)
       case 'agentPreset.read': return this.api.agentPresets.read(request)

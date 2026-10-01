@@ -146,6 +146,19 @@ Source: [`packages/core/agent/src/types.ts:77`](../packages/core/agent/src/types
 
 Source: [`packages/preset/agent-presets/src/session.ts:26`](../packages/preset/agent-presets/src/session.ts)
 
+### `agent-profile/*`
+
+<a id="agent-profileselected--log-only"></a>
+
+#### `agent-profile/selected` — log-only
+
+```ts persistence-catalog
+/** Profile identity and admitted tools committed before the first turn. */
+'agent-profile/selected': AgentProfileState
+```
+
+Source: [`packages/preset/agent-presets/src/types.ts:28`](../packages/preset/agent-presets/src/types.ts)
+
 ### `approval/*`
 
 <a id="approvalasked--log-only"></a>

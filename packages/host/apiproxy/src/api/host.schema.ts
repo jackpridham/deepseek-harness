@@ -28,6 +28,7 @@ export const hostDescribeValueSchema = z.object({
   }).optional(),
   instructionVersions: z.array(z.number()).optional(),
   mcpAttachmentVersions: z.array(z.number()).optional(),
+  agentProfileVersions: z.array(z.number()).optional(),
   version: z.string(),
   cwd: z.string(),
   provider: z.string().optional(),

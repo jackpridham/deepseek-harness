@@ -130,6 +130,10 @@ The Loader writes a tree back to its source file whenever it decides the config 
 
 The mounted subtree therefore overrides `write()` as a no-op. Nothing in this package writes a composition; authoring one is a separate, explicit operation.
 
+## Managed assistant definitions
+
+The package also owns immutable declarative profiles in `$DSH_HOME/.agent-profiles/`. `installAgentProfile` validates and atomically publishes versioned prompt content; `loadAgentProfile` verifies its digest on every read. These definitions contain no Cordis rows and are separate from editable presets. The [gateway profile reference](../../host/apiproxy/agent-profiles.md) owns the installation and session protocol.
+
 ## Trust
 
 Presets are compositions, so a preset is exactly as privileged as the plugins it names. A `user` preset — authored by a person or by an agent — carries the same trust as shell access; the `trust` field exists so consumers can present that difference, not to enforce it.

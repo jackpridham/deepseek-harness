@@ -528,6 +528,14 @@ restrict(filter: ToolRestriction): () => void
 denyAllTools(): () => void
 
 /**
+ * Limit every visible and executable tool, including later local registrations.
+ * Restrictions intersect and also cover the Code Mode transport.
+ * @param names - exact admitted tool names, captured at registration.
+ * @returns the disposer lifting this scoped restriction.
+ */
+allowOnlyTools(names: readonly string[]): () => void
+
+/**
  * Register a monotonic guard after the extensible `tools/pre-execute`
  * waterfall. A plain-context guard applies globally; one registered through
  * `agent.ctx` applies only to that agent. Any matching guard may deny by
@@ -586,7 +594,7 @@ async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>
 
 Types: [Agent](core.md) · [ScopeKey](scope.md)
 
-Source: [`packages/core/tools/src/index.ts:797`](../../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:799`](../../packages/core/tools/src/index.ts)
 
 <a id="tools-events"></a>
 

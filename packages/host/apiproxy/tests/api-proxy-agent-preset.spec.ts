@@ -850,7 +850,7 @@ describe('restricted session policy', () => {
       result: { ok: true, value: created.result.ok ? created.result.value.policy : undefined },
     })
     expect(await api.host.describe(request({}))).toMatchObject({
-      result: { ok: true, value: { sessionPolicies: [policyId] } },
+      result: { ok: true, value: { sessionPolicies: [policyId, 'managed-agent-profile-v1'] } },
     })
   })
 

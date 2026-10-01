@@ -76,17 +76,21 @@ Version 1 accepts `systemPrompt.base` as `{mode:"inherit"}` or `{mode:"replace",
 
 A deployment may provide `ctx.modelControls` using the [ModelControls interface](src/api/models.ts). The `vortex.models` RPCs forward read-only `snapshot` and `operationStatus` requests and explicit `operation` load/unload requests to that provider. Results report backend-observed phase, outcome, correlation, and optional measured progress; the gateway does not load models itself.
 
+## Managed assistant profiles
+
+Trusted application backends install immutable, declarative profiles through `agentPreset.installProfile` and select them through `session.create.agentProfile`. The [profile reference](agent-profiles.md) defines service authentication, digest encoding, MCP-only composition and reconnect verification.
+
 ## Session MCP attachment
 
 `session.create` accepts one caller-supplied HTTP MCP server. See the [version 1 attachment reference](session-mcp.md) for capability discovery, exact requests, lifecycle and errors.
 
 ## Model Experience
 
-None, as the package defines the client↔host wire contract and carriers; nothing here reaches a model request.
+None, as the gateway installs caller-owned instructions and MCP tools through their owning services and defines no model-facing prose.
 
 #### KV Cache effect
 
-None; this package neither assembles nor sends a provider request.
+Managed profile instructions remain stable across turns and reconnects. A new profile version creates a different prompt prefix only for sessions selecting it.
 
 ## Known Limitations and Deferred Work
 

@@ -724,6 +724,7 @@ class ToolLayer implements ScopeLayer {
   readonly restrictions = new AnonymousEntries<CompiledToolRestriction>()
   /** Final capability mask for a scope that must expose no tool at all. */
   readonly denyAll = new AnonymousEntries<true>()
+  readonly allowOnly = new AnonymousEntries<ReadonlySet<string>>()
   readonly guards = new AnonymousEntries<ToolGuard>()
   /**
    * Presentation this scope's agent declared for itself, shadowing the
@@ -740,7 +741,8 @@ class ToolLayer implements ScopeLayer {
 
   /** Whether every contribution table in this aggregate layer is empty. */
   isEmpty(): boolean {
-    return this.tools.isEmpty() && this.restrictions.isEmpty() && this.denyAll.isEmpty() && this.guards.isEmpty()
+    return this.tools.isEmpty() && this.restrictions.isEmpty() && this.denyAll.isEmpty()
+      && this.allowOnly.isEmpty() && this.guards.isEmpty()
       && this.mode === undefined
   }
 
@@ -1134,6 +1136,18 @@ export class ToolRuntime extends Service {
   }
 
   /**
+   * Limit every visible and executable tool, including later local registrations.
+   * Restrictions intersect and also cover the Code Mode transport.
+   * @param names - exact admitted tool names, captured at registration.
+   * @returns the disposer lifting this scoped restriction.
+   */
+  allowOnlyTools(names: readonly string[]): () => void {
+    if (scopeOf(this.ctx) === undefined) throw new Error('tools.allowOnlyTools() requires a scoped context')
+    const allowed = new Set(names)
+    return this.layers.effect(this.ctx, layer => layer.allowOnly.append(allowed), { label: 'tools.allowOnlyTools()' })
+  }
+
+  /**
    * Register a monotonic guard after the extensible `tools/pre-execute`
    * waterfall. A plain-context guard applies globally; one registered through
    * `agent.ctx` applies only to that agent. Any matching guard may deny by
@@ -1228,6 +1242,11 @@ export class ToolRuntime extends Service {
     }
     if (this.modeFor(scope) !== 'native') {
       visible.set(RUN_CODE_NAME, this.requireCodeTransport())
+    }
+    for (const layer of layers) {
+      for (const allowed of layer.allowOnly.values()) {
+        for (const name of visible.keys()) if (!allowed.has(name)) visible.delete(name)
+      }
     }
     return { visible, knownNames, restrictableNames }
   }

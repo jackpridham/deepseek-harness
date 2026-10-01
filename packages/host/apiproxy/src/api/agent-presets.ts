@@ -9,6 +9,7 @@
  * path), copying and deleting still rearrange what the deployment offers.
  */
 
+import type { AgentProfileDefinition, AgentProfileRef } from '@deepseek-ai/dsh-agent-presets/types'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { RpcRequest, RpcResponse } from './rpc.ts'
 
@@ -44,6 +45,10 @@ export interface AgentPresetEntry {
 
 /** agent-preset-domain unary methods (the map key agentPreset.* of RpcMethodMap). */
 export interface AgentPresetsApi {
+  /** Install immutable declarative content; HTTP requires the backend service bearer token and refuses browser requests. */
+  installProfile(request: RpcRequest<{ profile: AgentProfileDefinition; digest: string }>):
+  Promise<RpcResponse<{ profile: AgentProfileRef; created: boolean }>>
+
   /**
    * Lists every preset the deployment currently supplies, in root-precedence
    * order — the roots as configured, each root's own presets sorted by id,

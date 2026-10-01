@@ -48,6 +48,7 @@ import {
   workspaceRenameValueSchema,
 } from '../api/workspace.schema.ts'
 import { skillListValueSchema } from '../api/skills.schema.ts'
+import { agentPresetInstallProfileValueSchema } from '../api/agent-profiles.schema.ts'
 import {
   agentPresetCopyValueSchema, agentPresetListValueSchema, agentPresetOpenDocumentValueSchema,
   agentPresetReadValueSchema, agentPresetRemoveValueSchema, agentPresetSelectValueSchema,
@@ -142,6 +143,7 @@ export interface IApiClient {
     list(payload: RequestPayload<'skill.list'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'skill.list'>>>
   }
   agentPresets: {
+    installProfile(payload: RequestPayload<'agentPreset.installProfile'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'agentPreset.installProfile'>>>
     list(payload: RequestPayload<'agentPreset.list'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'agentPreset.list'>>>
     select(payload: RequestPayload<'agentPreset.select'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'agentPreset.select'>>>
     read(payload: RequestPayload<'agentPreset.read'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'agentPreset.read'>>>
@@ -230,6 +232,7 @@ const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseV
   'workspace.archiveSession': workspaceArchiveSessionValueSchema,
   'workspace.deleteSession': workspaceDeleteSessionValueSchema,
   'skill.list': skillListValueSchema,
+  'agentPreset.installProfile': agentPresetInstallProfileValueSchema,
   'agentPreset.list': agentPresetListValueSchema,
   'agentPreset.select': agentPresetSelectValueSchema,
   'agentPreset.read': agentPresetReadValueSchema,
@@ -504,6 +507,7 @@ export abstract class AbstractApiClient implements IApiClient {
   // the whole gateway, and with it the host `Context` merges, into every
   // Client program that imports this carrier.
   readonly agentPresets: IApiClient['agentPresets'] = {
+    installProfile: (payload, signal) => this.callUnary('agentPreset.installProfile', payload, signal),
     list: (payload, signal) => this.callUnary('agentPreset.list', payload, signal),
     select: (payload, signal) => this.callUnary('agentPreset.select', payload, signal),
     read: (payload, signal) => this.callUnary('agentPreset.read', payload, signal),
