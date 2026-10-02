@@ -122,7 +122,7 @@ function testViewDefinition(): ConversationViewDefinition<ChatConversationViewNo
   }
 }
 
-const TEST_EVENT_DEFINITION: ConversationNodeDefinition<TestEventState> = {
+const TEST_EVENT_DEFINITION = {
   kind: 'runtime-test-event',
   target: 'chat',
   match: event => ({ id: String(event.seq), role: 'start' }),
@@ -146,7 +146,7 @@ const TEST_EVENT_DEFINITION: ConversationNodeDefinition<TestEventState> = {
       data: context.state,
     }
   },
-}
+} satisfies ConversationNodeDefinition<TestEventState>
 
 const TEST_CONVERSATION: ConversationRuntime = {
   events: {
@@ -377,23 +377,28 @@ describe('live event path', () => {
 describe('paging', () => {
   function hiddenPagesSession() {
     const api = new FakeApiClient()
+    const eventDefinition: ConversationNodeDefinition<TestEventState> = {
+      ...TEST_EVENT_DEFINITION,
+      match: event => event.type === 'session/instructions' ? null : TEST_EVENT_DEFINITION.match(event),
+      buildViewNode: (context) => {
+        const node = TEST_EVENT_DEFINITION.buildViewNode(context)
+        return node && context.start?.event.type === 'turn/end' ? { ...node, kind: 'turn-tail' } : node
+      },
+    }
     const session = new Session(SID, api, fakeRemote(), {
       conversation: {
         ...TEST_CONVERSATION,
         events: {
           ...TEST_CONVERSATION.events,
-          entries: () => [{ ...TEST_EVENT_DEFINITION, match: event => event.type === 'permission/preset'
-            ? null : TEST_EVENT_DEFINITION.match(event),
-          buildViewNode: (context) => {
-            const node = TEST_EVENT_DEFINITION.buildViewNode(context)
-            return node && context.start?.event.type === 'turn/end' ? { ...node, kind: 'turn-tail' } : node
-          } }],
-        },
+          entries: () => [eventDefinition],
+        } as unknown as ConversationRuntime['events'],
       },
     })
     return { api, session }
   }
-  const hidden = (seq: number): SessionEvent => ({ seq, time: seq, type: 'permission/preset', data: { preset: 'full-access' } }) as SessionEvent
+  const hidden = (seq: number): SessionEvent => ({
+    seq, time: seq, type: 'session/instructions', data: { revision: 1, instructions: { version: 1 } },
+  })
 
   it('opens through bookkeeping-only pages without skipping cursors', async () => {
     const { api, session } = hiddenPagesSession()
@@ -403,7 +408,8 @@ describe('paging', () => {
     }
     await session.open()
     expect(chatSeqs(session.getSnapshot())).toEqual([0])
-    expect(api.callsOf('session.history').map(call => call.beforeSeq)).toEqual([undefined, ...Array.from({ length: 41 }, (_, i) => 41 - i)])
+    const cursors = api.callsOf('session.history').map(call => (call as { beforeSeq?: number }).beforeSeq)
+    expect(cursors).toEqual([undefined, ...Array.from({ length: 41 }, (_, i) => 41 - i)])
     expect(session.getSnapshot().loadingOlder).toBe(false)
   })
 
@@ -460,7 +466,8 @@ describe('paging', () => {
 
   it('retries a failed older page without losing the traversed window', async () => {
     const { api, session } = hiddenPagesSession()
-    api.onHistory = payload => payload.beforeSeq === undefined ? histResponse([hidden(2)], true) : Promise.resolve(err('TRANSPORT'))
+    api.onHistory = payload => payload.beforeSeq === undefined ? histResponse([hidden(2)], true)
+      : Promise.resolve(err({ code: 'internal', message: 'History unavailable', details: {} }))
     await session.open()
     expect(session.getSnapshot().openState).toBe('open')
     api.onHistory = () => histResponse([ev.user(0, 'recovered'), hidden(1)])
