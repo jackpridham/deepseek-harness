@@ -391,7 +391,7 @@ describe('paging', () => {
         events: {
           ...TEST_CONVERSATION.events,
           entries: () => [eventDefinition],
-        } as unknown as ConversationRuntime['events'],
+        },
       },
     })
     return { api, session }
