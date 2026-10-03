@@ -99,7 +99,7 @@ export {
 } from './json-schema.ts'
 
 export type { JsonValue } from '@deepseek-ai/dsh-session'
-export type { CodeDispatchEventData, CodeDispatchStartEventData } from './types.ts'
+export type { CodeDispatchEventData, CodeDispatchStartEventData, ResultReference, ResultProvenance, ResultBinding, ResultTransferEventData } from './types.ts'
 
 export { CodeRunFailedError, RUN_CODE_NAME } from './code-mode.ts'
 export { jsonSchemaToTs, renderToolsSdk } from './ts-types.ts'
@@ -203,6 +203,16 @@ declare module '@deepseek-ai/cordis' {
      * @mode emit
      */
     'tools/result'(this: Scoped<ToolRuntime>, exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): undefined
+    /**
+     * Persist canonical output before the agent loop logs and exposes model content.
+     * This runs after finalization, once in model order; it must never replay a tool.
+     * Scope-filtered dispatch: keyed by exec.agent. Failures stop the loop with the original call retained.
+     * @param exec - finalized root execution.
+     * @param result - authoritative success or failure, including canonical value on success.
+     * @mode waterfall
+     */
+    'tools/commit-content'(this: Scoped<ToolRuntime>, exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>, next: () => Promise<ContentBlock[]>): Promise<ContentBlock[]>
+
     /**
      * A tool was registered or unregistered, or a scoped restriction changed
      * (the available tool set changed — possibly for one scope only). An
@@ -563,7 +573,7 @@ function snapshotToolValue(toolName: string, candidate: unknown): JsonValue {
 /** Successful canonical tool execution, including its Native/model projection. */
 export interface ToolExecutionSuccess {
   readonly isError: false
-  /** Execution-local canonical value; deliberately omitted from durable events. */
+  /** Execution-local canonical value; optional commit-content consumers persist it privately before model exposure. */
   readonly value: JsonValue
   readonly content: ContentBlock[]
   readonly error?: never
@@ -854,7 +864,7 @@ export class ToolRuntime extends Service {
    * @returns UTF-8 byte cap, or undefined when no formatter imposes one.
    */
   inlineTextBudget(agent?: Agent): Promise<number | undefined> {
-    return this.ctx.waterfall(scopeTarget(this, agent), 'tools/inline-text-budget', agent, async () => undefined)
+    return this.ctx.waterfall(scopeTarget(this, agent), 'tools/inline-text-budget', agent, () => Promise.resolve(undefined))
   }
 
   /**

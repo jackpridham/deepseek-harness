@@ -146,6 +146,10 @@ Indirectly, through the plugins a standing composition registers, which own ever
 
 Prefix-stable for the life of an agent: a composition is installed once, before the agent is published and therefore before its first request, and is never re-read while the agent runs. Choosing a different preset for a new session establishes a different prefix for that session alone and cannot invalidate reuse for any session already running.
 
+## Canonical result transfer
+
+Profile v3 declares an MCP subset and bounded result-transfer retention. It preserves earlier profiles and requires no executable module. See [canonical result transfer](../../host/apiproxy/result-transfer.md) for the profile digest, identity binding and receipts.
+
 ## Known Limitations and Deferred Work
 
 - **A preset outside the writable root is discoverable but not deletable** — `remove()` refuses anything that does not live under the FIRST `user` root, so a deployment that configures its own writable root while leaving `includeUserRoot` on lists the harness-home presets, mounts them, and then answers "it does not live under the writable preset root" for every delete. The roster carries one writable root by design; a deployment that wants only its own sets `includeUserRoot: false`.

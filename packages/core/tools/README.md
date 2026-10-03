@@ -192,6 +192,10 @@ Arguments, results, and additional context are data-dependent and resent until c
 
 Append-only; newly visible content follows the reusable request prefix and does not invalidate existing KV-cache entries.
 
+## Canonical result transfer
+
+The agent loop awaits `tools/commit-content` after finalization, before logging model-visible results. A scoped consumer can persist canonical values and append durable reference notices; it must never replay tools. See [canonical result transfer](../../host/apiproxy/result-transfer.md).
+
 ## Known Limitations and Deferred Work
 
 - **Concurrency policy is not an event gate** — `executionMode()` reads the resolved tool definition directly; plugins can only declare a classifier on definitions they own.

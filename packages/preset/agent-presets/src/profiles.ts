@@ -36,6 +36,16 @@ export function parseAgentProfile(input: unknown): AgentProfileDefinition {
     || Buffer.byteLength(value.systemPrompt, 'utf8') > 65536) invalid('Profile requires 1–65536 UTF-8 bytes of systemPrompt')
   const common = { id: value.id, version: value.version as string, systemPrompt: value.systemPrompt }
   if (value.schemaVersion === 1 && value.tools === 'session-mcp') return { schemaVersion: 1, ...common, tools: 'session-mcp' }
+  if (value.schemaVersion === 3) {
+    const tools = object(value.tools, ['mcp', 'resultTransfer'])
+    const limits = object(tools.resultTransfer, ['version', 'maxResults', 'maxBytes', 'ttlSeconds'])
+    if (limits.version !== 1 || !Number.isInteger(limits.maxResults) || Number(limits.maxResults) < 1 || Number(limits.maxResults) > 128
+      || !Number.isInteger(limits.maxBytes) || Number(limits.maxBytes) < 1024 || Number(limits.maxBytes) > 8388608
+      || !Number.isInteger(limits.ttlSeconds) || Number(limits.ttlSeconds) < 1 || Number(limits.ttlSeconds) > 86400) invalid('Invalid result transfer limits')
+    return { schemaVersion: 3, ...common, tools: { mcp: names(tools.mcp, true), resultTransfer: {
+      version: 1, maxResults: Number(limits.maxResults), maxBytes: Number(limits.maxBytes), ttlSeconds: Number(limits.ttlSeconds),
+    } } }
+  }
   if (value.schemaVersion !== 2) invalid('Unsupported profile schemaVersion or tools')
   const tools = object(value.tools, ['native', 'mcp'])
   const native = object(tools.native, ['source', 'toolNames'])
@@ -155,4 +165,13 @@ export async function nativeToolStateDirectory(ref: AgentProfileRef, sessionId: 
   await mkdir(path, { mode: 0o700, recursive: true })
   await assertDirectory(path)
   return path
+}
+
+/**
+ * Return the host-owned canonical result directory for a session; session purge retires it.
+ * @param sessionId - owning session identity, never a filesystem path.
+ * @returns a private path beneath DSH_HOME.
+ */
+export function resultStoreDirectory(sessionId: string): string {
+  return dshHomePath('.tool-results', createHash('sha256').update(sessionId).digest('hex'))
 }

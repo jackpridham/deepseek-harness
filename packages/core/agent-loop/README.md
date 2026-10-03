@@ -139,6 +139,10 @@ One fixed error result per skipped call remains in history until compaction shad
 
 Append-only; each synthetic result follows the reusable request prefix and does not invalidate existing KV-cache entries.
 
+## Canonical result transfer
+
+Root tool results pass through the awaited `tools/commit-content` hook in model order before their content is appended. This gives private canonical storage a persistence point before references become model-visible; ordinary profiles retain their existing content.
+
 ## Known Limitations and Deferred Work
 
 - **Classification is unary** — calls whose safety depends on comparing siblings or resources must remain exclusive ([rationale](../../../.agents/notes/implemented/feature/2026-07-10-parallel-tool-call-execution.md)).

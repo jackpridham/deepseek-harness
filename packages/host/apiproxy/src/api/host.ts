@@ -69,6 +69,8 @@ export interface HostApi {
     mcpAttachmentVersions?: number[]
     /** Enabled profile versions accepted by installProfile and session.create. */
     agentProfileVersions?: number[]
+    /** Supported generic canonical-result transfer protocol versions. */
+    resultTransferVersions?: number[]
     version: string
     cwd: string
     provider?: string

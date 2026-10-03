@@ -78,3 +78,17 @@ it('does not follow a symlink occupying a version slot', async () => {
   await expect(installAgentProfile(profile, installed.profile.digest)).rejects.toThrow()
   expect(await readFile(other, 'utf8')).toBe('untouched')
 })
+
+
+it('admits declarative result transfer without native-code authority and validates immutable limits', async () => {
+  const profile3: AgentProfileDefinition = { ...profile, schemaVersion: 3, tools: { mcp: ['mcp__api__search'], resultTransfer: { version: 1, maxResults: 16, maxBytes: 65536, ttlSeconds: 3600 } } }
+  const receipt = await installAgentProfile(profile3, agentProfileDigest(profile3))
+  expect(await loadAgentProfile(receipt.profile)).toEqual(profile3)
+  for (const limits of [{ version: 2 }, { maxResults: 129 }, { maxBytes: 999 }, { ttlSeconds: 86401 }, { maxResults: 1.5 }]) {
+    expect(() => parseAgentProfile({
+      ...profile3, tools: { ...profile3.tools, resultTransfer: { ...profile3.tools.resultTransfer, ...limits } },
+    })).toThrow()
+  }
+  expect(() => parseAgentProfile({ ...profile3, tools: { ...profile3.tools, mcp: ['bash'] } })).toThrow()
+  expect(() => parseAgentProfile({ ...profile3, tools: { ...profile3.tools, native: {} } })).toThrow()
+})

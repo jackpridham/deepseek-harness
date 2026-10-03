@@ -410,6 +410,8 @@ export interface SessionsApi {
     agentProfile?: AgentProfileRef
     /** Required for profile v2; stable backend-verified identity, never model input or credentials. */
     nativeToolBinding?: Record<string, string>
+    /** Required for profile v3 on creation and resume; authenticated caller identity. */
+    resultTransferBinding?: { tenant: string; user: string; conversation: string }
     instructions?: SessionInstructions
     mcpAttachment?: SessionMcpAttachment
     sessionPolicy?: SessionPolicyId

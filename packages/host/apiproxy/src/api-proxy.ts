@@ -3,8 +3,9 @@
  * narrow RpcRequest<P> and echoes request.rpcId on the RpcResponse<T>.
  */
 
+import { retireResultStore } from './result-transfer.ts'
 import { randomUUID } from 'node:crypto'
-import { AGENT_PROFILE_POLICY, NATIVE_PROFILE_POLICY, assertNativeToolBinding, assertSessionProfile, mountSessionProfile, registerAgentProfilePolicy, sessionProfileState } from './session-profile.ts'
+import { AGENT_PROFILE_POLICY, NATIVE_PROFILE_POLICY, RESULT_PROFILE_POLICY, assertResultTransferBinding, assertNativeToolBinding, assertSessionProfile, mountSessionProfile, registerAgentProfilePolicy, sessionProfileState } from './session-profile.ts'
 import type { AgentProfileRef } from '@deepseek-ai/dsh-agent-presets/types'
 import { assertMcpAttachment, mountMcpAttachment, mcpAttachmentState, SessionMcpError } from './session-mcp.ts'
 import type { SessionMcpAttachment } from './api/sessions.ts'
@@ -1363,6 +1364,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     // the same request can repair the partial idempotent detach on retry.
     await ctx.workspaceRegistry.purgeSessions(orderedIds)
     for (const id of orderedIds) {
+      await retireResultStore(id)
       if (headers.has(id)) await ctx.sessionPersistence.delete(id)
       // A later sibling delete may fail. Publish each durable commit now so
       // every connected client forgets records already gone before a retry.
@@ -1530,15 +1532,15 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
    */
   async function composeAgent(
     presetId: string | undefined, sessionPolicy?: SessionPolicyId, mcpAttachment?: SessionMcpAttachment,
-    agentProfile?: AgentProfileRef, nativeToolBinding?: Record<string, string>,
+    agentProfile?: AgentProfileRef, nativeToolBinding?: Record<string, string>, resultTransferBinding?: Record<string, string>,
   ): Promise<{
     agentPreset?: string
     setup: (agentCtx: Context) => Promise<void>
   }> {
-    if (sessionPolicy === AGENT_PROFILE_POLICY || sessionPolicy === NATIVE_PROFILE_POLICY) {
+    if (sessionPolicy === AGENT_PROFILE_POLICY || sessionPolicy === NATIVE_PROFILE_POLICY || sessionPolicy === RESULT_PROFILE_POLICY) {
       return { setup: async (agentCtx: Context) => {
         installSelection(agentCtx)
-        await mountSessionProfile(agentCtx, agentProfile, mcpAttachment, nativeToolBinding)
+        await mountSessionProfile(agentCtx, agentProfile, mcpAttachment, nativeToolBinding, resultTransferBinding)
       } }
     }
     if (sessionPolicy !== undefined && !ctx.agents.requirePolicy(sessionPolicy).presets) {
@@ -1971,6 +1973,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     mcpAttachment?: SessionMcpAttachment,
     agentProfile?: AgentProfileRef,
     nativeToolBinding?: Record<string, string>,
+    resultTransferBinding?: Record<string, string>,
   ): Promise<Agent> {
     let creation = sessionCreations.get(sessionId)
     if (creation === undefined) {
@@ -2016,7 +2019,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           return rememberAgentHandle(await ctx.agents.resume({
             resumeSessionId: sessionId,
             agentOptions: agentOptions(),
-            setup: (await composeAgent(storedPreset, inspected.meta.sessionPolicy, mcpAttachment, agentProfile, nativeToolBinding)).setup,
+            setup: (await composeAgent(
+              storedPreset, inspected.meta.sessionPolicy, mcpAttachment, agentProfile, nativeToolBinding, resultTransferBinding,
+            )).setup,
           }))
         }
 
@@ -2025,7 +2030,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         } catch (error: unknown) {
           throw new Error(`failed to ensure project directory "${cwd}": ${String(error)}`, { cause: error })
         }
-        const composition = await composeAgent(presetId, sessionPolicy, mcpAttachment, agentProfile, nativeToolBinding)
+        const composition = await composeAgent(
+          presetId, sessionPolicy, mcpAttachment, agentProfile, nativeToolBinding, resultTransferBinding,
+        )
         return rememberAgentHandle(await ctx.agents.create({
           sessionId,
           agentOptions: agentOptions(),
@@ -2074,6 +2081,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     }
     assertSessionProfile(agent, agentProfile)
     assertNativeToolBinding(agent, nativeToolBinding)
+    assertResultTransferBinding(agent, resultTransferBinding)
     assertMcpAttachment(agent, mcpAttachment)
     if (instructions !== undefined) agent.session.configureInstructions(instructions)
     return agent
@@ -2518,11 +2526,16 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           const profileRef = request.payload.agentProfile
           let profilePolicy = AGENT_PROFILE_POLICY
           try {
-            if (profileRef !== undefined && (await loadAgentProfile(profileRef)).schemaVersion === 2) profilePolicy = NATIVE_PROFILE_POLICY
+            if (profileRef !== undefined) {
+              const version = (await loadAgentProfile(profileRef)).schemaVersion
+              if (version === 2) profilePolicy = NATIVE_PROFILE_POLICY
+              if (version === 3) profilePolicy = RESULT_PROFILE_POLICY
+            }
           } catch (error) {
             if (error instanceof AgentProfileError) return err(request, { code: error.code, message: error.message, details: {} })
             throw error
           }
+          if (request.payload.resultTransferBinding !== undefined && profileRef === undefined) return err(request, { code: 'agent-profile-invalid', message: 'resultTransferBinding requires agentProfile', details: {} })
           if (request.payload.nativeToolBinding !== undefined && profileRef === undefined) return err(request, { code: 'agent-profile-invalid', message: 'nativeToolBinding requires agentProfile', details: {} })
           if (profileRef !== undefined && (request.payload.agentPreset !== undefined || request.payload.instructions !== undefined
             || request.payload.cwd !== undefined || request.payload.workspaceId !== undefined
@@ -2563,7 +2576,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           try {
             await ensureSession(
               sessionId, cwd, request.payload.sessionId !== undefined, requestedPreset,
-              request.payload.instructions, sessionPolicy, request.payload.mcpAttachment, profileRef, request.payload.nativeToolBinding,
+              request.payload.instructions, sessionPolicy, request.payload.mcpAttachment, profileRef,
+              request.payload.nativeToolBinding, request.payload.resultTransferBinding,
             )
           } catch (error: unknown) {
             if (error instanceof AgentProfileError) return err(request, { code: error.code, message: error.message, details: {} })
@@ -2880,7 +2894,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                 phase: operation.phase,
                 outcome: operation.outcome,
                 ...typeof operation.reason === 'object' && operation.reason !== null
-                  ? { reason: operation.reason as { code?: string; message?: string } }
+                  ? { reason: operation.reason }
                   : {},
                 ...operation.swap === undefined ? {} : { swap: operation.swap },
                 ...operation.progress === undefined ? {} : { progress: operation.progress },
@@ -2899,7 +2913,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                     phase: operation.phase,
                     outcome: operation.outcome,
                     ...typeof operation.reason === 'object' && operation.reason !== null
-                      ? { reason: operation.reason as { code?: string; message?: string } }
+                      ? { reason: operation.reason }
                       : {},
                     ...operation.swap === undefined ? {} : { swap: operation.swap },
                     ...operation.progress === undefined ? {} : { progress: operation.progress },
@@ -3612,7 +3626,8 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           version: '0.0.1',
           instructionVersions: [1],
           mcpAttachmentVersions: [1],
-          agentProfileVersions: process.env.DSH_ALLOW_NATIVE_TOOLS === '1' ? [1, 2] : [1],
+          agentProfileVersions: process.env.DSH_ALLOW_NATIVE_TOOLS === '1' ? [1, 2, 3] : [1, 3],
+          resultTransferVersions: [1],
           ...request.payload.diagnosticChildrenVersion === 1 && diagnosticChildren !== undefined
             ? { diagnosticChildren } : {},
           // Same source as session.create's fallback: the UI's default project
@@ -4152,7 +4167,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             ...request.payload.step === undefined ? {} : { step: request.payload.step },
             phase: operation.phase,
             outcome: operation.outcome,
-            ...typeof operation.reason === 'object' && operation.reason !== null ? { reason: operation.reason as { code?: string; message?: string } } : {},
+            ...typeof operation.reason === 'object' && operation.reason !== null ? { reason: operation.reason } : {},
             ...operation.swap === undefined ? {} : { swap: operation.swap },
             ...operation.progress === undefined ? {} : { progress: operation.progress },
           })

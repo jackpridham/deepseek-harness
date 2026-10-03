@@ -157,7 +157,7 @@ Source: [`packages/preset/agent-presets/src/session.ts:26`](../packages/preset/a
 'agent-profile/selected': AgentProfileState
 ```
 
-Source: [`packages/preset/agent-presets/src/types.ts:31`](../packages/preset/agent-presets/src/types.ts)
+Source: [`packages/preset/agent-presets/src/types.ts:45`](../packages/preset/agent-presets/src/types.ts)
 
 ### `approval/*`
 
@@ -1190,7 +1190,7 @@ Source: [`packages/core/session/src/types.ts:305`](../packages/core/session/src/
 'tool/code-dispatch': CodeDispatchEventData
 ```
 
-Source: [`packages/core/tools/src/types.ts:56`](../packages/core/tools/src/types.ts)
+Source: [`packages/core/tools/src/types.ts:57`](../packages/core/tools/src/types.ts)
 
 <a id="toolcode-dispatch-start--log-only"></a>
 
@@ -1213,7 +1213,7 @@ Source: [`packages/core/tools/src/types.ts:56`](../packages/core/tools/src/types
 'tool/code-dispatch-start': CodeDispatchStartEventData
 ```
 
-Source: [`packages/core/tools/src/types.ts:40`](../packages/core/tools/src/types.ts)
+Source: [`packages/core/tools/src/types.ts:41`](../packages/core/tools/src/types.ts)
 
 <a id="toolresult--surface"></a>
 
@@ -1241,6 +1241,28 @@ Source: [`packages/core/tools/src/types.ts:40`](../packages/core/tools/src/types
 ```
 
 Source: [`packages/core/session/src/types.ts:317`](../packages/core/session/src/types.ts)
+
+<a id="toolresult-reference--log-only"></a>
+
+#### `tool/result-reference` — log-only
+
+```ts persistence-catalog
+/** Immutable canonical locator committed before its model-facing notice. */
+'tool/result-reference': ResultProvenance & { reference: string }
+```
+
+Source: [`packages/core/tools/src/types.ts:80`](../packages/core/tools/src/types.ts)
+
+<a id="toolresult-transfer--log-only"></a>
+
+#### `tool/result-transfer` — log-only
+
+```ts persistence-catalog
+/** Target identity and reference provenance, never a replay instruction. */
+'tool/result-transfer': ResultTransferEventData
+```
+
+Source: [`packages/core/tools/src/types.ts:82`](../packages/core/tools/src/types.ts)
 
 ### `tool-workflow/*`
 

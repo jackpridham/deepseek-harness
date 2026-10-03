@@ -2755,6 +2755,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'dispatch', description: 'the parent execution, sub-call identity, and the settled content to log.' }],
   },
   {
+    name: 'tools/commit-content',
+    mode: 'waterfall',
+    signature: '\'tools/commit-content\'(this: Scoped<ToolRuntime>, exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>, next: () => Promise<ContentBlock[]>): Promise<ContentBlock[]>',
+    summary: 'Persist canonical output before the agent loop logs and exposes model content.',
+    description: 'Persist canonical output before the agent loop logs and exposes model content. This runs after finalization, once in model order; it must never replay a tool. Scope-filtered dispatch: keyed by exec.agent. Failures stop the loop with the original call retained.',
+    parameters: [{ name: 'exec', description: 'finalized root execution.' }, { name: 'result', description: 'authoritative success or failure, including canonical value on success.' }],
+  },
+  {
     name: 'tools/execute',
     mode: 'waterfall',
     signature: '\'tools/execute\'(this: Scoped<ToolRuntime>, exec: ToolDispatchExecution, next: () => Promise<ToolExecutionResult>): Promise<ToolExecutionResult>',

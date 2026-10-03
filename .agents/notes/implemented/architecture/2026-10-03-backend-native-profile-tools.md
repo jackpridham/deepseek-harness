@@ -12,7 +12,7 @@ Application backends install one self-contained native ESM tool module inside an
 
 ## Consequences
 
-The host explicitly enables executable installation with `DSH_ALLOW_NATIVE_TOOLS=1`. The module factory receives private session storage, a pinned backend identity binding and current MCP credentials. The factory returns native definitions, while the profile declares the exact native roster and admitted MCP subset. Version 1 remains MCP-only. Reference-map semantics and application releases belong to Agents.
+The host explicitly enables executable installation with `DSH_ALLOW_NATIVE_TOOLS=1`. The module factory receives private session storage, a pinned backend identity binding and current MCP credentials. The factory returns native definitions, while the profile declares the exact native roster and admitted MCP subset. Version 1 remains MCP-only. Application-specific state remains application-owned. Generic exact result transfer is separately provided by [profile v3](2026-10-03-generic-result-transfer.md); it does not require native business-tool wrappers.
 
 See the [profile reference](../../../../packages/host/apiproxy/agent-profiles.md#native-tools-in-profile-v2) for wire fields, source limits, authorization and recovery.
 

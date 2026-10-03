@@ -55,7 +55,11 @@ async function boot() {
   await ctx.loader.await()
   const api = createApiProxy(ctx, { cwd: root, defaultModelSelection: () => ({ provider: 'fixture', model: 'model' }) })
   const handler = toFetchHandler(api)
-  return { ctx, handler, client: new InProcessApiClient(handler) }
+  return { ctx, handler, client: new InProcessApiClient({ ...handler, async fetch(...args: Parameters<typeof handler.fetch>) {
+    const response = await handler.fetch(...args)
+    if (response.status >= 500) throw new Error(await response.text())
+    return response
+  } }) }
 }
 
 async function installNative(handler: ReturnType<typeof toFetchHandler>, profile: AgentProfileDefinition) {
@@ -242,4 +246,146 @@ it('fails creation on authentication error and rejects unsupported attachment in
   expect(calls).toEqual([])
   expect((await client.sessions.create({ mcpAttachment: { ...attachment, version: 2 } as never })).result.ok).toBe(false)
   expect((await client.sessions.create({ mcpAttachment: { ...attachment, url: 'file:///tmp/mcp' } })).result.ok).toBe(false)
+})
+
+async function transferEndpoint() {
+  const longId = 'x'.repeat(110) + 'y'.repeat(32) + 'z'.repeat(10)
+  const row = { id: longId, owner: 'α😀e\u0301', nested: [{ 'a/b~c': null }], cursor: 'cursor\\\u0000\"', padding: 'p'.repeat(5000) }
+  const calls: { name: string; arguments: unknown }[] = []
+  const state = { revoked: false, lost: false, pause: false, started: () => {} }
+  const server = createServer((req, res) => {
+    void (async () => {
+      if (req.method !== 'POST') { res.writeHead(405).end(); return }
+      let body = ''; for await (const chunk of req) body += String(chunk)
+      const rpc = JSON.parse(body) as { id?: number; method: string; params: { name: string; arguments: unknown } }
+      if (rpc.id === undefined) { res.writeHead(202).end(); return }
+      let result: unknown = {}
+      if (rpc.method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'transfer-fixture', version: '1' } }
+      if (rpc.method === 'tools/list') result = { tools: ['search', 'read', 'excluded', 'plain', 'failed', 'mutate'].map(name => ({ name, description: name,
+        inputSchema: name === 'read' ? { type: 'object', properties: { id: { type: 'string', minLength: 152, maxLength: 152 }, owner: { type: 'string' }, nullable: { type: 'null' }, cursor: { type: 'string' } }, required: ['id', 'owner'], additionalProperties: false } : { type: 'object' },
+      })) }
+      if (rpc.method === 'tools/call') {
+        if (state.revoked) { res.writeHead(403).end(); return }
+        calls.push(rpc.params)
+        if (state.pause) { state.started(); return }
+        if (rpc.params.name === 'mutate' && state.lost) { req.socket.destroy(); return }
+        result = rpc.params.name === 'plain' ? { content: [{ type: 'text', text: '{"id":"display-only"}' }] }
+          : rpc.params.name === 'failed' ? { isError: true, content: [{ type: 'text', text: 'failed' }], structuredContent: { id: 'unusable' } }
+            : { content: [{ type: 'text', text: 'Rendered text deliberately omits canonical values.' }], structuredContent: rpc.params.name === 'search' ? { messages: [{ id: 'decoy' }, row] } : { ok: true } }
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result }))
+    })().catch(() => res.writeHead(500).end())
+  })
+  servers.push(server)
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address(); if (!address || typeof address === 'string') throw new Error('No port')
+  return { row, calls, state, attachment: { version: 1 as const, transport: 'streamable-http' as const, serverName: 'fixture', url: `http://127.0.0.1:${address.port}/mcp`, headers: {}, toolCallTimeoutMs: 1000, failOnStartupError: true as const } }
+}
+
+it('transfers canonical MCP fields through admitted execution, persists references and never replays lost mutations', async () => {
+  root = await mkdtemp(join(tmpdir(), 'dsh-result-transfer-'))
+  vi.stubEnv('DSH_HOME', root); vi.stubEnv('DSH_PROFILE_INSTALL_TOKEN', 'test-native-installer')
+  const fixture = await transferEndpoint()
+  let host = await boot()
+  expect(value(await host.client.host.describe({})).resultTransferVersions).toEqual([1])
+  const profile: AgentProfileDefinition = { schemaVersion: 3, id: 'transfer', version: '1', systemPrompt: 'Select values from results.', tools: {
+    mcp: ['search', 'read', 'plain', 'failed', 'mutate'].map(name => `mcp__fixture__${name}`),
+    resultTransfer: { version: 1, maxResults: 8, maxBytes: 65536, ttlSeconds: 60 },
+  } }
+  const ref = await installNative(host.handler, profile)
+  const id = SessionId('transfer-a')
+  const payload = { sessionId: id, agentProfile: ref, mcpAttachment: fixture.attachment, resultTransferBinding: { tenant: 'tenant-a', user: 'user-a', conversation: 'conversation-a' } }
+  const created = value(await host.client.sessions.create(payload))
+  expect(created.policy).toMatchObject({ id: 'managed-agent-profile-v3', attestation: { resultTransfer: 1 } })
+  expect(created.agentProfile?.resultTransfer).toEqual(profile.tools.resultTransfer)
+  expect(created.agentProfile?.toolNames).toEqual([...profile.tools.mcp, 'call_with_result', 'result_select'].sort())
+  expect((await host.client.sessions.create({ ...payload, resultTransferBinding: { ...payload.resultTransferBinding, user: 'wrong' } })).result.ok).toBe(false)
+  let reference = ''
+  const findRef = (messages: unknown) => {
+    const match = JSON.stringify(messages).match(/r_[a-f0-9]{24}/)
+    if (!match) throw new Error('No durable reference exposed')
+    return match[0]
+  }
+  const bindings = () => [
+    { result: reference, source: '/messages/1/id', target: '/id' },
+    { result: reference, source: '/messages/1/owner', target: '/owner' },
+    { result: reference, source: '/messages/1/nested/0/a~1b~0c', target: '/nullable' },
+    { result: reference, source: '/messages/1/cursor', target: '/cursor' },
+  ]
+  const script = new MockAdapter([
+    toolCallResponse('search', 'mcp__fixture__search', {}),
+    (request) => { reference = findRef(request.messages); return toolCallResponse('select', 'result_select', { result: reference, source: '/messages/1/nested/0/a~1b~0c' }) },
+    () => toolCallResponse('copy', 'call_with_result', { tool: 'mcp__fixture__read', arguments: {}, bindings: bindings() }),
+    textResponse('Transferred'),
+  ])
+  host.ctx.llm.registerAdapter(['fixture'], script)
+  let agent = host.ctx.agents.get(id)!
+  const approval: unknown[] = []
+  agent.ctx.on('tools/pre-execute', async (exec, next) => { if (exec.name === 'mcp__fixture__read') { approval.push(exec.arguments); return { kind: 'ask' } }; return next() })
+  // No approval service: target must be denied after the resolved arguments reach policy.
+  agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Transfer fields' }], source: { kind: 'user' } })); await agent.whenIdle()
+  expect(approval).toEqual([{ id: fixture.row.id, owner: fixture.row.owner, nullable: null, cursor: fixture.row.cursor }])
+  expect(fixture.calls.map(call => call.name)).toEqual(['search'])
+  expect(JSON.stringify(agent.session.events.filter(event => event.type === 'tool/result-reference' || event.type === 'tool/result-transfer'))).not.toContain(fixture.row.id)
+  expect(JSON.parse(JSON.stringify(script.requests.at(-1)?.messages.flatMap(message => message.content).filter(block => block.type === 'tool-result')).replace(/r_[a-f0-9]{24}/g, '<result>'))).toMatchSnapshot()
+  await host.ctx.sessions.flush(agent.session)
+  await host.ctx.fiber.dispose(); contexts.splice(contexts.indexOf(host.ctx), 1)
+  host = await boot()
+  expect((await host.client.sessions.create({ ...payload, resultTransferBinding: { ...payload.resultTransferBinding, tenant: 'foreign' } })).result.ok).toBe(false)
+  value(await host.client.sessions.create(payload)); agent = host.ctx.agents.get(id)!
+  expect(fixture.calls.length).toBe(1)
+  const run = async (tool: string, args: object) => {
+    const dispose = host.ctx.llm.registerAdapter(['fixture'], new MockAdapter([toolCallResponse(`call-${agent.session.events.length}`, tool, args), textResponse('Done')]))
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Run' }], source: { kind: 'user' } })); await agent.whenIdle(); dispose()
+    return agent.session.events.filter(event => event.type === 'tool/result').at(-1)!
+  }
+  const classified: unknown[] = []
+  host.ctx.tools.get('mcp__fixture__read', agent)!.isConcurrencySafe = (args) => { classified.push(args); return true }
+  const args = { tool: 'mcp__fixture__read', arguments: {}, bindings: bindings() }
+  const transferred = await run('call_with_result', args)
+  expect(transferred.data).toMatchObject({ message: { content: [{ isError: false }] } })
+  const targetRef = findRef(transferred.data)
+  expect(targetRef).not.toBe(reference)
+  expect(JSON.stringify((await run('result_select', { result: targetRef, source: '/ok' })).data)).toContain('true')
+  const preview = await run('result_select', { result: reference, source: '' })
+  expect(JSON.stringify(preview.data)).toContain('truncated')
+  expect(JSON.stringify(preview.data).length).toBeLessThan(4096)
+  expect(fixture.calls.at(-1)).toEqual({ name: 'read', arguments: approval[0] })
+  expect(classified.length).toBeGreaterThan(0)
+  expect(classified.every(args => JSON.stringify(args) === JSON.stringify(approval[0]))).toBe(true)
+  const count = fixture.calls.length
+  for (const bad of [
+    { ...args, tool: 'mcp__fixture__excluded' }, { ...args, tool: 'call_with_result' }, { ...args, tool: 'result_select' },
+    { ...args, bindings: [{ ...bindings()[0], result: 'r_000000000000000000000000' }] },
+    { ...args, bindings: [{ ...bindings()[0], source: '/messages/9/id' }] },
+    { ...args, arguments: { id: 'conflict' } },
+    { ...args, bindings: [{ ...bindings()[0], source: '/messages/0/id' }, bindings()[1]] },
+  ]) expect((await run('call_with_result', bad)).data).toMatchObject({ message: { content: [{ isError: true }] } })
+  expect(fixture.calls.length).toBe(count)
+  value(await host.client.sessions.create({ ...payload, sessionId: SessionId('transfer-b'), resultTransferBinding: { ...payload.resultTransferBinding, conversation: 'b' } }))
+  const other = host.ctx.agents.get(SessionId('transfer-b'))!
+  const saved = agent; agent = other; await run('call_with_result', args); agent = saved
+  expect(fixture.calls.length).toBe(count)
+  fixture.state.revoked = true; await run('call_with_result', args)
+  expect(fixture.calls.length).toBe(count)
+  fixture.state.revoked = false
+  for (const name of ['plain', 'failed']) {
+    const before = agent.session.events.filter(event => event.type === 'tool/result-reference').length
+    await run(`mcp__fixture__${name}`, {})
+    expect(agent.session.events.filter(event => event.type === 'tool/result-reference').length).toBe(before)
+  }
+  const refsBeforeCancel = agent.session.events.filter(event => event.type === 'tool/result-reference').length
+  fixture.state.pause = true
+  const started = new Promise<void>((resolve) => { fixture.state.started = resolve })
+  const pending = run('call_with_result', args)
+  await started; agent.cancel({ kind: 'user' }); await pending
+  expect(agent.session.events.filter(event => event.type === 'tool/result-reference').length).toBe(refsBeforeCancel)
+  fixture.state.pause = false
+  fixture.state.lost = true
+  await run('call_with_result', { ...args, tool: 'mcp__fixture__mutate' })
+  expect(fixture.calls.filter(call => call.name === 'mutate')).toHaveLength(1)
+  await host.ctx.sessions.flush(agent.session)
+  await host.ctx.fiber.dispose(); contexts.splice(contexts.indexOf(host.ctx), 1)
+  host = await boot(); value(await host.client.sessions.create(payload))
+  expect(fixture.calls.filter(call => call.name === 'mutate')).toHaveLength(1)
 })

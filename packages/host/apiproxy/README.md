@@ -92,6 +92,10 @@ None, as the gateway installs caller-owned instructions and MCP tools through th
 
 Managed profile instructions remain stable across turns and reconnects. A new profile version creates a different prompt prefix only for sessions selecting it.
 
+## Canonical result transfer
+
+Managed profile v3 enables [canonical result transfer](result-transfer.md) through the admitted tool executor. Gate it on the explicit host capability and verify identity, limits and tool receipts before prompting.
+
 ## Known Limitations and Deferred Work
 
 - **Forwarded Remote events are parasitic on this legacy frame union** — `host/remote-event` lives in `HostFrame` so the delivery path could reuse the existing host stream instead of opening a third downlink, which makes it read as if this package owned the Remote event contract. It does not: the allowlist is `dsh-api-remotes`' and the consumer verb is `ctx.remote.$on`. When the host stream moves off this package, the frame moves with it and the consumer contract is unaffected ([rationale](../../../.agents/notes/implemented/architecture/2026-08-10-remote-event-delivery.md)).

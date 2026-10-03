@@ -1,4 +1,5 @@
 /** Session composition and durable identity for backend-installed assistant profiles. */
+import { mountResultTransfer, RESULT_TRANSFER_TOOLS } from './result-transfer.ts'
 import { isDeepStrictEqual } from 'node:util'
 import { createHash } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
@@ -14,6 +15,8 @@ import { assertObjectJsonSchema, validateJsonSchemaValue, type ToolDefinition } 
 export const AGENT_PROFILE_POLICY = SessionPolicyId('managed-agent-profile-v1')
 /** Managed composition admitting backend-installed native tools and an explicit MCP subset. */
 export const NATIVE_PROFILE_POLICY = SessionPolicyId('managed-agent-profile-v2')
+/** MCP business tools with generic, identity-scoped result transfer. */
+export const RESULT_PROFILE_POLICY = SessionPolicyId('managed-agent-profile-v3')
 
 /**
  * Read the committed profile selection without loading or changing a session.
@@ -55,14 +58,25 @@ export function assertNativeToolBinding(agent: Agent, binding?: Record<string, s
 }
 
 /**
+ * Enforce authenticated identity on both live reconnect and cold recovery.
+ * @param agent - session selected by the caller.
+ * @param binding - backend-verified user, tenant and conversation identifiers.
+ */
+export function assertResultTransferBinding(agent: Agent, binding?: Record<string, string>): void {
+  const stored = sessionProfileState(agent.session)?.resultBindingDigest
+  if (stored !== undefined && (binding === undefined || stored !== bindingDigest(binding))) throw new AgentProfileError('agent-profile-conflict', 'Result transfer identity differs from the recorded session')
+  if (stored === undefined && binding !== undefined) throw new AgentProfileError('agent-profile-invalid', 'resultTransferBinding requires a v3 profile')
+}
+
+/**
  * Register generic profile restrictions at the same lifetime as the gateway.
  * @param ctx - gateway context owning the policy registration.
  */
 export function registerAgentProfilePolicy(ctx: Context): void {
-  const policies = process.env.DSH_ALLOW_NATIVE_TOOLS === '1' ? [AGENT_PROFILE_POLICY, NATIVE_PROFILE_POLICY] : [AGENT_PROFILE_POLICY]
+  const policies = process.env.DSH_ALLOW_NATIVE_TOOLS === '1' ? [AGENT_PROFILE_POLICY, NATIVE_PROFILE_POLICY, RESULT_PROFILE_POLICY] : [AGENT_PROFILE_POLICY, RESULT_PROFILE_POLICY]
   for (const id of policies) ctx.agents.registerPolicy({
     id, instructions: false, workspace: false, presets: false, fork: false,
-    attestation: { tools: id === AGENT_PROFILE_POLICY ? 'session-mcp' : 'profile-native-mcp', immutableProfile: true },
+    attestation: { tools: id === AGENT_PROFILE_POLICY ? 'session-mcp' : id === NATIVE_PROFILE_POLICY ? 'profile-native-mcp' : 'profile-mcp-result-transfer', immutableProfile: true, ...id === RESULT_PROFILE_POLICY ? { resultTransfer: 1 } : {} },
     apply(agent) {
       const profile = sessionProfileState(agent.session)
       if (profile === undefined) throw new AgentProfileError('agent-profile-invalid', 'Profile composition is required before publication')
@@ -78,9 +92,11 @@ export function registerAgentProfilePolicy(ctx: Context): void {
  * @param requested - exact profile for a new session or explicit resume.
  * @param attachment - user-scoped MCP credentials, supplied again after restart.
  * @param binding - verified identity for native tools, supplied again on every attachment.
+ * @param resultBinding - verified tenant/user/conversation for generic result transfer.
  */
 export async function mountSessionProfile(
-  ctx: Context, requested?: AgentProfileRef, attachment?: SessionMcpAttachment, binding?: Record<string, string>,
+  ctx: Context, requested?: AgentProfileRef, attachment?: SessionMcpAttachment,
+  binding?: Record<string, string>, resultBinding?: Record<string, string>,
 ): Promise<void> {
   const agent = ctx.agent
   if (agent === undefined) throw new Error('Profile composition requires a session agent')
@@ -90,9 +106,13 @@ export async function mountSessionProfile(
   if (ref === undefined) throw new AgentProfileError('agent-profile-invalid', 'session.create requires an exact agentProfile reference')
   const definition = await loadAgentProfile(ref)
   if (attachment === undefined && (definition.schemaVersion === 1 || definition.tools.mcp.length > 0)) throw new SessionMcpError('mcp-attachment-required', 'Create or resume this profile session with its user-scoped MCP attachment')
+  if (definition.schemaVersion === 3 && resultBinding === undefined) throw new AgentProfileError('agent-profile-invalid', 'Profile v3 requires resultTransferBinding')
+  if (definition.schemaVersion !== 3 && resultBinding !== undefined) throw new AgentProfileError('agent-profile-invalid', 'resultTransferBinding requires a v3 profile')
+  const resultBindingDigest = definition.schemaVersion === 3 ? bindingDigest(resultBinding) : undefined
+  if (stored !== undefined) assertResultTransferBinding(agent, resultBinding)
   const nativeBindingDigest = definition.schemaVersion === 2 ? bindingDigest(binding) : undefined
   if (stored !== undefined) assertNativeToolBinding(agent, binding)
-  if (definition.schemaVersion === 1 && binding !== undefined) throw new AgentProfileError('agent-profile-invalid', 'nativeToolBinding requires a v2 profile')
+  if (definition.schemaVersion !== 2 && binding !== undefined) throw new AgentProfileError('agent-profile-invalid', 'nativeToolBinding requires a v2 profile')
   ctx.tools.presentAs('native')
   ctx.tools.restrict({ allow: [] })
   await mountMcpAttachment(ctx, attachment)
@@ -128,6 +148,11 @@ export async function mountSessionProfile(
     }
     toolNames = [...definition.tools.mcp, ...definition.tools.native.toolNames].sort()
   }
+  if (definition.schemaVersion === 3) {
+    if (definition.tools.mcp.some(name => !toolNames.includes(name))) throw new AgentProfileError('agent-profile-invalid', 'Selected MCP tool is unavailable')
+    await mountResultTransfer(ctx, `${ref.digest}:${resultBindingDigest}`, definition.tools.resultTransfer)
+    toolNames = [...definition.tools.mcp, ...RESULT_TRANSFER_TOOLS].sort()
+  }
   if (stored !== undefined && !isDeepStrictEqual(stored.toolNames, toolNames)) {
     throw new AgentProfileError('agent-profile-conflict', 'The MCP tool set differs from the recorded session; create a new session')
   }
@@ -141,5 +166,7 @@ export async function mountSessionProfile(
   }
   agent.session.configureInstructions(instructions)
   if (stored === undefined) agent.session.append('agent-profile/selected', { id: ref.id, version: ref.version, digest: ref.digest, toolNames,
-    ...nativeBindingDigest === undefined ? {} : { nativeBindingDigest } })
+    ...nativeBindingDigest === undefined ? {} : { nativeBindingDigest },
+    ...resultBindingDigest === undefined || definition.schemaVersion !== 3
+      ? {} : { resultBindingDigest, resultTransfer: definition.tools.resultTransfer } })
 }

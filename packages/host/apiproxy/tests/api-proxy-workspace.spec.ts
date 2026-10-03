@@ -16,6 +16,7 @@ import WorkspaceRegistry from '@deepseek-ai/dsh-workspace'
 import type { HostFrame, WorkspaceId } from '@deepseek-ai/dsh-host-apiproxy/api'
 import type { RpcRequest, RpcResponse } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
 import { RpcId } from '@deepseek-ai/dsh-host-apiproxy/api/rpc'
+import { resultStoreDirectory } from '@deepseek-ai/dsh-agent-presets'
 import { createApiProxy } from '@deepseek-ai/dsh-host-apiproxy'
 import { MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 
@@ -648,8 +649,21 @@ describe('Host Workspace increments', () => {
       expectOk(await api.sessions.create(request({ workspaceId: workspace.workspaceId, sessionId })))
     }
     expectOk(await api.workspace.archiveSession(request({ sessionId: parent })))
-
-    expectOk(await api.workspace.deleteSession(request({ sessionId: parent })))
+    const oldHome = process.env.DSH_HOME
+    process.env.DSH_HOME = root
+    try {
+      for (const id of [parent, child, sibling]) {
+        mkdirSync(resultStoreDirectory(id), { recursive: true, mode: 0o700 })
+        writeFileSync(join(resultStoreDirectory(id), 'results.json'), '{}', { mode: 0o600 })
+      }
+      expectOk(await api.workspace.deleteSession(request({ sessionId: parent })))
+      expect(existsSync(resultStoreDirectory(parent))).toBe(false)
+      expect(existsSync(resultStoreDirectory(child))).toBe(false)
+      expect(existsSync(resultStoreDirectory(sibling))).toBe(true)
+    } finally {
+      if (oldHome === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = oldHome
+    }
 
     expect(handleDisposals).toEqual([child, parent])
     expect(ctx.agents.get(parent)).toBeUndefined()

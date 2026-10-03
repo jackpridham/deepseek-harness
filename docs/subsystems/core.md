@@ -1156,5 +1156,5 @@ One session committed a different agent preset to its durable log. Consumers inv
 'agent-preset/selected'(sessionId: SessionId, agentPreset: string): void
 ```
 
-Source: [`packages/preset/agent-presets/src/types.ts:44`](../../packages/preset/agent-presets/src/types.ts)
+Source: [`packages/preset/agent-presets/src/types.ts:58`](../../packages/preset/agent-presets/src/types.ts)
 <!-- END GENERATED cordis-surface -->

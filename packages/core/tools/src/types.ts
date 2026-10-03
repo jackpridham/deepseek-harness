@@ -4,6 +4,7 @@
  * @module @deepseek-ai/dsh-tools/types
  */
 
+import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { CallId } from '@deepseek-ai/dsh-llm/brand'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'
 
@@ -54,5 +55,30 @@ declare module '@deepseek-ai/dsh-session/types' {
      * construction.
      */
     'tool/code-dispatch': CodeDispatchEventData
+  }
+}
+
+/** An unguessable canonical-result reference meaningful only in its owning session. */
+export type ResultReference = Branded<'ResultReference'>
+/** Immutable origin of a successful canonical value; excludes arguments and credentials. */
+export interface ResultProvenance { tool: string; callId: string; root: 'structuredContent' | 'value' }
+/** Literal JSON Pointer source and destination for exact value transfer. */
+export interface ResultBinding { result: string; source: string; target: string }
+/** Audit identity for one nested result-transfer invocation; values remain private. */
+export interface ResultTransferEventData {
+  callId: string
+  targetCallId: string
+  tool: string
+  bindings: ResultBinding[]
+  phase: 'started' | 'finished'
+  isError?: boolean
+}
+
+declare module '@deepseek-ai/dsh-session/types' {
+  interface SessionEventMap {
+    /** Immutable canonical locator committed before its model-facing notice. */
+    'tool/result-reference': ResultProvenance & { reference: string }
+    /** Target identity and reference provenance, never a replay instruction. */
+    'tool/result-transfer': ResultTransferEventData
   }
 }

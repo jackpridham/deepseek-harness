@@ -58,3 +58,45 @@ exports[`installs native tools through the profile API, isolates private state a
   },
 ]
 `;
+
+exports[`transfers canonical MCP fields through admitted execution, persists references and never replays lost mutations 1`] = `
+[
+  {
+    "content": [
+      {
+        "text": "Rendered text deliberately omits canonical values.",
+        "type": "text",
+      },
+      {
+        "text": "Result reference: <result>; JSON Pointer root: structuredContent. Use call_with_result for exact argument transfer.",
+        "type": "text",
+      },
+    ],
+    "isError": false,
+    "toolCallId": "search",
+    "type": "tool-result",
+  },
+  {
+    "content": [
+      {
+        "text": "{"result":"<result>","source":"/messages/1/nested/0/a~1b~0c","value":null,"truncated":false}",
+        "type": "text",
+      },
+    ],
+    "isError": false,
+    "toolCallId": "select",
+    "type": "tool-result",
+  },
+  {
+    "content": [
+      {
+        "text": "Error: tool "mcp__fixture__read" requires approval (not yet supported) If execution started, the outcome may be uncertain; do not automatically replay mutations.",
+        "type": "text",
+      },
+    ],
+    "isError": true,
+    "toolCallId": "copy",
+    "type": "tool-result",
+  },
+]
+`;

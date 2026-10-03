@@ -130,6 +130,10 @@ Create or reconnect with `{sessionId, agentProfile, nativeToolBinding, mcpAttach
 
 Live reconnect keeps identical attachment credentials; cold recovery accepts fresh credentials for the same MCP server and requires the original profile and binding. Recovery rebuilds tool definitions without replaying execution. Install a new profile version for new code; existing sessions remain pinned. Rollback selects an already-installed version for new sessions. No package manager, separate registry, uninstall endpoint, inference or Harness restart is needed for tool installation.
 
+## Generic result transfer in profile v3
+
+[Canonical result transfer](result-transfer.md) admits two generic runtime operations alongside an explicit MCP subset, with session-owned canonical storage, exact argument binding and identity-scoped recovery. It uses the same profile installation and session creation endpoints without installing executable business tools.
+
 ## Failure and validation limits
 
 Malformed payloads return `bad-request`; semantic validation and digest mismatch return `agent-profile-invalid`; absent definitions return `agent-profile-not-found`; immutable-version collisions, changed session identity or tool-set drift return `agent-profile-conflict`. Authentication refusal is HTTP 403. MCP failures use the [attachment errors](session-mcp.md). After an interrupted install or an uncertain response, retry the same id/version/content/digest. After an uncertain business operation, inspect business state before retrying it.

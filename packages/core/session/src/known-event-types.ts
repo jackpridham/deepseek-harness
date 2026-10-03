@@ -90,6 +90,8 @@ export const KNOWN_SESSION_EVENT_TYPES: ReadonlySet<string> = new Set([
   'tool/code-dispatch',
   'tool/code-dispatch-start',
   'tool/result',
+  'tool/result-reference',
+  'tool/result-transfer',
   'turn/end',
   'turn/start',
   'user/message',

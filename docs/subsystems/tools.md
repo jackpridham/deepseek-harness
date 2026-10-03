@@ -338,7 +338,7 @@ interface ToolFailure {
 /** Successful canonical tool execution, including its Native/model projection. */
 interface ToolExecutionSuccess {
   readonly isError: false
-  /** Execution-local canonical value; deliberately omitted from durable events. */
+  /** Execution-local canonical value; optional commit-content consumers persist it privately before model exposure. */
   readonly value: JsonValue
   readonly content: ContentBlock[]
   readonly error?: never
@@ -594,7 +594,7 @@ async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>
 
 Types: [Agent](core.md) · [ScopeKey](scope.md)
 
-Source: [`packages/core/tools/src/index.ts:799`](../../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:809`](../../packages/core/tools/src/index.ts)
 
 <a id="tools-events"></a>
 
@@ -619,7 +619,7 @@ A tool was registered or unregistered, or a scoped restriction changed (the avai
 'tools/change'(): void
 ```
 
-Source: [`packages/core/tools/src/index.ts:215`](../../packages/core/tools/src/index.ts)
+Source: [`packages/core/tools/src/index.ts:225`](../../packages/core/tools/src/index.ts)
 
 <a id="toolscode-dispatch-log--waterfall"></a>
 
@@ -647,6 +647,28 @@ Allow a listener to replace content in the DURABLE LOG COPY of one `run_code` su
 Types: [ContentBlock](llm-streaming.md) · [Scoped](scope.md)
 
 Source: [`packages/core/tools/src/index.ts:197`](../../packages/core/tools/src/index.ts)
+
+<a id="toolscommit-content--waterfall"></a>
+
+#### `tools/commit-content` — waterfall
+
+Persist canonical output before the agent loop logs and exposes model content. This runs after finalization, once in model order; it must never replay a tool. Scope-filtered dispatch: keyed by exec.agent. Failures stop the loop with the original call retained.
+
+```ts cordis-catalog
+/**
+ * Persist canonical output before the agent loop logs and exposes model content.
+ * This runs after finalization, once in model order; it must never replay a tool.
+ * Scope-filtered dispatch: keyed by exec.agent. Failures stop the loop with the original call retained.
+ * @param exec - finalized root execution.
+ * @param result - authoritative success or failure, including canonical value on success.
+ * @mode waterfall
+ */
+'tools/commit-content'(this: Scoped<ToolRuntime>, exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>, next: () => Promise<ContentBlock[]>): Promise<ContentBlock[]>
+```
+
+Types: [ContentBlock](llm-streaming.md) · [Scoped](scope.md)
+
+Source: [`packages/core/tools/src/index.ts:214`](../../packages/core/tools/src/index.ts)
 
 <a id="toolsexecute--waterfall"></a>
 
