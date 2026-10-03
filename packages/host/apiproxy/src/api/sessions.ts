@@ -408,6 +408,8 @@ export interface SessionsApi {
     sessionId?: SessionId
     agentPreset?: string
     agentProfile?: AgentProfileRef
+    /** Required for profile v2; stable backend-verified identity, never model input or credentials. */
+    nativeToolBinding?: Record<string, string>
     instructions?: SessionInstructions
     mcpAttachment?: SessionMcpAttachment
     sessionPolicy?: SessionPolicyId

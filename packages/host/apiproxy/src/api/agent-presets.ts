@@ -45,7 +45,10 @@ export interface AgentPresetEntry {
 
 /** agent-preset-domain unary methods (the map key agentPreset.* of RpcMethodMap). */
 export interface AgentPresetsApi {
-  /** Install immutable declarative content; HTTP requires the backend service bearer token and refuses browser requests. */
+  /**
+   * Install immutable profile content; v2 modules require explicit host opt-in.
+   * HTTP requires the backend service bearer token and refuses browser requests.
+   */
   installProfile(request: RpcRequest<{ profile: AgentProfileDefinition; digest: string }>):
   Promise<RpcResponse<{ profile: AgentProfileRef; created: boolean }>>
 

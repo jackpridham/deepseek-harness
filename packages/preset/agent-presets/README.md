@@ -132,7 +132,7 @@ The mounted subtree therefore overrides `write()` as a no-op. Nothing in this pa
 
 ## Managed assistant definitions
 
-The package also owns immutable declarative profiles in `$DSH_HOME/.agent-profiles/`. `installAgentProfile` validates and atomically publishes versioned prompt content; `loadAgentProfile` verifies its digest on every read. These definitions contain no Cordis rows and are separate from editable presets. The [gateway profile reference](../../host/apiproxy/agent-profiles.md) owns the installation and session protocol.
+The package also owns immutable assistant profiles in `$DSH_HOME/.agent-profiles/`. `installAgentProfile` validates and atomically publishes versioned prompt content and opted-in v2 native modules; `loadAgentProfile` verifies its digest on every read. These definitions contain no Cordis rows and are separate from editable presets. The [gateway profile reference](../../host/apiproxy/agent-profiles.md) owns the installation and session protocol.
 
 ## Trust
 

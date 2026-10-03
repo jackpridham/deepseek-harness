@@ -1,4 +1,4 @@
-/** Immutable, data-only assistant profiles owned by trusted application backends. */
+/** Immutable assistant profiles owned by trusted application backends. */
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { link, lstat, mkdir, open, unlink } from 'node:fs/promises'
@@ -32,10 +32,29 @@ export function parseAgentProfile(input: unknown): AgentProfileDefinition {
   const value = input as Record<string, unknown>
   if (Object.keys(value).some(key => !['schemaVersion', 'id', 'version', 'systemPrompt', 'tools'].includes(key))) invalid('Unknown profile field')
   assertIdentity(value.id, value.version)
-  if (value.schemaVersion !== 1 || value.tools !== 'session-mcp'
-    || typeof value.systemPrompt !== 'string' || value.systemPrompt.length === 0
-    || Buffer.byteLength(value.systemPrompt, 'utf8') > 65536) invalid('Profile requires schemaVersion 1, session-mcp tools and 1–65536 UTF-8 bytes of systemPrompt')
-  return { schemaVersion: 1, id: value.id, version: value.version as string, systemPrompt: value.systemPrompt, tools: 'session-mcp' }
+  if (typeof value.systemPrompt !== 'string' || value.systemPrompt.length === 0
+    || Buffer.byteLength(value.systemPrompt, 'utf8') > 65536) invalid('Profile requires 1–65536 UTF-8 bytes of systemPrompt')
+  const common = { id: value.id, version: value.version as string, systemPrompt: value.systemPrompt }
+  if (value.schemaVersion === 1 && value.tools === 'session-mcp') return { schemaVersion: 1, ...common, tools: 'session-mcp' }
+  if (value.schemaVersion !== 2) invalid('Unsupported profile schemaVersion or tools')
+  const tools = object(value.tools, ['native', 'mcp'])
+  const native = object(tools.native, ['source', 'toolNames'])
+  if (typeof native.source !== 'string' || !native.source.length || Buffer.byteLength(native.source, 'utf8') > 262144) invalid('Native source requires 1–262144 UTF-8 bytes')
+  const toolNames = names(native.toolNames, false)
+  if (!toolNames.length) invalid('Native tools cannot be empty')
+  return { schemaVersion: 2, ...common, tools: { native: { source: native.source, toolNames }, mcp: names(tools.mcp, true) } }
+}
+
+function object(input: unknown, keys: string[]): Record<string, unknown> {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !keys.includes(key))) invalid('Invalid native tool declaration')
+  return input as Record<string, unknown>
+}
+
+function names(input: unknown, mcp: boolean): string[] {
+  if (!Array.isArray(input) || input.length > 128 || input.some(name => typeof name !== 'string'
+    || !/^[a-zA-Z][a-zA-Z0-9_]{0,127}$/.test(name) || name === 'run_code' || name.startsWith('mcp__') !== mcp)
+    || new Set(input).size !== input.length) invalid('Invalid or duplicate tool names')
+  return input as string[]
 }
 
 /**
@@ -97,6 +116,8 @@ export async function installAgentProfile(
   input: AgentProfileDefinition, digest: string,
 ): Promise<{ profile: AgentProfileRef; created: boolean }> {
   const profile = parseAgentProfile(input)
+  if (profile.schemaVersion === 2 && process.env.DSH_ALLOW_NATIVE_TOOLS !== '1') invalid('Native tool installation is disabled on this host')
+  if (Buffer.byteLength(JSON.stringify(profile), 'utf8') > 512 * 1024) invalid('Serialized profile exceeds the size limit')
   if (agentProfileDigest(profile) !== digest) invalid('Profile digest does not match its content')
   const ref = { id: profile.id, version: profile.version, digest }
   const root = dshHomePath('.agent-profiles')
@@ -116,4 +137,22 @@ export async function installAgentProfile(
     await loadAgentProfile(ref)
   } finally { await unlink(temporary) }
   return { profile: ref, created }
+}
+
+/**
+ * Create private state isolated by immutable profile, session and verified identity.
+ * @param ref - installed profile identity.
+ * @param sessionId - exact owning session.
+ * @param bindingDigest - hash of the backend identity binding.
+ * @returns service-owned directory, outside model-visible history and workspace.
+ */
+export async function nativeToolStateDirectory(ref: AgentProfileRef, sessionId: string, bindingDigest: string): Promise<string> {
+  const root = dshHomePath('.native-tool-state')
+  await mkdir(root, { recursive: true, mode: 0o700 })
+  await assertDirectory(root)
+  const key = createHash('sha256').update(JSON.stringify([ref.id, ref.version, ref.digest, sessionId, bindingDigest])).digest('hex')
+  const path = join(root, key)
+  await mkdir(path, { mode: 0o700, recursive: true })
+  await assertDirectory(path)
+  return path
 }

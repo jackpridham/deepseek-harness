@@ -6,7 +6,7 @@
  */
 
 import { z } from 'zod'
-import { agentProfileRefSchema, agentProfileStateSchema } from './agent-profiles.schema.ts'
+import { agentProfileRefSchema, agentProfileStateSchema, nativeToolBindingSchema } from './agent-profiles.schema.ts'
 import { diagnosticAdmissionSchema, diagnosticAssignmentSchema, diagnosticPublishSchema, diagnosticPublishResultSchema } from '@deepseek-ai/dsh-subagent/diagnostic-schema'
 
 /** Retained worker publication request and acknowledgement. */
@@ -180,6 +180,7 @@ export const sessionMcpAttachmentSchema = z.object({
 /** session.create request payload (at most one of workspaceId / cwd). */
 export const sessionCreateRequestSchema = z.object({
   agentProfile: agentProfileRefSchema.optional(),
+  nativeToolBinding: nativeToolBindingSchema.optional(),
   instructions: sessionInstructionsSchema.optional(),
   mcpAttachment: sessionMcpAttachmentSchema.optional(),
   workspaceId: workspaceIdSchema.optional(),

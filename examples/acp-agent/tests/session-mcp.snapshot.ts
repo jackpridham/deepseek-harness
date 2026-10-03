@@ -3,7 +3,9 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
+import { agentProfileDigest } from '@deepseek-ai/dsh-agent-presets'
+import type { AgentProfileDefinition } from '@deepseek-ai/dsh-agent-presets/types'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
@@ -31,6 +33,7 @@ afterEach(async () => {
     await new Promise<void>((resolve, reject) => server.close((error) => { if (error) reject(error); else resolve() }))
   }
   if (root) await rm(root, { recursive: true, force: true })
+  vi.unstubAllEnvs()
 })
 
 async function boot() {
@@ -51,13 +54,114 @@ async function boot() {
   await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(join(root, 'cordis.yml')).href } })
   await ctx.loader.await()
   const api = createApiProxy(ctx, { cwd: root, defaultModelSelection: () => ({ provider: 'fixture', model: 'model' }) })
-  return { ctx, client: new InProcessApiClient(toFetchHandler(api)) }
+  const handler = toFetchHandler(api)
+  return { ctx, handler, client: new InProcessApiClient(handler) }
 }
+
+async function installNative(handler: ReturnType<typeof toFetchHandler>, profile: AgentProfileDefinition) {
+  const ref = { id: profile.id, version: profile.version, digest: agentProfileDigest(profile) }
+  const response = await handler.fetch(new Request('http://localhost/api/agentPreset.installProfile', {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer test-native-installer' },
+    body: JSON.stringify({ type: 'client-request', rpcId: 'install-native', method: 'agentPreset.installProfile', payload: { profile, digest: ref.digest } }),
+  }))
+  expect(response.status).toBe(200)
+  expect(value(await response.json() as { result: { ok: true; value: unknown } })).toEqual({ profile: ref, created: true })
+  return ref
+}
+
+it('installs native tools through the profile API, isolates private state and recovers without replay', async () => {
+  root = await mkdtemp(join(tmpdir(), 'dsh-native-profile-'))
+  vi.stubEnv('DSH_HOME', root)
+  vi.stubEnv('DSH_PROFILE_INSTALL_TOKEN', 'test-native-installer')
+  vi.stubEnv('DSH_ALLOW_NATIVE_TOOLS', '1')
+  const { ctx, handler, client } = await boot()
+  const source = `import { readFile, writeFile } from 'node:fs/promises';
+export function createTools({stateDirectory, binding}) {
+  return [{name:'remember',description:'Remember a word and return the previous word',
+    parameters:{type:'object',properties:{word:{type:'string'}},required:['word'],additionalProperties:false},
+    output:{schema:{type:'string'},render:(_args,value)=>[{type:'text',text:value}]},
+    async execute({word}) {
+      let previous = 'empty';
+      try { previous = await readFile(stateDirectory+'/word','utf8') } catch(e) { if(e.code!=='ENOENT') throw e }
+      await writeFile(stateDirectory+'/word',word,{mode:0o600});
+      return previous;
+    }}];
+}`
+  const profile: AgentProfileDefinition = { schemaVersion: 2, id: 'native-fixture', version: '1', systemPrompt: 'Use the supplied tools.', tools: { native: { source, toolNames: ['remember'] }, mcp: [] } }
+  const ref = await installNative(handler, profile)
+  const binding = { tenant: 'private-tenant', user: 'private-user', conversation: 'a' }
+  const id = SessionId('native-a')
+  const payload = { sessionId: id, agentProfile: ref, nativeToolBinding: binding }
+  const created = value(await client.sessions.create(payload))
+  expect(created.agentProfile?.toolNames).toEqual(['remember'])
+  expect(created.policy?.id).toBe('managed-agent-profile-v2')
+  expect(value(await client.sessions.create(payload))).toEqual(created)
+  expect((await client.sessions.create({ ...payload, nativeToolBinding: { ...binding, user: 'different' } })).result).toMatchObject({ ok: false, error: { code: 'agent-profile-conflict' } })
+  expect((await client.sessions.create({ sessionId: id, agentProfile: ref })).result.ok).toBe(false)
+  const other = SessionId('native-b')
+  value(await client.sessions.create({ ...payload, sessionId: other, nativeToolBinding: { ...binding, conversation: 'b' } }))
+  const mock = new MockAdapter([toolCallResponse('a', 'remember', { word: 'apple' }), textResponse('Stored'), toolCallResponse('b', 'remember', { word: 'banana' }), textResponse('Stored')])
+  ctx.llm.registerAdapter(['fixture'], mock)
+  for (const sessionId of [id, other]) {
+    const agent = ctx.agents.get(sessionId)!
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Remember my word' }], source: { kind: 'user' } }))
+    await agent.whenIdle()
+  }
+  expect(mock.requests[1]!.messages.flatMap(message => message.content).filter(block => block.type === 'tool-result')).toMatchSnapshot()
+  expect(JSON.stringify(mock.requests)).not.toContain('private-user')
+  expect(JSON.stringify(ctx.agents.get(id)!.session.events)).not.toContain('stateDirectory')
+  expect(JSON.stringify(mock.requests[3]?.messages)).toContain('empty')
+  await ctx.sessions.flush(ctx.agents.get(id)!.session)
+  await ctx.fiber.dispose(); contexts.splice(contexts.indexOf(ctx), 1)
+  const resumed = await boot()
+  expect((await resumed.client.sessions.create({ ...payload, nativeToolBinding: { ...binding, tenant: 'wrong' } })).result.ok).toBe(false)
+  expect(value(await resumed.client.sessions.create(payload)).agentProfile).toEqual(created.agentProfile)
+  const next = new MockAdapter([toolCallResponse('c', 'remember', { word: 'cherry' }), textResponse('Stored')])
+  resumed.ctx.llm.registerAdapter(['fixture'], next)
+  const agent = resumed.ctx.agents.get(id)!
+  agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Remember another word' }], source: { kind: 'user' } }))
+  await agent.whenIdle()
+  expect(next.requests[1]!.messages.flatMap(message => message.content).filter(block => block.type === 'tool-result')).toMatchSnapshot()
+})
 
 function value<T>(response: { result: { ok: true; value: T } | { ok: false; error: unknown } }): T {
   if (!response.result.ok) throw new Error(JSON.stringify(response.result.error))
   return response.result.value
 }
+
+it('admits an explicit MCP subset alongside native tools and rejects bad module rosters', async () => {
+  root = await mkdtemp(join(tmpdir(), 'dsh-mixed-profile-'))
+  vi.stubEnv('DSH_HOME', root)
+  vi.stubEnv('DSH_PROFILE_INSTALL_TOKEN', 'test-native-installer')
+  vi.stubEnv('DSH_ALLOW_NATIVE_TOOLS', '1')
+  const { ctx, handler, client } = await boot()
+  const { attachment, calls } = await endpoint()
+  const profile: AgentProfileDefinition = { schemaVersion: 2, id: 'mixed', version: '1', systemPrompt: 'Use the supplied tools.', tools: { native: {
+    toolNames: ['echo'], source: 'export function createTools(){return [{name:\'echo\',description:\'Echo a word\',parameters:{type:\'object\',properties:{word:{type:\'string\'}},required:[\'word\'],additionalProperties:false},output:{schema:{type:\'string\'},render:(_,value)=>[{type:\'text\',text:value}]},async execute({word}){return word}}]}',
+  }, mcp: ['mcp__api_vxapp__get_invoice'] } }
+  const ref = await installNative(handler, profile)
+  const id = SessionId('mixed')
+  const payload = { sessionId: id, agentProfile: ref, nativeToolBinding: {}, mcpAttachment: attachment }
+  expect(value(await client.sessions.create(payload)).agentProfile?.toolNames).toEqual(['echo', 'mcp__api_vxapp__get_invoice'])
+  const excluded = await installNative(handler, { ...profile, version: '2', tools: { ...profile.tools, mcp: [] } })
+  const other = SessionId('excluded')
+  expect(value(await client.sessions.create({ ...payload, sessionId: other, agentProfile: excluded })).agentProfile?.toolNames).toEqual(['echo'])
+  const mock = new MockAdapter([
+    toolCallResponse('bad-args', 'echo', { word: 'ok', extra: true }), textResponse('Rejected'),
+    toolCallResponse('hidden', 'mcp__api_vxapp__get_invoice', {}), textResponse('Rejected'),
+  ])
+  ctx.llm.registerAdapter(['fixture'], mock)
+  for (const sessionId of [id, other]) {
+    const agent = ctx.agents.get(sessionId)!
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Try the tool' }], source: { kind: 'user' } }))
+    await agent.whenIdle()
+  }
+  expect(calls).toEqual([])
+  for (const index of [1, 3]) expect(mock.requests[index]!.messages.flatMap(message => message.content).filter(block => block.type === 'tool-result')).toMatchObject([{ isError: true }])
+  const broken = await installNative(handler, { ...profile, version: 'bad', tools: { native: { ...profile.tools.native, toolNames: ['missing'] }, mcp: [] } })
+  expect((await client.sessions.create({ ...payload, sessionId: SessionId('bad-module'), agentProfile: broken })).result).toMatchObject({ ok: false, error: { code: 'agent-profile-invalid' } })
+  expect(ctx.agents.get(SessionId('bad-module'))).toBeUndefined()
+})
 
 async function endpoint() {
   const calls: string[] = []

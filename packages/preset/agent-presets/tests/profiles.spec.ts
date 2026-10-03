@@ -11,6 +11,22 @@ const profile: AgentProfileDefinition = { schemaVersion: 1, id: 'business-assist
 beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'dsh-profiles-')); vi.stubEnv('DSH_HOME', root) })
 afterEach(async () => { vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }) })
 
+it('pins native module bytes and the selected MCP names in an immutable v2 profile', async () => {
+  const native = { ...profile, schemaVersion: 2, tools: { native: { source: 'export function createTools() { return [] }', toolNames: ['example_echo'] }, mcp: [] } } as unknown as AgentProfileDefinition
+  await expect(installAgentProfile(native, agentProfileDigest(native))).rejects.toThrow('disabled')
+  vi.stubEnv('DSH_ALLOW_NATIVE_TOOLS', '1')
+  const receipt = await installAgentProfile(native, agentProfileDigest(native))
+  expect(await loadAgentProfile(receipt.profile)).toEqual(native)
+  expect((await installAgentProfile(native, receipt.profile.digest)).created).toBe(false)
+  const changed = { ...native, tools: { native: { source: 'export function createTools() { throw Error() }', toolNames: ['example_echo'] }, mcp: [] } } as unknown as AgentProfileDefinition
+  await expect(installAgentProfile(changed, agentProfileDigest(changed))).rejects.toMatchObject({ code: 'agent-profile-conflict' })
+  for (const tools of [
+    { native: { source: '', toolNames: ['example_echo'] }, mcp: [] },
+    { native: { source: 'x', toolNames: ['example_echo', 'example_echo'] }, mcp: [] },
+    { native: { source: 'x', toolNames: ['mcp__api__raw'] }, mcp: [] },
+  ]) expect(() => parseAgentProfile({ ...native, tools })).toThrow()
+})
+
 it('uses portable fixed-order JSON hashing and atomically installs one immutable version under concurrency', async () => {
   const digest = `sha256:${createHash('sha256').update(JSON.stringify(profile)).digest('hex')}`
   const reordered = {

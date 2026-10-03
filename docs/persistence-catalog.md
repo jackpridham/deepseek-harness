@@ -157,7 +157,7 @@ Source: [`packages/preset/agent-presets/src/session.ts:26`](../packages/preset/a
 'agent-profile/selected': AgentProfileState
 ```
 
-Source: [`packages/preset/agent-presets/src/types.ts:28`](../packages/preset/agent-presets/src/types.ts)
+Source: [`packages/preset/agent-presets/src/types.ts:31`](../packages/preset/agent-presets/src/types.ts)
 
 ### `approval/*`
 

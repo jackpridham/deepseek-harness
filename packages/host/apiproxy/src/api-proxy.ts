@@ -4,7 +4,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { AGENT_PROFILE_POLICY, assertSessionProfile, mountSessionProfile, registerAgentProfilePolicy, sessionProfileState } from './session-profile.ts'
+import { AGENT_PROFILE_POLICY, NATIVE_PROFILE_POLICY, assertNativeToolBinding, assertSessionProfile, mountSessionProfile, registerAgentProfilePolicy, sessionProfileState } from './session-profile.ts'
 import type { AgentProfileRef } from '@deepseek-ai/dsh-agent-presets/types'
 import { assertMcpAttachment, mountMcpAttachment, mcpAttachmentState, SessionMcpError } from './session-mcp.ts'
 import type { SessionMcpAttachment } from './api/sessions.ts'
@@ -38,7 +38,7 @@ import {
 } from '@deepseek-ai/dsh-workspace'
 // Type-only: brings the `ctx.tools` Context merge into this program (viewFor reads presenters).
 import {
-  AgentProfileError, installAgentProfile, InvalidPresetIdError, PresetExistsError, PresetMountError,
+  AgentProfileError, installAgentProfile, loadAgentProfile, InvalidPresetIdError, PresetExistsError, PresetMountError,
   PresetNotWritableError, resolveSessionPreset, UnknownPresetError,
 } from '@deepseek-ai/dsh-agent-presets'
 import type { PresetBearingSession } from '@deepseek-ai/dsh-agent-presets'
@@ -1529,15 +1529,16 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
    * @throws when the roster supplies no such preset.
    */
   async function composeAgent(
-    presetId: string | undefined, sessionPolicy?: SessionPolicyId, mcpAttachment?: SessionMcpAttachment, agentProfile?: AgentProfileRef,
+    presetId: string | undefined, sessionPolicy?: SessionPolicyId, mcpAttachment?: SessionMcpAttachment,
+    agentProfile?: AgentProfileRef, nativeToolBinding?: Record<string, string>,
   ): Promise<{
     agentPreset?: string
     setup: (agentCtx: Context) => Promise<void>
   }> {
-    if (sessionPolicy === AGENT_PROFILE_POLICY) {
+    if (sessionPolicy === AGENT_PROFILE_POLICY || sessionPolicy === NATIVE_PROFILE_POLICY) {
       return { setup: async (agentCtx: Context) => {
         installSelection(agentCtx)
-        await mountSessionProfile(agentCtx, agentProfile, mcpAttachment)
+        await mountSessionProfile(agentCtx, agentProfile, mcpAttachment, nativeToolBinding)
       } }
     }
     if (sessionPolicy !== undefined && !ctx.agents.requirePolicy(sessionPolicy).presets) {
@@ -1969,6 +1970,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     sessionPolicy?: SessionPolicyId,
     mcpAttachment?: SessionMcpAttachment,
     agentProfile?: AgentProfileRef,
+    nativeToolBinding?: Record<string, string>,
   ): Promise<Agent> {
     let creation = sessionCreations.get(sessionId)
     if (creation === undefined) {
@@ -2014,7 +2016,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           return rememberAgentHandle(await ctx.agents.resume({
             resumeSessionId: sessionId,
             agentOptions: agentOptions(),
-            setup: (await composeAgent(storedPreset, inspected.meta.sessionPolicy, mcpAttachment, agentProfile)).setup,
+            setup: (await composeAgent(storedPreset, inspected.meta.sessionPolicy, mcpAttachment, agentProfile, nativeToolBinding)).setup,
           }))
         }
 
@@ -2023,7 +2025,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         } catch (error: unknown) {
           throw new Error(`failed to ensure project directory "${cwd}": ${String(error)}`, { cause: error })
         }
-        const composition = await composeAgent(presetId, sessionPolicy, mcpAttachment, agentProfile)
+        const composition = await composeAgent(presetId, sessionPolicy, mcpAttachment, agentProfile, nativeToolBinding)
         return rememberAgentHandle(await ctx.agents.create({
           sessionId,
           agentOptions: agentOptions(),
@@ -2071,6 +2073,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       throw new SessionCwdConflict(sessionId, cwd, agent.session.header.cwd)
     }
     assertSessionProfile(agent, agentProfile)
+    assertNativeToolBinding(agent, nativeToolBinding)
     assertMcpAttachment(agent, mcpAttachment)
     if (instructions !== undefined) agent.session.configureInstructions(instructions)
     return agent
@@ -2513,12 +2516,20 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         return serializeWorkspaceOperation(async () => {
           const sessionId = request.payload.sessionId ?? `session-${randomUUID()}` as SessionId
           const profileRef = request.payload.agentProfile
+          let profilePolicy = AGENT_PROFILE_POLICY
+          try {
+            if (profileRef !== undefined && (await loadAgentProfile(profileRef)).schemaVersion === 2) profilePolicy = NATIVE_PROFILE_POLICY
+          } catch (error) {
+            if (error instanceof AgentProfileError) return err(request, { code: error.code, message: error.message, details: {} })
+            throw error
+          }
+          if (request.payload.nativeToolBinding !== undefined && profileRef === undefined) return err(request, { code: 'agent-profile-invalid', message: 'nativeToolBinding requires agentProfile', details: {} })
           if (profileRef !== undefined && (request.payload.agentPreset !== undefined || request.payload.instructions !== undefined
             || request.payload.cwd !== undefined || request.payload.workspaceId !== undefined
-            || (request.payload.sessionPolicy !== undefined && request.payload.sessionPolicy !== AGENT_PROFILE_POLICY))) {
+            || (request.payload.sessionPolicy !== undefined && request.payload.sessionPolicy !== profilePolicy))) {
             return err(request, { code: 'agent-profile-invalid', message: 'agentProfile owns the session composition, instructions and workspace policy', details: {} })
           }
-          const sessionPolicy = profileRef === undefined ? request.payload.sessionPolicy : AGENT_PROFILE_POLICY
+          const sessionPolicy = profileRef === undefined ? request.payload.sessionPolicy : profilePolicy
           let policy
           try {
             policy = sessionPolicy === undefined ? undefined : ctx.agents.requirePolicy(sessionPolicy)
@@ -2552,7 +2563,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           try {
             await ensureSession(
               sessionId, cwd, request.payload.sessionId !== undefined, requestedPreset,
-              request.payload.instructions, sessionPolicy, request.payload.mcpAttachment, profileRef,
+              request.payload.instructions, sessionPolicy, request.payload.mcpAttachment, profileRef, request.payload.nativeToolBinding,
             )
           } catch (error: unknown) {
             if (error instanceof AgentProfileError) return err(request, { code: error.code, message: error.message, details: {} })
@@ -3601,7 +3612,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           version: '0.0.1',
           instructionVersions: [1],
           mcpAttachmentVersions: [1],
-          agentProfileVersions: [1],
+          agentProfileVersions: process.env.DSH_ALLOW_NATIVE_TOOLS === '1' ? [1, 2] : [1],
           ...request.payload.diagnosticChildrenVersion === 1 && diagnosticChildren !== undefined
             ? { diagnosticChildren } : {},
           // Same source as session.create's fallback: the UI's default project

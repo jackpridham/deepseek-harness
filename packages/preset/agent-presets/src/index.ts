@@ -63,7 +63,7 @@ export {
   PresetNotWritableError, readComposition, writableRoot,
 } from './authoring.ts'
 export { resolveSessionPreset, type PresetBearingSession } from './session.ts'
-export { AgentProfileError, agentProfileDigest, installAgentProfile, loadAgentProfile, parseAgentProfile } from './profiles.ts'
+export { AgentProfileError, agentProfileDigest, installAgentProfile, loadAgentProfile, parseAgentProfile, nativeToolStateDirectory } from './profiles.ts'
 export type { AgentProfileDefinition, AgentProfileRef, AgentProfileState } from './types.ts'
 export { PresetMountError, UnknownPresetError } from './preset.ts'
 export type { AgentPreset, Config, PresetRoot, PresetTrust } from './preset.ts'

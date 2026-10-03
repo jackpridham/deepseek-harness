@@ -1,14 +1,15 @@
 /** Client-safe event declarations owned by the agent-preset domain. */
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 
-/** Declarative assistant content; executable plugins and host paths are not accepted. */
-export interface AgentProfileDefinition {
-  schemaVersion: 1
+/** Immutable assistant content. Version 2 adds a trusted, self-contained ESM tool module. */
+export type AgentProfileDefinition = {
   id: string
   version: string
   systemPrompt: string
-  tools: 'session-mcp'
-}
+} & ({ schemaVersion: 1; tools: 'session-mcp' } | {
+  schemaVersion: 2
+  tools: { native: { source: string; toolNames: string[] }; mcp: string[] }
+})
 
 /** Immutable content identity supplied on installation and session creation. */
 export interface AgentProfileRef {
@@ -20,6 +21,8 @@ export interface AgentProfileRef {
 /** Accepted profile and the exact MCP tool names retained across reconnects. */
 export interface AgentProfileState extends AgentProfileRef {
   toolNames: string[]
+  /** Hash of the backend-supplied native identity binding; never credentials. */
+  nativeBindingDigest?: string
 }
 
 declare module '@deepseek-ai/dsh-session/types' {

@@ -67,7 +67,7 @@ export interface HostApi {
     instructionVersions?: number[]
     /** Supported caller-supplied session MCP attachment versions. */
     mcpAttachmentVersions?: number[]
-    /** Declarative profile versions accepted by installProfile and session.create. */
+    /** Enabled profile versions accepted by installProfile and session.create. */
     agentProfileVersions?: number[]
     version: string
     cwd: string

@@ -15,3 +15,46 @@ exports[`discovers through HTTP, isolates same-named session attachments, runs a
   },
 ]
 `;
+
+exports[`installs native tools through the profile API, isolates private state and recovers without replay 1`] = `
+[
+  {
+    "content": [
+      {
+        "text": "empty",
+        "type": "text",
+      },
+    ],
+    "isError": false,
+    "toolCallId": "a",
+    "type": "tool-result",
+  },
+]
+`;
+
+exports[`installs native tools through the profile API, isolates private state and recovers without replay 2`] = `
+[
+  {
+    "content": [
+      {
+        "text": "empty",
+        "type": "text",
+      },
+    ],
+    "isError": false,
+    "toolCallId": "a",
+    "type": "tool-result",
+  },
+  {
+    "content": [
+      {
+        "text": "apple",
+        "type": "text",
+      },
+    ],
+    "isError": false,
+    "toolCallId": "c",
+    "type": "tool-result",
+  },
+]
+`;
