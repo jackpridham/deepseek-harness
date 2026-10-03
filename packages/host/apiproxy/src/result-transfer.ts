@@ -91,7 +91,8 @@ export async function mountResultTransfer(ctx: Context, identity: string, limits
   ctx.tools.register({
     name: 'call_with_result',
     description: 'Copy exact JSON values from captured results into arguments, then call an admitted tool. No source tools are rerun. Bindings use JSON Pointers; target parent containers must exist, object members must be absent, and array destinations must be null placeholders. A transfer failure calls no target. Never automatically repeat a call whose outcome is uncertain.',
-    parameters: { ...z.toJSONSchema(invocation) },
+    // Tool arguments already travel as JSON; avoid a recursive JSON-value schema in the model declaration.
+    parameters: { ...z.toJSONSchema(invocation.extend({ arguments: z.record(z.string(), z.unknown()) })) },
     output: { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
     isConcurrencySafe(args) {
       const { target, resolved } = resolve(args)

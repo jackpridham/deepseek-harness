@@ -320,6 +320,9 @@ it('transfers canonical MCP fields through admitted execution, persists referenc
   ])
   host.ctx.llm.registerAdapter(['fixture'], script)
   let agent = host.ctx.agents.get(id)!
+  const schema = host.ctx.tools.get('call_with_result', agent)!.parameters
+  expect(schema).not.toHaveProperty('$defs')
+  expect(schema).toMatchObject({ properties: { arguments: { type: 'object', additionalProperties: {} } } })
   const approval: unknown[] = []
   agent.ctx.on('tools/pre-execute', async (exec, next) => { if (exec.name === 'mcp__fixture__read') { approval.push(exec.arguments); return { kind: 'ask' } }; return next() })
   // No approval service: target must be denied after the resolved arguments reach policy.
